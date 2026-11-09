@@ -8,8 +8,11 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { createPool } from '../src/server/db/connection'
 import * as schema from '../src/server/db/schema'
 
+/** Set TEST_DB_SUFFIX (for example "_b") to use a second set made by scripts/create-test-dbs.ts. */
+const SUFFIX = (process.env.TEST_DB_SUFFIX ?? '').replace(/[^a-z0-9_]/gi, '')
+
 export const TEST_DATABASE_URL =
-  process.env.TEST_DATABASE_URL ?? 'postgres://seating:seating@127.0.0.1:5432/seating_test'
+  process.env.TEST_DATABASE_URL ?? `postgres://seating:seating@127.0.0.1:5432/seating_test${SUFFIX}`
 
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
 

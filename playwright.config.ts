@@ -12,7 +12,9 @@ import { randomBytes } from 'node:crypto'
 import { defineConfig, devices } from '@playwright/test'
 
 const PORT = Number(process.env.E2E_PORT ?? 3100)
-const E2E_DATABASE_URL = process.env.E2E_DATABASE_URL ?? 'postgres://seating:seating@127.0.0.1:5432/seating_e2e'
+// TEST_DB_SUFFIX (for example "_b") picks a second set of databases from scripts/create-test-dbs.ts.
+const SUFFIX = (process.env.TEST_DB_SUFFIX ?? '').replace(/[^a-z0-9_]/gi, '')
+const E2E_DATABASE_URL = process.env.E2E_DATABASE_URL ?? `postgres://seating:seating@127.0.0.1:5432/seating_e2e${SUFFIX}`
 
 // Set once in the runner; worker processes inherit these.
 process.env.E2E_SITE_PASSWORD ??= `e2e-${randomBytes(12).toString('hex')}`
