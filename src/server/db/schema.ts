@@ -44,6 +44,9 @@ const updatedAt = () =>
     .$onUpdate(() => new Date())
 const deletedAt = () => timestamp({ withTimezone: true })
 
+/** One save that landed on a layout, kept in layouts.recent_saves. */
+export type RecentSave = { saveId: string; version: number }
+
 export const weddings = pgTable(
   'weddings',
   {
@@ -282,6 +285,11 @@ export const layouts = pgTable(
     venueTemplateId: uuid().references(() => venueTemplates.id),
     version: integer().notNull().default(1),
     lastSaveId: uuid(),
+    /**
+     * The newest 20 saves that landed, newest first, so a retry of an older
+     * save after someone saved since still answers 'already-saved'.
+     */
+    recentSaves: jsonb().$type<RecentSave[]>().notNull().default([]),
     editedBy: text({ enum: ['Noa', 'Aiden'] }),
     canvas: jsonb().$type<Canvas>().notNull(),
     thumbSvg: text().notNull().default(''),
@@ -296,6 +304,7 @@ export const layouts = pgTable(
     check('layouts_version_positive', sql`${t.version} >= 1`),
     check('layouts_edited_by_valid', sql`${t.editedBy} is null or ${t.editedBy} in ('Noa', 'Aiden')`),
     check('layouts_canvas_object', sql`jsonb_typeof(${t.canvas}) = 'object'`),
+    check('layouts_recent_saves_array', sql`jsonb_typeof(${t.recentSaves}) = 'array'`),
     index('layouts_wedding_live_idx')
       .on(t.weddingId, t.updatedAt)
       .where(sql`${t.deletedAt} is null`),

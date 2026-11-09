@@ -13,3 +13,20 @@ html {
 body {
   font-family: var(--font-sans);
 }
+
+@layer base {
+  /* Tailwind 4 gives buttons the default cursor; a hand reads as tappable. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  label:has(> input[type="radio"]) {
+    cursor: pointer;
+  }
+
+  /* Taps on buttons and links act at once on phones (no double-tap zoom wait). */
+  a,
+  button,
+  input,
+  label {
+    touch-action: manipulation;
+  }
+}

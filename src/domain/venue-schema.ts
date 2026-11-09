@@ -4,8 +4,8 @@
  * locked bottom layer.
  */
 import { z } from 'zod'
+import { cleanText, itemId } from './canvas-schema'
 
-const itemId = z.string().min(1).max(64)
 const coord = z.number().finite().min(-1_000_000).max(1_000_000)
 const length = z.number().finite().positive().max(1_000_000)
 const rotation = z.number().finite().min(-3600).max(3600)
@@ -13,10 +13,10 @@ const point = z.object({ x: coord, y: coord })
 
 const common = {
   id: itemId,
-  name: z.string().max(200).optional(),
+  name: cleanText(200).optional(),
   /** Set by the AI import when the model was not sure of this item. */
   unsure: z.boolean(),
-  unsureNote: z.string().max(500),
+  unsureNote: cleanText(500),
 }
 
 const box = { x: coord, y: coord, width: length, height: length, rotation }
@@ -39,8 +39,8 @@ export const fixedItemSchema = z.discriminatedUnion('type', [
   z.object({ ...common, type: z.literal('window'), wallId: itemId.nullable(), x: coord, y: coord, rotation, width: length }),
   z.object({ ...common, type: z.literal('column'), shape: z.enum(['rect', 'round']), ...box }),
   z.object({ ...common, type: z.literal('stairs'), ...box }),
-  z.object({ ...common, type: z.literal('bar'), ...box, label: z.string().max(200) }),
-  z.object({ ...common, type: z.literal('label'), x: coord, y: coord, rotation, text: z.string().max(500), fontSize: length }),
+  z.object({ ...common, type: z.literal('bar'), ...box, label: cleanText(200) }),
+  z.object({ ...common, type: z.literal('label'), x: coord, y: coord, rotation, text: cleanText(500), fontSize: length }),
 ])
 
 export const fixedItemsSchema = z.array(fixedItemSchema).max(20_000)

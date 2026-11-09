@@ -15,6 +15,13 @@
       "when": 1794198528189,
       "tag": "0001_toronto_beach_club_template",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794205421852,
+      "tag": "0002_recent_saves",
+      "breakpoints": true
     }
   ]
 }

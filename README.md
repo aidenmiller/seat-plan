@@ -33,7 +33,7 @@ You need Node 22 and a Postgres 16 server.
 | `npm run e2e` | Playwright on a production build, at 1440 px and 390 px (needs `seating_e2e`) |
 | `npm run db:generate` | Make a migration from changes to `src/server/db/schema.ts` |
 | `npm run db:migrate` | Apply migrations to `DATABASE_URL_UNPOOLED`, else `DATABASE_URL` (the seed uses the same order) |
-| `npm run seed` | Demo data. For now one demo wedding; guests, groups, rules and layouts arrive with later milestones. Safe to run twice. |
+| `npm run seed` | Demo data: "Demo wedding" with two reception layouts, "Reception plan A" (blank canvas, three round tables) and "Beach Club reception" (Toronto Beach Club). Guests, groups and rules arrive with later milestones. Safe to run twice. It runs tsx with the `react-server` condition, so it can write layouts through the app's own server code. |
 | `npm run check:secrets` | Fails if the site password is in the built browser files or in git history |
 
 Tests use local databases only and refuse any other host. Create them once:

@@ -12,7 +12,28 @@ export const MAX_ITEMS = 3000
 export const MAX_SEATS_ROUND_OR_SQUARE = 30
 export const MAX_SEATS_RECT = 60
 
-const itemId = z.string().min(1).max(64)
+/**
+ * Text Postgres can store: no NUL characters (refused in text and jsonb) and
+ * no lone UTF-16 surrogates (refused in jsonb). Lone surrogates become U+FFFD.
+ */
+export function wellFormedText(value: string): string {
+  const noNul = value.includes('\u0000') ? value.replaceAll('\u0000', '') : value
+  return noNul.isWellFormed() ? noNul : noNul.toWellFormed()
+}
+
+/** A free-text string, cleaned with wellFormedText() before its length is checked. */
+export const cleanText = (max: number) => z.string().overwrite(wellFormedText).max(max)
+
+/**
+ * Ids are refused rather than cleaned: other items and seats point at them, so
+ * changing one quietly would break the link the editor holds.
+ */
+export const itemId = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine((id) => wellFormedText(id) === id, 'Ids cannot hold NUL characters or broken Unicode')
+
 const coord = z.number().finite().min(-1_000_000).max(1_000_000)
 const length = z.number().finite().positive().max(1_000_000)
 const rotation = z.number().finite().min(-3600).max(3600)
@@ -43,7 +64,7 @@ export const tableSchema = z.object({
   width: length,
   height: length,
   number: z.int().min(1).max(9999),
-  name: z.string().max(100),
+  name: cleanText(100),
   seatCount: z.int().min(0).max(MAX_SEATS_RECT),
   seatSides: z.enum(seatSidesValues),
   seats: z.array(seatSchema).max(MAX_SEATS_RECT),
@@ -74,7 +95,7 @@ export const fixtureSchema = z.object({
   type: z.enum(fixtureTypes),
   width: length,
   height: length,
-  label: z.string().max(200),
+  label: cleanText(200),
 })
 
 export const chairRowSchema = z.object({
@@ -83,16 +104,16 @@ export const chairRowSchema = z.object({
   chairCount: z.int().min(1).max(MAX_SEATS_RECT),
   spacing: length,
   blockId: itemId.nullable(),
-  blockLabel: z.string().max(100).nullable(),
+  blockLabel: cleanText(100).nullable(),
   rowNumber: z.int().min(1).max(999),
-  rowLabel: z.string().max(100),
-  reservedFor: z.string().max(200).nullable(),
+  rowLabel: cleanText(100),
+  reservedFor: cleanText(200).nullable(),
   seats: z.array(seatSchema).max(MAX_SEATS_RECT),
 })
 
 export const shapeTypes = ['rect', 'ellipse', 'line', 'text', 'wall', 'room', 'door', 'window'] as const
 
-const colorString = z.string().max(32)
+const colorString = cleanText(32)
 
 export const shapeSchema = z.object({
   ...base,
@@ -101,7 +122,7 @@ export const shapeSchema = z.object({
   width: length,
   height: length,
   points: z.array(point).max(2000).optional(),
-  text: z.string().max(2000).optional(),
+  text: cleanText(2000).optional(),
   style: z.object({
     stroke: colorString,
     fill: colorString,
@@ -121,7 +142,7 @@ export const noteSchema = z.object({
   width: length,
   height: length,
   points: z.array(point).max(2000).optional(),
-  text: z.string().max(5000),
+  text: cleanText(5000),
   color: z.enum(noteColors),
   author: z.enum(authors),
   done: z.boolean(),
