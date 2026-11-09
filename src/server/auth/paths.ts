@@ -29,7 +29,11 @@ export function safeNextPath(next: unknown): string {
     const url = new URL(next, 'http://seat-plan.invalid')
     if (url.host !== 'seat-plan.invalid') return '/'
     if (url.pathname === '/login') return '/'
-    return url.pathname + url.search + url.hash
+    const result = url.pathname + url.search + url.hash
+    // Dot segments can normalize "/.//evil.example" into "//evil.example",
+    // which a browser reads as another site. Check again after normalizing.
+    if (result.startsWith('//') || result.startsWith('/\\')) return '/'
+    return result
   } catch {
     return '/'
   }

@@ -54,6 +54,10 @@ describe('safeNextPath', () => {
       'javascript:alert(1)',
       '/login',
       '/\u0000x',
+      '/.//evil.example',
+      '/..//evil.example',
+      '/%2e//evil.example',
+      '/a/..//evil.example',
       42,
     ]) {
       expect(safeNextPath(next), String(next)).toBe('/')
