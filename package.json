@@ -1,0 +1,52 @@
+{
+  "name": "seat-plan",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:int": "vitest run --project integration",
+    "e2e": "playwright test",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:reset-test": "tsx scripts/reset-test-db.ts",
+    "seed": "tsx scripts/seed.ts",
+    "check:secrets": "tsx scripts/check-secrets.ts",
+    "vercel-build": "tsx scripts/vercel-build.ts"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "2.2.2",
+    "@vercel/functions": "3.11.0",
+    "drizzle-orm": "0.45.4",
+    "next": "16.4.5",
+    "pg": "8.23.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "server-only": "0.0.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@next/env": "16.4.5",
+    "@playwright/test": "1.63.0",
+    "@tailwindcss/turbopack": "4.3.5",
+    "@types/node": "22.20.5",
+    "@types/pg": "8.23.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "drizzle-kit": "0.31.11",
+    "eslint": "10.14.0",
+    "eslint-config-next": "16.4.5",
+    "tailwindcss": "4.3.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "5.1.0"
+  }
+}

@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: seating
+          POSTGRES_PASSWORD: seating
+          POSTGRES_DB: seating_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U seating"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://seating:seating@127.0.0.1:5432/seating_test
+      TEST_DATABASE_URL: postgres://seating:seating@127.0.0.1:5432/seating_test
+      E2E_DATABASE_URL: postgres://seating:seating@127.0.0.1:5432/seating_e2e
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for the secret check
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Test-only secrets (never the real password)
+        run: |
+          echo "SITE_PASSWORD=ci-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+          echo "AUTH_SECRET=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
+      - name: Create the e2e database
+        run: PGPASSWORD=seating psql -h 127.0.0.1 -U seating -d seating_test -c "CREATE DATABASE seating_e2e"
+      - run: npm run build
+      - name: Secret check on the built files
+        run: npm run check:secrets -- --bundle
+      # A step's own env is not visible to its `if`, so the guard sits inside the
+      # script. The real password stays in this one step's env.
+      - name: Secret check with the real password (needs the SITE_PASSWORD_REAL secret)
+        env:
+          CHECK_PASSWORD: ${{ secrets.SITE_PASSWORD_REAL }}
+        run: |
+          if [ -z "$CHECK_PASSWORD" ]; then
+            echo "No SITE_PASSWORD_REAL secret; skipping the real-password check."
+            exit 0
+          fi
+          npm run check:secrets
+      - run: npx playwright install --with-deps chromium
+      - name: End-to-end tests
+        run: npm run e2e
+        env:
+          E2E_SKIP_BUILD: '1'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
