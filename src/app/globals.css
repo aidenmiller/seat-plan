@@ -30,3 +30,74 @@ body {
     touch-action: manipulation;
   }
 }
+
+/*
+ * The editor's canvas (PLAN section 6). The grid is a CSS background in real
+ * units: the camera writes --grid-step (px between the lines shown, already
+ * thinned to every fifth foot or every second half meter when lines would sit
+ * closer than 8 px), and --grid-x and --grid-y (where a line falls).
+ */
+/*
+ * The grid variables change on every camera frame. Registered as not
+ * inherited, so a change restyles the viewport alone and not the thousand
+ * SVG elements inside it (left inherited, they cost about 3 ms of style work
+ * per frame with 40 tables, over 10 ms on a phone-speed CPU).
+ */
+@property --grid-step {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 30.48px;
+}
+
+@property --grid-x {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --grid-y {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+.editor-grid {
+  background-color: #fafaf9;
+  background-image:
+    linear-gradient(to right, rgb(120 113 108 / 0.16) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(120 113 108 / 0.16) 1px, transparent 1px);
+  background-size: var(--grid-step, 30.48px) var(--grid-step, 30.48px);
+  background-position: var(--grid-x, 0px) var(--grid-y, 0px);
+}
+
+/* The browser's own touch gestures stay off the canvas, so pinch, long press and pull reach the editor. */
+.editor-canvas {
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * Lines in the world SVG that keep their width on screen at every zoom. The
+ * camera writes the drawn zoom into --zoom on the viewport when a gesture
+ * settles; inside the world, 1px is one cm, so dividing by the zoom gives
+ * screen pixels. The stroke-width attributes stay as the print widths.
+ * Must match TIGHT_STROKE_SCREEN_PX and TABLE_STROKE_MIN_SCREEN_PX in
+ * src/client/editor/render/style.ts.
+ */
+[data-editor-viewport] [data-tight-outline] {
+  stroke-width: calc(3px / var(--zoom, 1));
+}
+
+[data-editor-viewport] [data-table-body] {
+  stroke-width: max(2.5px, calc(1px / var(--zoom, 1)));
+}
+
+/* No pull to refresh or rubber banding while the editor is open. */
+html:has([data-editor-root]),
+html:has([data-editor-root]) body {
+  overscroll-behavior: none;
+}

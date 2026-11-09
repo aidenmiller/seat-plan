@@ -10,7 +10,7 @@
  */
 import { expect, test, type Page } from '@playwright/test'
 import {
-  addTableButton,
+  addRoundTable,
   apiCreateLayout,
   apiCreateWedding,
   editorPath,
@@ -84,7 +84,7 @@ test('the top bar keeps its height while the status goes from Saving to Saved', 
 
   // Saving: the save is held, so the status stays on Saving.
   const saves = await holdLayoutSaves(page)
-  await addTableButton(page).click()
+  await addRoundTable(page)
   await saves.waitForHeld()
   await expect(saveStatus(page)).toHaveAttribute('data-status', 'saving')
   await expect(saveStatus(page)).toHaveText('Saving…')
@@ -102,7 +102,7 @@ test('the top bar keeps its height while the status goes from Saving to Saved', 
     if (!failing || route.request().method() !== 'PUT') return route.fallback()
     await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable' }) })
   })
-  await addTableButton(page).click()
+  await addRoundTable(page)
   await expect(saveStatus(page)).toHaveAttribute('data-status', 'retrying')
   await expect(saveStatus(page)).toHaveText('Not saved, retrying')
   await expect(saveStatus(page)).toHaveAttribute('title', 'Not saved, retrying. The server answered 503.')

@@ -3,10 +3,12 @@
  * Made-up names only, and the same content on every run. Safe to run twice:
  * it skips anything that already exists, matching by name.
  *
- * So far it makes the demo wedding with two reception layouts: "Reception
- * plan A" on a blank canvas with three round tables, and "Beach Club
- * reception" on the Toronto Beach Club template (empty until the floor plan
- * import fills the template). Each milestone adds what it needs: guests,
+ * So far it makes the demo wedding with three reception layouts: "Reception
+ * plan A" on a blank canvas with three round tables, "Canvas tour" on a
+ * blank canvas with one of every table preset and fixture from the shape
+ * panel (milestone 3), and "Beach Club reception" on the Toronto Beach Club
+ * template (empty until the floor plan import fills the template). Each
+ * milestone adds what it needs: guests,
  * groups, couples and rules (4 onward), ceremony rows (8) and notes (9). The
  * Toronto Beach Club template itself comes from a migration, so production
  * has it too.
@@ -22,13 +24,15 @@ import { randomUUID } from 'node:crypto'
 import { loadEnvConfig } from '@next/env'
 import { and, eq, isNull } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
-import { emptyCanvas, type Author, type Canvas } from '../src/domain/canvas-schema'
+import { emptyCanvas, type Author, type Canvas, type Item } from '../src/domain/canvas-schema'
+import { makeItem, type PresetId } from '../src/domain/presets'
 import { addRoundTable } from '../src/domain/round-table'
 import { createPool, requireDatabaseUrl } from '../src/server/db/connection'
 import * as schema from '../src/server/db/schema'
 
 export const DEMO_WEDDING_NAME = 'Demo wedding'
 export const BLANK_LAYOUT_NAME = 'Reception plan A'
+export const TOUR_LAYOUT_NAME = 'Canvas tour'
 export const BEACH_LAYOUT_NAME = 'Beach Club reception'
 export const BEACH_TEMPLATE_NAME = 'Toronto Beach Club'
 
@@ -36,6 +40,40 @@ export const BEACH_TEMPLATE_NAME = 'Toronto Beach Club'
 export function threeRoundTables(): Canvas {
   let canvas = emptyCanvas()
   for (let i = 0; i < 3; i++) canvas = addRoundTable(canvas, randomUUID())
+  return canvas
+}
+
+/**
+ * One of every table preset and fixture, set out like a small reception (cm,
+ * centers): the head table seated along its back edge facing the dance
+ * floor, the sweetheart table beside it, round, square and rectangle tables
+ * around the floor, and the fixtures at the edges. Tables are numbered in the
+ * order they are placed, every seat empty.
+ */
+export function canvasTour(): Canvas {
+  const placed: [PresetId, number, number, number?][] = [
+    ['stage', 0, -820],
+    ['dj', 520, -820],
+    ['head', 0, -470],
+    ['sweetheart', -560, -470],
+    ['danceFloor', 0, 0],
+    ['round', -620, 0],
+    ['round', 620, 0],
+    ['square', -620, 480],
+    ['rect', 620, 480],
+    ['bar', -1060, 0, 90],
+    ['food', 1060, 0, 90],
+    ['cake', -300, 520],
+    ['gifts', 0, 700],
+    ['photoBooth', 1060, 560],
+    ['text', 0, 1000],
+  ]
+  let canvas = emptyCanvas()
+  for (const [preset, x, y, rotation = 0] of placed) {
+    let item: Item = { ...makeItem(preset, { x, y }, randomUUID(), canvas), rotation }
+    if (item.kind === 'shape' && item.type === 'text') item = { ...item, text: 'Entrance', width: 240 }
+    canvas = { ...canvas, items: [...canvas.items, item] }
+  }
   return canvas
 }
 
@@ -103,6 +141,7 @@ async function main() {
     }
 
     await addLayout({ name: BLANK_LAYOUT_NAME, canvas: threeRoundTables(), venueTemplateId: null, editedBy: 'Noa' })
+    await addLayout({ name: TOUR_LAYOUT_NAME, canvas: canvasTour(), venueTemplateId: null, editedBy: 'Noa' })
 
     const beach = (await server.listVenues(db)).find((v) => v.name === BEACH_TEMPLATE_NAME)
     if (beach) {

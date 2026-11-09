@@ -19,6 +19,7 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:reset-test": "tsx scripts/reset-test-db.ts",
     "seed": "tsx --conditions=react-server scripts/seed.ts",
+    "seed:perf": "tsx --conditions=react-server scripts/seed-perf.ts",
     "check:secrets": "tsx scripts/check-secrets.ts",
     "vercel-build": "tsx scripts/vercel-build.ts"
   },

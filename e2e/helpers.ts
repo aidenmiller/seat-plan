@@ -3,6 +3,9 @@ import { expect, type APIRequestContext, type BrowserContext, type Page, type Ro
 import type { Canvas } from '../src/domain/canvas-schema'
 import { addRoundTable } from '../src/domain/round-table'
 import type { LayoutDetail, SaveLayoutOk, WeddingSummary } from '../src/shared/api'
+import { addControl, setMode } from './canvas'
+
+export { addRoundTable, addPreset } from './canvas'
 
 /** The password this run's server was started with (made up per run). */
 export function sitePassword(): string {
@@ -106,6 +109,20 @@ export async function apiAddTables(
   return (await res.json()) as SaveLayoutOk
 }
 
+/** Saves a whole canvas onto a layout with one PUT, as the editor would. */
+export async function apiPutCanvas(
+  request: APIRequestContext,
+  layout: Pick<LayoutDetail, 'id' | 'version'>,
+  canvas: Canvas,
+  editedBy: Author = 'Noa',
+): Promise<SaveLayoutOk> {
+  const res = await request.put(`/api/layouts/${layout.id}`, {
+    data: { baseVersion: layout.version, saveId: randomUUID(), editedBy, tabId: 'e2e-setup', canvas },
+  })
+  expect(res.status(), await res.text()).toBe(200)
+  return (await res.json()) as SaveLayoutOk
+}
+
 // ---------- The editor ----------
 
 export const editorPath = (weddingId: string, layoutId: string) => `/w/${weddingId}/layouts/${layoutId}`
@@ -114,18 +131,23 @@ export function saveStatus(page: Page) {
   return page.getByTestId('save-status')
 }
 
-/** The tables on the bare canvas. */
+/** The tables on the canvas. */
 export function canvasTables(page: Page) {
   return page.getByTestId('canvas').locator('[data-kind="table"]')
 }
 
+/** The shape panel's Round tile (desktops; on phones it sits in the Shapes drawer, see addRoundTable). */
 export function addTableButton(page: Page) {
-  return page.getByRole('button', { name: 'Add round table' })
+  return page.getByTestId('shape-panel').getByRole('button', { name: 'Add round table' })
 }
 
-/** Waits until the editor has opened the layout and can take edits. */
+/**
+ * Waits until the editor has opened the layout and can take edits. Phones
+ * open in View mode, so this switches the editor to Edit first.
+ */
 export async function waitForEditor(page: Page): Promise<void> {
-  await expect(addTableButton(page)).toBeEnabled({ timeout: 10_000 })
+  await setMode(page, 'edit')
+  await expect(addControl(page)).toBeEnabled({ timeout: 10_000 })
 }
 
 export async function expectSaved(page: Page, timeout = 10_000): Promise<void> {

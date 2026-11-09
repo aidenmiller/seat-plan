@@ -56,6 +56,7 @@ const base = {
 
 export const tableShapes = ['round', 'square', 'rect'] as const
 export const seatSidesValues = ['all', 'noEnds', 'oneSide'] as const
+export const tableSideValues = ['top', 'right', 'bottom', 'left'] as const
 
 export const tableSchema = z.object({
   ...base,
@@ -67,6 +68,13 @@ export const tableSchema = z.object({
   name: cleanText(100),
   seatCount: z.int().min(0).max(MAX_SEATS_RECT),
   seatSides: z.enum(seatSidesValues),
+  /**
+   * Optional, so layouts saved before it existed still load. When seats
+   * cannot be shared evenly between sides of the same length, this side
+   * takes one fewer. The − button sets it, so the side holding the empty
+   * seat is the one that gives it up and nobody changes sides.
+   */
+  fewerSeatsSide: z.enum(tableSideValues).optional(),
   seats: z.array(seatSchema).max(MAX_SEATS_RECT),
 })
 

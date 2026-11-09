@@ -5,7 +5,8 @@
  * list.
  */
 import { expect, test, type Page } from '@playwright/test'
-import { addTableButton, apiCreateLayout, apiCreateWedding, expectSaved, signIn, uniqueName, waitForEditor } from './helpers'
+import { addControl, setMode } from './canvas'
+import { addRoundTable, apiCreateLayout, apiCreateWedding, expectSaved, signIn, uniqueName, waitForEditor } from './helpers'
 
 function authorSwitch(page: Page) {
   return page.getByRole('group', { name: 'Who is using this device' })
@@ -45,7 +46,7 @@ test('the first visit asks who is using the device, and saves carry that name', 
   await card.getByRole('link', { name: 'Open Plan' }).click()
   await waitForEditor(page)
   await expectAuthor(page, 'Aiden')
-  await addTableButton(page).click()
+  await addRoundTable(page)
   await expectSaved(page)
   await page.getByRole('link', { name: 'Back to layouts' }).click()
   await expect(edited).toHaveText('Edited just now by Aiden')
@@ -56,7 +57,7 @@ test('the first visit asks who is using the device, and saves carry that name', 
   await card.getByRole('link', { name: 'Open Plan' }).click()
   await waitForEditor(page)
   await expectAuthor(page, 'Noa')
-  await addTableButton(page).click()
+  await addRoundTable(page)
   await expectSaved(page)
   await page.getByRole('link', { name: 'Back to layouts' }).click()
   await expect(edited).toHaveText('Edited just now by Noa')
@@ -74,7 +75,9 @@ test('until someone is picked, the editor waits and says why', async ({ page }, 
   const prompt = page.getByRole('dialog', { name: 'Who is using this device?' })
   await expect(prompt).toBeVisible()
   await expect(page.getByText('Pick Noa or Aiden to start editing.')).toBeVisible()
-  await expect(addTableButton(page)).toBeDisabled()
+  // Phones open in View; in Edit the add control stays off until someone is picked.
+  await setMode(page, 'edit')
+  await expect(addControl(page)).toBeDisabled()
 
   await prompt.getByRole('button', { name: 'Noa' }).click()
   await expect(prompt).toBeHidden()

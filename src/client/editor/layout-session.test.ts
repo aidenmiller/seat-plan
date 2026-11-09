@@ -6,8 +6,10 @@ import type { WatchRemoteVersionOptions } from '@/client/sync/remote-version'
 import { emptyCanvas, type Canvas } from '@/domain/canvas-schema'
 import { addRoundTable } from '@/domain/round-table'
 import type { LayoutDetail, SaveLayoutOk } from '@/shared/api'
+import { moveItems } from './commands'
 import { createDocStore } from './doc-store'
 import { openLayoutSession, type ConflictInfo, type LayoutSessionDeps } from './layout-session'
+import { createEditorDoc } from './state/editor-doc'
 
 const LAYOUT_ID = '33333333-3333-4333-8333-333333333333'
 const WEDDING_ID = '44444444-4444-4444-8444-444444444444'
@@ -317,6 +319,31 @@ describe('while open', () => {
     const table = t.store.getState().canvas.items[0]
     expect(table.kind === 'table' && table.seats[0].guestId).toBeNull()
     expect(t.store.getState().canUndo).toBe(false)
+  })
+
+  it('empties seats the server dropped inside a drag under way, keeping the drag (A6)', async () => {
+    const guest = '66666666-6666-4666-8666-666666666666'
+    const start = addRoundTable(emptyCanvas(), 'a')
+    const seatedCanvas: Canvas = {
+      ...start,
+      items: start.items.map((i) => (i.kind === 'table' ? { ...i, seats: i.seats.map((s) => (s.index === 0 ? { ...s, guestId: guest } : s)) } : i)),
+    }
+    const t = setup({ page: detail({ canvas: seatedCanvas }) })
+    await t.session.ready
+    const doc = createEditorDoc({ store: t.store, canEdit: () => true, onCommit: (c) => t.session.noteEdit(c) })
+    t.store.routeServerPatches(doc.patchFromServer)
+    const g = doc.begin('Move')!
+    g.preview((c) => moveItems(c, ['a'], 40, 0))
+    t.saver().options.onDroppedSeats([{ itemId: 'a', seatIndex: 0, guestId: guest, reason: 'removed-guest' }])
+    expect(g.isActive()).toBe(true)
+    g.preview((c) => moveItems(c, ['a'], 60, 0))
+    g.commit()
+    const table = t.store.getState().canvas.items[0]
+    expect(table.kind === 'table' && table.seats[0].guestId).toBeNull()
+    expect(table.x).toBe(60)
+    expect(t.store.getState().history.past).toHaveLength(1)
+    expect(t.saver().edits).toHaveLength(1)
+    expect(t.saver().edits[0]).toBe(t.store.getState().canvas)
   })
 
   it('quietly loads the other person’s newer version when nothing is unsaved', async () => {

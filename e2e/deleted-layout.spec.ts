@@ -9,7 +9,7 @@
  */
 import { expect, test, type Browser, type Page, type TestInfo } from '@playwright/test'
 import {
-  addTableButton,
+  addRoundTable,
   apiAddTables,
   apiCreateLayout,
   apiCreateWedding,
@@ -77,7 +77,7 @@ async function saveAsCopyOpens(page: Page, weddingId: string, layoutId: string, 
   expect((await page.request.get(`/api/layouts/${layoutId}`)).status()).toBe(404)
 
   // Editing goes on in the copy.
-  await addTableButton(page).click()
+  await addRoundTable(page)
   await expect(canvasTables(page)).toHaveCount(ids.length + 1)
   await expectSaved(page)
   const after = await apiGetLayout(page.request, copyId)
@@ -100,7 +100,7 @@ test('an edit after the layout was deleted elsewhere fails, and Save as a copy o
   await deleteElsewhere(browser, wedding.id, layout.id, 'Plan')
 
   // A table added after the delete: its save answers 410.
-  await addTableButton(page).click()
+  await addRoundTable(page)
   await expect(canvasTables(page)).toHaveCount(1)
   const ids = await tableIds(page)
   await expect(saveStatus(page)).toHaveAttribute('data-status', 'failed', { timeout: 10_000 })

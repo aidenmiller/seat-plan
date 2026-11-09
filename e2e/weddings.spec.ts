@@ -9,7 +9,7 @@
  */
 import { expect, test, type Route } from '@playwright/test'
 import {
-  addTableButton,
+  addRoundTable,
   apiCreateWedding,
   canvasTables,
   expectSaved,
@@ -245,7 +245,7 @@ test('layouts: blank and Toronto Beach Club, rename, duplicate, open, add a tabl
   await expect(page.getByTestId('layout-title')).toHaveText('Plan A')
   await waitForEditor(page)
   await expectSaved(page)
-  await addTableButton(page).click()
+  await addRoundTable(page)
   await expect(canvasTables(page)).toHaveCount(1)
   await expect(saveStatus(page)).toHaveText('Saving…')
   await expectSaved(page)

@@ -1,41 +1,117 @@
 'use client'
 
 /**
- * The full-screen layout editor for milestone 2: a top bar (back to the
- * layouts tab, the layout's name, the save status, the Noa / Aiden switch), a
- * small toolbar (Add round table, Undo, Redo) and the bare canvas. The
- * document lives in a store made for this layout (doc-store.ts); saving,
- * drafts, other people's changes and conflicts go through layout-session.ts.
+ * The full-screen layout editor (spec section 4; PLAN section 6). Three
+ * parts, as in Lucidchart: the shape panel on the left, the canvas in the
+ * middle and the right panel with its tabs. On phones (under 768 px or
+ * touch-only) the canvas fills the screen, the right panel's tabs sit in a
+ * bottom sheet and the shape panel opens from a button.
  *
- * The top bar never wraps: the name is cut short and the save status has a
- * fixed slot, so the canvas does not move when the status changes.
+ * The top bar: back to the layouts tab, the layout's name, the save status
+ * (a fixed slot, so the bar never wraps and the canvas never moves), the
+ * Edit / View switch and the Noa / Aiden switch. Zoom controls sit in the
+ * canvas's bottom right corner on every screen size.
+ *
+ * The document lives in a store made for this layout (doc-store.ts); the
+ * editor state (state/index.ts) wraps it and refuses changes in View mode
+ * or while the page cannot edit. Saving, drafts, other people's changes and
+ * conflicts go through layout-session.ts, which hears every finished edit.
  *
  * Once "Keep mine as a new copy" or "Save as a copy" has made the copy,
  * editing stays off until the page has opened the copy.
  */
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from 'react'
 import { errorMessage, updateLayout } from '@/client/api'
 import { getAuthor, useAuthor } from '@/client/author'
-import { randomId } from '@/client/sync/random-id'
 import type { LayoutSaver, SaveStatus } from '@/client/sync/types'
 import { useUnloadGuard } from '@/client/sync/unload'
 import { AuthorSwitch } from '@/client/ui/AuthorSwitch'
+import { BottomSheet, type SheetSnap } from '@/client/ui/BottomSheet'
+import { ContextMenu } from '@/client/ui/ContextMenu'
 import { InlineName } from '@/client/ui/InlineName'
-import { primaryButton, secondaryButton } from '@/client/ui/styles'
-import type { Canvas } from '@/domain/canvas-schema'
-import { addRoundTable } from '@/domain/round-table'
+import type { Item } from '@/domain/canvas-schema'
+import { DEFAULT_MIN_GAP_CM } from '@/domain/spacing'
+import type { LengthUnit } from '@/domain/units'
 import { copyLayoutName } from '@/domain/wording'
 import type { LayoutDetail } from '@/shared/api'
-import { BareCanvas } from './BareCanvas'
 import { ConflictDialog } from './ConflictDialog'
 import { createDocStore, type DocStore } from './doc-store'
+import type { ContextMenuRequest, SeatRequest } from './input/controller'
+import { isTableTarget } from './input/hit-test'
 import { openLayoutSession, type ConflictInfo, type LayoutSession } from './layout-session'
+import type { UnseatConfirm } from './overlay/EditorOverlay'
+import type { ScreenInsets } from './overlay/geometry'
+import { canvasMenu, type CanvasMenu } from './panels/canvas-menu'
+import { CanvasToolbar, PHONE_TOOLBAR_BOTTOM_PX } from './panels/CanvasToolbar'
+import { EditorUiProvider, usePhoneLayout, type EditorUi } from './panels/editor-ui'
+import { ModeSwitch } from './panels/ModeSwitch'
+import { PanelContent, PanelTabs, RightPanel, usePanelIds, type PanelTab } from './panels/RightPanel'
+import { ShapeDrawer } from './panels/ShapeDrawer'
+import { ShapePanel } from './panels/ShapePanel'
+import { UnseatDialog, type UnseatAsk } from './panels/UnseatDialog'
+import { ZOOM_CONTROLS_PX, ZoomControls } from './panels/ZoomControls'
+import { CanvasViewport } from './render/CanvasViewport'
 import { NotStoredBanner, SaveFailedBanner, SaveStatusSlot } from './SaveBanners'
 import { notStoredAlert } from './save-status'
+import { createEditorState, EditorStateProvider, type EditorEvents } from './state'
+import { readDeviceView, browserStorage } from './state/device-view'
+import { useStoreSelector } from './state/store'
 
-export function EditorShell({ layout }: { layout: LayoutDetail }) {
+/**
+ * What the editor state, made once, reads from the page as it changes: can
+ * the page edit, the wedding's settings, the save session and the page's
+ * answers to the editor's events. Updated after every render.
+ */
+type Bridge = {
+  canEdit: boolean
+  wedding: EditorWedding
+  session: LayoutSession | null
+  events: EditorEvents
+}
+
+function createBridge(wedding: EditorWedding) {
+  let state: Bridge = { canEdit: false, wedding, session: null, events: {} }
+  return {
+    get: () => state,
+    set(patch: Partial<Bridge>) {
+      state = { ...state, ...patch }
+    },
+  }
+}
+
+/** What the editor reads from the wedding: the grid and lengths unit, and the narrowest gap between tables. */
+export type EditorWedding = { unit: LengthUnit; minGapCm: number }
+
+const DEFAULT_WEDDING: EditorWedding = { unit: 'ft', minGapCm: DEFAULT_MIN_GAP_CM }
+/** The bottom sheet's strip on phones: its 44 px handle and the 44 px tabs. */
+const SHEET_STRIP_PX = 88
+
+/** Where the zoom controls' bottom edge sits above the canvas's bottom: on phones, on top of the sheet's strip. */
+function zoomControlsBottom(phone: boolean): number {
+  return phone ? SHEET_STRIP_PX + 8 : 8
+}
+
+/**
+ * What covers the canvas's edges, each with 8 px to spare: the toolbar along
+ * the top, and along the bottom the zoom controls (on phones above the
+ * sheet's strip). The overlay keeps the + and − and More buttons inside the
+ * rest, so a table near an edge never has them hidden.
+ */
+export function canvasInsets(phone: boolean): ScreenInsets {
+  return Object.freeze({
+    top: PHONE_TOOLBAR_BOTTOM_PX + 8,
+    right: 0,
+    bottom: zoomControlsBottom(phone) + ZOOM_CONTROLS_PX + 8,
+    left: 0,
+  })
+}
+
+const PHONE_CANVAS_INSETS = canvasInsets(true)
+const DESKTOP_CANVAS_INSETS = canvasInsets(false)
+
+export function EditorShell({ layout, wedding = DEFAULT_WEDDING }: { layout: LayoutDetail; wedding?: EditorWedding }) {
   const router = useRouter()
   const pathname = usePathname()
   const author = useAuthor()
@@ -55,10 +131,83 @@ export function EditorShell({ layout }: { layout: LayoutDetail }) {
   const [copyError, setCopyError] = useState<string | null>(null)
   const sessionRef = useRef<LayoutSession | null>(null)
 
-  const doc = useSyncExternalStore(
-    store.subscribe,
-    () => store.getState(),
-    () => store.getState(),
+  const [tab, setTab] = useState<PanelTab>('properties')
+  const [sheet, setSheet] = useState<SheetSnap>('strip')
+  const [shapesOpen, setShapesOpen] = useState(false)
+  const [menu, setMenu] = useState<{ at: { x: number; y: number }; menu: CanvasMenu } | null>(null)
+  const [unseat, setUnseat] = useState<UnseatAsk | null>(null)
+  const phone = usePhoneLayout()
+  const canvasAreaRef = useRef<HTMLDivElement>(null)
+
+  const canEdit = saver !== null && author !== null && conflict === null && !leaving
+  const [bridge] = useState(() => createBridge(wedding))
+  useEffect(() => {
+    bridge.set({ canEdit, wedding })
+  })
+
+  const [editor] = useState(() =>
+    createEditorState({
+      layoutId: layout.id,
+      store,
+      canEdit: () => bridge.get().canEdit,
+      onCommit: (canvas) => bridge.get().session?.noteEdit(canvas),
+      settings: () => {
+        const w = bridge.get().wedding
+        return { unit: w.unit, minGapCm: w.minGapCm }
+      },
+      venueItems: () => (initial.template && !initial.template.deleted ? initial.template.fixedItems : []),
+      events: {
+        onContextMenu: (request) => bridge.get().events.onContextMenu?.(request),
+        onTap: (tap) => bridge.get().events.onTap?.(tap),
+        onRefused: () => bridge.get().events.onRefused?.(),
+      },
+    }),
+  )
+
+  // Strict Mode runs effects twice in development, so the editor is torn down
+  // only once nothing has mounted it again.
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      setTimeout(() => {
+        if (!mounted.current) editor.destroy()
+      }, 0)
+    }
+  }, [editor])
+
+  useEffect(() => {
+    editor.setUnit(wedding.unit)
+  }, [editor, wedding.unit])
+
+  const mode = useStoreSelector(editor.ui, (s) => s.mode)
+  const deviceKnown = useStoreSelector(editor.ui, (s) => s.deviceKnown)
+
+  // The first visit on this device fits the content once the side panels have
+  // their places (mount() fits before they show).
+  const hadCamera = useRef<boolean | null>(null)
+  useLayoutEffect(() => {
+    if (hadCamera.current === null) hadCamera.current = readDeviceView(browserStorage(), initial.id).camera !== null
+  }, [initial.id])
+  const refitted = useRef(false)
+  useEffect(() => {
+    if (!deviceKnown || refitted.current || hadCamera.current !== false) return
+    const frame = requestAnimationFrame(() => {
+      refitted.current = true
+      editor.camera.measure()
+      editor.actions.zoomFit()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [deviceKnown, editor])
+
+  // Leaving Edit mode closes the shape drawer.
+  useEffect(
+    () =>
+      editor.ui.subscribe(() => {
+        if (editor.ui.getState().mode === 'view') setShapesOpen(false)
+      }),
+    [editor],
   )
 
   useEffect(() => {
@@ -76,11 +225,13 @@ export function EditorShell({ layout }: { layout: LayoutDetail }) {
       },
     })
     sessionRef.current = session
+    bridge.set({ session })
     return () => {
       session.close()
       sessionRef.current = null
+      bridge.set({ session: null })
     }
-  }, [initial, store])
+  }, [initial, store, bridge])
 
   useUnloadGuard(saver)
 
@@ -97,49 +248,54 @@ export function EditorShell({ layout }: { layout: LayoutDetail }) {
     return () => clearTimeout(timer)
   }, [notice])
 
-  const canEdit = saver !== null && author !== null && conflict === null && !leaving
-  const canEditRef = useRef(canEdit)
-  useEffect(() => {
-    canEditRef.current = canEdit
-  })
+  // View mode has no shape panel.
+  const drawerOpen = shapesOpen && mode === 'edit'
 
-  const commit = useCallback((next: Canvas | null) => {
-    if (next) sessionRef.current?.noteEdit(next)
+  const onSeatRequest = useCallback((tableId: string, request: SeatRequest) => {
+    if (request.status === 'confirm') setUnseat({ tableId, unseated: request.unseated, confirm: request.confirm })
   }, [])
 
-  const addTable = useCallback(() => {
-    if (!canEditRef.current) return
-    const id = randomId()
-    commit(store.edit('Add table', (canvas) => addRoundTable(canvas, id)))
-  }, [commit, store])
+  const onConfirmUnseat = useCallback((request: UnseatConfirm) => setUnseat(request), [])
 
-  const undo = useCallback(() => {
-    if (canEditRef.current) commit(store.undo())
-  }, [commit, store])
+  const showDetails = useCallback(() => {
+    setTab('properties')
+    if (phone) setSheet((s) => (s === 'strip' ? 'half' : s))
+  }, [phone])
 
-  const redo = useCallback(() => {
-    if (canEditRef.current) commit(store.redo())
-  }, [commit, store])
-
-  // Cmd/Ctrl+Z undoes; Cmd/Ctrl+Shift+Z (or Ctrl+Y) redoes. Not while typing, and not behind a dialog.
   useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey) return
-      const target = event.target as HTMLElement | null
-      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return
-      if (document.querySelector('[aria-modal="true"]')) return
-      const key = event.key.toLowerCase()
-      if (key === 'z' && !event.shiftKey) {
-        event.preventDefault()
-        undo()
-      } else if ((key === 'z' && event.shiftKey) || (key === 'y' && event.ctrlKey && !event.metaKey)) {
-        event.preventDefault()
-        redo()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [undo, redo])
+    bridge.set({
+      events: {
+        onContextMenu(request: ContextMenuRequest) {
+          const ui = editor.ui.getState()
+          const selected = new Set(ui.selection)
+          const selection = editor.store.getState().canvas.items.filter((i: Item) => selected.has(i.id))
+          const built = canvasMenu({
+            target: request.target,
+            selection,
+            guestCount: ui.guestSeats.length,
+            mode: ui.mode,
+            phone,
+            canPaste: editor.clipboard.read() !== null,
+            pasteAt: editor.camera.screenToWorld(request.at),
+            actions: editor.actions,
+            onSeatRequest,
+            onDetails: showDetails,
+          })
+          if (!built) return
+          // Screen points are from the viewport's top left; the menu wants the window's.
+          const origin = editor.camera.clientToScreen(0, 0)
+          setMenu({ at: { x: request.at.x - origin.x, y: request.at.y - origin.y }, menu: built })
+        },
+        onTap({ target }) {
+          if (editor.ui.getState().mode === 'view' && isTableTarget(target)) showDetails()
+        },
+        onRefused() {
+          if (editor.ui.getState().mode === 'view') setNotice('Switch to Edit to change the plan.')
+          else if (getAuthor() === null) setNotice('Pick Noa or Aiden at the top first.')
+        },
+      },
+    })
+  })
 
   async function loadTheirs() {
     await sessionRef.current?.loadTheirs()
@@ -199,91 +355,120 @@ export function EditorShell({ layout }: { layout: LayoutDetail }) {
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
+  const venue = useMemo(() => (initial.template && !initial.template.deleted ? initial.template.fixedItems : []), [initial.template])
+  const blank = initial.venueTemplateId === null
+  const venueLabel = blank ? 'Blank canvas' : initial.venueDeleted ? `${initial.venueName ?? 'Venue'} (deleted)` : (initial.venueName ?? 'Venue')
+  const editorUi = useMemo<EditorUi>(
+    () => ({ unit: wedding.unit, phone, layoutName: name, venueLabel, onSeatRequest, showDetails }),
+    [wedding.unit, phone, name, venueLabel, onSeatRequest, showDetails],
+  )
+  const dropTarget = useCallback(() => canvasAreaRef.current?.querySelector<HTMLElement>('[data-editor-viewport]') ?? null, [])
+  const hint = saver !== null && author === null ? 'Pick Noa or Aiden to start editing.' : null
+  const panelIds = usePanelIds()
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center gap-2 border-b border-stone-200 bg-white px-2 py-1 sm:px-3">
-        <Link
-          href={backHref}
-          onClick={goBack}
-          aria-label="Back to layouts"
-          className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-sm text-stone-700 hover:bg-stone-100"
-        >
-          <svg aria-hidden="true" viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <path d="M12 4l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <span className="hidden sm:inline">Layouts</span>
-        </Link>
-        <h1 className="min-w-0 flex-1">
-          <InlineName
-            value={name}
-            label="Layout name"
-            textClassName="text-base font-semibold sm:text-lg"
-            testId="layout-title"
-            onSave={async (next) => {
-              const updated = await updateLayout(initial.id, { name: next })
-              setName(updated.name)
-            }}
-          />
-        </h1>
-        <SaveStatusSlot status={status} />
-        <AuthorSwitch compact />
-      </header>
-
-      <SaveFailedBanner
-        status={status}
-        gone={gone}
-        storedLocally={storedLocally}
-        loginHref={`/login?next=${encodeURIComponent(pathname)}`}
-        copying={copying}
-        copyError={copyError}
-        onSaveCopy={() => void saveCopy()}
-        onDownload={download}
-      />
-      <NotStoredBanner message={notStoredAlert(status, storedLocally)} />
-
-      <div className="flex flex-wrap items-center gap-2 border-b border-stone-200 bg-white px-2 py-2 sm:px-3">
-        <button type="button" className={primaryButton} onClick={addTable} disabled={!canEdit}>
-          Add round table
-        </button>
-        <button
-          type="button"
-          className={secondaryButton}
-          onClick={undo}
-          disabled={!canEdit || !doc.canUndo}
-          aria-keyshortcuts="Control+Z Meta+Z"
-        >
-          Undo
-        </button>
-        <button
-          type="button"
-          className={secondaryButton}
-          onClick={redo}
-          disabled={!canEdit || !doc.canRedo}
-          aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y"
-        >
-          Redo
-        </button>
-        {saver !== null && author === null && (
-          <p className="text-sm text-stone-600">Pick Noa or Aiden to start editing.</p>
-        )}
-      </div>
-
-      <div className="relative min-h-0 flex-1 bg-stone-50">
-        <BareCanvas store={store} />
-        {notice && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center px-4">
-            <p
-              role="status"
-              data-testid="editor-notice"
-              className="rounded-full bg-stone-900 px-4 py-2 text-sm text-white shadow-lg"
+    <EditorStateProvider state={editor}>
+      <EditorUiProvider value={editorUi}>
+        <div className="flex min-h-0 flex-1 flex-col" data-editor-root="" data-mode={deviceKnown ? mode : undefined} data-phone={phone ? 'true' : undefined}>
+          <header className="flex items-center gap-1 border-b border-stone-200 bg-white px-2 py-1 sm:gap-2 sm:px-3">
+            <Link
+              href={backHref}
+              onClick={goBack}
+              aria-label="Back to layouts"
+              className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-sm text-stone-700 hover:bg-stone-100"
             >
-              {notice}
-            </p>
-          </div>
-        )}
-      </div>
+              <svg aria-hidden="true" viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M12 4l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span className="hidden sm:inline">Layouts</span>
+            </Link>
+            <h1 className="min-w-0 flex-1">
+              <InlineName
+                value={name}
+                label="Layout name"
+                textClassName="text-base font-semibold sm:text-lg"
+                testId="layout-title"
+                onSave={async (next) => {
+                  const updated = await updateLayout(initial.id, { name: next })
+                  setName(updated.name)
+                }}
+              />
+            </h1>
+            <SaveStatusSlot status={status} />
+            <ModeSwitch compact={phone} />
+            <AuthorSwitch compact />
+          </header>
 
-      <ConflictDialog conflict={conflict} me={author} onLoadTheirs={loadTheirs} onKeepMine={keepMine} />
-    </div>
+          <SaveFailedBanner
+            status={status}
+            gone={gone}
+            storedLocally={storedLocally}
+            loginHref={`/login?next=${encodeURIComponent(pathname)}`}
+            copying={copying}
+            copyError={copyError}
+            onSaveCopy={() => void saveCopy()}
+            onDownload={download}
+          />
+          <NotStoredBanner message={notStoredAlert(status, storedLocally)} />
+
+          <div className="relative flex min-h-0 flex-1 overflow-hidden">
+            {!phone && mode === 'edit' && (
+              <aside aria-label="Shapes" className="hidden w-48 shrink-0 overflow-y-auto overscroll-contain border-r border-stone-200 bg-stone-50 md:block lg:w-56">
+                <ShapePanel blank={blank} disabled={!canEdit} dropTarget={dropTarget} />
+              </aside>
+            )}
+
+            <div ref={canvasAreaRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+              <CanvasViewport venue={venue} onConfirmUnseat={onConfirmUnseat} insets={phone ? PHONE_CANVAS_INSETS : DESKTOP_CANVAS_INSETS} />
+              <CanvasToolbar phone={phone} canEdit={canEdit} onOpenShapes={() => setShapesOpen(true)} hint={hint} />
+              <div className="absolute right-2 z-10" style={{ bottom: zoomControlsBottom(phone) }}>
+                <ZoomControls />
+              </div>
+              {notice && (
+                <div
+                  className="pointer-events-none absolute inset-x-0 z-10 flex justify-center px-4"
+                  style={{ bottom: phone ? SHEET_STRIP_PX + 64 : 64 }}
+                >
+                  <p role="status" data-testid="editor-notice" className="rounded-full bg-stone-900 px-4 py-2 text-sm text-white shadow-lg">
+                    {notice}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {!phone && <RightPanel tab={tab} onTab={setTab} />}
+
+            {phone && (
+              <BottomSheet
+                snap={sheet}
+                onSnapChange={setSheet}
+                label="Details"
+                stripPx={SHEET_STRIP_PX}
+                testId="bottom-sheet"
+                header={
+                  <PanelTabs
+                    tab={tab}
+                    ids={panelIds}
+                    onSelect={(next) => {
+                      setTab(next)
+                      if (sheet === 'strip') setSheet('half')
+                    }}
+                  />
+                }
+              >
+                <PanelContent tab={tab} ids={panelIds} />
+              </BottomSheet>
+            )}
+            {phone && (
+              <ShapeDrawer open={drawerOpen} onClose={() => setShapesOpen(false)} blank={blank} disabled={!canEdit} dropTarget={dropTarget} />
+            )}
+          </div>
+
+          <ConflictDialog conflict={conflict} me={author} onLoadTheirs={loadTheirs} onKeepMine={keepMine} />
+          <UnseatDialog ask={unseat} canvas={store.getState().canvas} onClose={() => setUnseat(null)} />
+          <ContextMenu at={menu?.at ?? null} items={menu?.menu.items ?? []} label={menu?.menu.label ?? 'Menu'} onClose={() => setMenu(null)} testId="canvas-menu" />
+        </div>
+      </EditorUiProvider>
+    </EditorStateProvider>
   )
 }

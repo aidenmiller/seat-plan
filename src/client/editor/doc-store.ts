@@ -8,8 +8,11 @@
  * - undo() / redo(): step through the history (src/domain/history.ts).
  * - replace(): the document came from the server; the history is cleared, so
  *   Undo can never bring back a snapshot that wipes the other person's work.
- * - patchOutsideHistory(): a change the server already made (seats it emptied);
- *   kept out of the history, and redo keeps it too.
+ * - patchOutsideHistory(): a change kept out of the history; redo keeps it too.
+ * - patchFromServer(): a change the server already made (seats it emptied).
+ *   The editor's document takes these over (routeServerPatches), so a drag
+ *   under way keeps going with the change in it; with no editor attached it
+ *   is patchOutsideHistory.
  *
  * Each returns the new canvas when it changed, so the caller can hand it to
  * the save engine.
@@ -33,7 +36,13 @@ export type DocStore = {
   redo(): Canvas | null
   replace(canvas: Canvas): void
   patchOutsideHistory(recipe: (canvas: Canvas) => Canvas): Canvas | null
+  /** A change the server already made: through the editor's handler when one is attached, else patchOutsideHistory. */
+  patchFromServer(recipe: (canvas: Canvas) => Canvas): Canvas | null
+  /** The editor's document takes server patches from now on. Returns a function that hands them back. */
+  routeServerPatches(handler: ServerPatchHandler): () => void
 }
+
+export type ServerPatchHandler = (recipe: (canvas: Canvas) => Canvas) => Canvas | null
 
 function state(canvas: Canvas, history: History<Canvas>): DocState {
   return { canvas, history, canUndo: canUndo(history), canRedo: canRedo(history) }
@@ -42,10 +51,18 @@ function state(canvas: Canvas, history: History<Canvas>): DocState {
 export function createDocStore(initial: Canvas, historyLimit?: number): DocStore {
   let current = state(initial, emptyHistory<Canvas>(historyLimit))
   const listeners = new Set<() => void>()
+  let serverPatches: ServerPatchHandler | null = null
 
   function set(next: DocState) {
     current = next
     for (const listener of [...listeners]) listener()
+  }
+
+  function patchOutsideHistory(recipe: (canvas: Canvas) => Canvas): Canvas | null {
+    const after = recipe(current.canvas)
+    if (after === current.canvas) return null
+    set(state(after, current.history))
+    return after
   }
 
   return {
@@ -84,11 +101,17 @@ export function createDocStore(initial: Canvas, historyLimit?: number): DocStore
       set(state(canvas, clearHistory(current.history)))
     },
 
-    patchOutsideHistory(recipe) {
-      const after = recipe(current.canvas)
-      if (after === current.canvas) return null
-      set(state(after, current.history))
-      return after
+    patchOutsideHistory,
+
+    patchFromServer(recipe) {
+      return serverPatches ? serverPatches(recipe) : patchOutsideHistory(recipe)
+    },
+
+    routeServerPatches(handler) {
+      serverPatches = handler
+      return () => {
+        if (serverPatches === handler) serverPatches = null
+      }
     },
   }
 }

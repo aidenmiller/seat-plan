@@ -30,10 +30,11 @@ You need Node 22 and a Postgres 16 server.
 | `npm run build`, `npm start` | Production build and server |
 | `npm run typecheck`, `npm run lint` | TypeScript and ESLint |
 | `npm test` | Vitest: unit tests and database tests (needs `seating_test`, see below) |
-| `npm run e2e` | Playwright on a production build, at 1440 px and 390 px (needs `seating_e2e`) |
+| `npm run e2e` | Playwright on a production build, at 1440 px and 390 px with touch (needs `seating_e2e`). `E2E_SKIP_BUILD=1` reuses the last build. The speed test (`e2e/perf.spec.ts`) runs in the 1440 px project only. |
 | `npm run db:generate` | Make a migration from changes to `src/server/db/schema.ts` |
 | `npm run db:migrate` | Apply migrations to `DATABASE_URL_UNPOOLED`, else `DATABASE_URL` (the seed uses the same order) |
 | `npm run seed` | Demo data: "Demo wedding" with two reception layouts, "Reception plan A" (blank canvas, three round tables) and "Beach Club reception" (Toronto Beach Club). Guests, groups and rules arrive with later milestones. Safe to run twice. It runs tsx with the `react-server` condition, so it can write layouts through the app's own server code. |
+| `npm run seed:perf` | The speed test's layout, for trying pan and zoom by hand on a phone or laptop: a "Speed test" wedding with 400 made-up guests and one layout, "40 tables" (40 round tables of 10 seats, every seat taken, and 100 shapes). Safe to run twice. |
 | `npm run check:secrets` | Fails if the site password is in the built browser files or in git history |
 
 Tests use local databases only and refuse any other host. Create them once:

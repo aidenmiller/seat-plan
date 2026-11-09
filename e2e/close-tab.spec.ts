@@ -14,7 +14,7 @@
  */
 import { expect, test, type BrowserContext, type Page, type TestInfo } from '@playwright/test'
 import {
-  addTableButton,
+  addRoundTable,
   apiAddTables,
   apiCreateLayout,
   apiCreateWedding,
@@ -48,7 +48,7 @@ async function openNewLayout(context: BrowserContext, page: Page, testInfo: Test
  */
 async function editOfflineAndClose(context: BrowserContext, page: Page): Promise<string[]> {
   await context.setOffline(true)
-  await addTableButton(page).click()
+  await addRoundTable(page)
   const editedAt = Date.now()
   await expect(canvasTables(page)).toHaveCount(1)
   const ids = await tableIds(page)
@@ -94,7 +94,7 @@ test('closing the tab right after an edit still sends the last-chance save', asy
   const { layout } = await openNewLayout(context, page, testInfo, 'Close tab keepalive')
 
   // No route here: with one, Chromium sometimes holds the keepalive request and drops it when the page goes.
-  await addTableButton(page).click()
+  await addRoundTable(page)
   const editedAt = Date.now()
   await expect(canvasTables(page)).toHaveCount(1)
   const ids = await tableIds(page)

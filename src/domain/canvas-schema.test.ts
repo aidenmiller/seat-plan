@@ -33,6 +33,14 @@ describe('canvasSchema', () => {
     expect(canvasSchema.safeParse({ schemaVersion: 1, items: [roundTable()] }).success).toBe(true)
   })
 
+  it('takes tables with or without the side that gives up a seat (A3), so older layouts still load', () => {
+    expect(canvasSchema.safeParse({ schemaVersion: 1, items: [roundTable()] }).success).toBe(true)
+    const withSide = canvasSchema.safeParse({ schemaVersion: 1, items: [roundTable({ shape: 'rect', fewerSeatsSide: 'top' })] })
+    expect(withSide.success).toBe(true)
+    expect(withSide.data?.items[0]).toMatchObject({ fewerSeatsSide: 'top' })
+    expect(canvasSchema.safeParse({ schemaVersion: 1, items: [{ ...roundTable(), fewerSeatsSide: 'middle' }] }).success).toBe(false)
+  })
+
   it('rejects a seat list that does not match the seat count', () => {
     const bad = roundTable({ seatCount: 3 })
     expect(canvasSchema.safeParse({ schemaVersion: 1, items: [bad] }).success).toBe(false)

@@ -2,8 +2,12 @@ import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { emptyCanvas } from '@/domain/canvas-schema'
+import { makeItem } from '@/domain/presets'
 import type { LayoutDetail } from '@/shared/api'
-import { EditorShell } from './EditorShell'
+import { canvasInsets, EditorShell } from './EditorShell'
+import { projectOverlay, TAP_TARGET_PX } from './overlay/geometry'
+import { PHONE_TOOLBAR_BOTTOM_PX } from './panels/CanvasToolbar'
+import { ZOOM_CONTROLS_PX } from './panels/ZoomControls'
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
@@ -47,5 +51,40 @@ describe('EditorShell top bar', () => {
     const slot = /<p role="status"[^>]*data-testid="save-status"[^>]*>/.exec(markup)![0]
     expect(slot).toMatch(/class="[^"]*\bw-24\b[^"]*\bshrink-0\b[^"]*\btruncate\b/)
     expect(slot).toContain('title="Opening…"')
+  })
+})
+
+describe('canvasInsets', () => {
+  // A phone canvas 390 px wide and 700 tall; a laptop one 900 by 800.
+  const phone = { width: 390, height: 700 }
+  const laptop = { width: 900, height: 800 }
+  const zoomRow = (size: { height: number }, phoneLayout: boolean) => {
+    const bottom = size.height - (phoneLayout ? 88 + 8 : 8)
+    return { top: bottom - ZOOM_CONTROLS_PX, bottom }
+  }
+
+  it('keeps the + and − and More buttons of a table at the bottom clear of the zoom controls and, on phones, the sheet', () => {
+    for (const [size, phoneLayout] of [
+      [phone, true],
+      [laptop, false],
+    ] as const) {
+      const insets = canvasInsets(phoneLayout)
+      // A round table centered 10 px above the bottom edge of the canvas, at its right side, at 100%.
+      const table = makeItem('round', { x: 0, y: 0 }, 't', emptyCanvas())
+      const camera = { zoom: 1, x: size.width - 140, y: size.height - 10 }
+      const s = projectOverlay({ selected: [table], mode: 'edit', marquee: null, guides: [], gap: null }, camera, size, { insets })
+      const row = zoomRow(size, phoneLayout)
+      for (const c of [s.seatButtons!.plus, s.seatButtons!.minus, s.menuButton!.at]) {
+        expect(c.y + TAP_TARGET_PX / 2).toBeLessThanOrEqual(row.top - 8)
+        expect(c.y - TAP_TARGET_PX / 2).toBeGreaterThanOrEqual(insets.top)
+      }
+    }
+  })
+
+  it('keeps them below the toolbar at the top on every screen size', () => {
+    expect(canvasInsets(true).top).toBe(PHONE_TOOLBAR_BOTTOM_PX + 8)
+    expect(canvasInsets(false).top).toBe(PHONE_TOOLBAR_BOTTOM_PX + 8)
+    expect(canvasInsets(true).bottom).toBe(88 + 8 + ZOOM_CONTROLS_PX + 8)
+    expect(canvasInsets(false).bottom).toBe(8 + ZOOM_CONTROLS_PX + 8)
   })
 })

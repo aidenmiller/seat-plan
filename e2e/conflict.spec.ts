@@ -10,7 +10,7 @@
  */
 import { expect, test, type BrowserContext, type Page, type TestInfo } from '@playwright/test'
 import {
-  addTableButton,
+  addRoundTable,
   apiCreateLayout,
   apiCreateWedding,
   apiGetLayout,
@@ -45,9 +45,9 @@ async function twoTabsInConflict(context: BrowserContext, page: Page, testInfo: 
   // Both tabs edit while no save can land: the first adds two tables, the second one.
   const firstSaves = await holdLayoutSaves(first)
   const secondSaves = await holdLayoutSaves(second)
-  await addTableButton(first).click()
-  await addTableButton(first).click()
-  await addTableButton(second).click()
+  await addRoundTable(first)
+  await addRoundTable(first)
+  await addRoundTable(second)
   await expect(canvasTables(first)).toHaveCount(2)
   await expect(canvasTables(second)).toHaveCount(1)
   await firstSaves.waitForHeld()
@@ -133,7 +133,7 @@ test('the second save warns, and "Load their version" shows the first tab\'s tab
   await expect(second.getByRole('button', { name: 'Undo' })).toBeDisabled()
 
   // Editing goes on from their version.
-  await addTableButton(second).click()
+  await addRoundTable(second)
   await expect(canvasTables(second)).toHaveCount(3)
   await expectSaved(second)
   const stored = await apiGetLayout(second.request, layout.id)

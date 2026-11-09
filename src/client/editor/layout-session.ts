@@ -221,8 +221,9 @@ export function openLayoutSession({ layout, store, getAuthor, events, deps }: Op
         }
       },
       onDroppedSeats(dropped) {
-        // The server already emptied these seats; do the same on screen, outside undo.
-        store.patchOutsideHistory((canvas) => clearDroppedSeats(canvas, dropped))
+        // The server already emptied these seats; do the same on screen, outside
+        // undo, through the editor's document so a drag under way keeps going.
+        store.patchFromServer((canvas) => clearDroppedSeats(canvas, dropped))
       },
     })
     events.onStatus(saver.getStatus())
