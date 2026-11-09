@@ -1,30 +1,40 @@
 /**
  * Acceptance check 2: no page or API route returns data without the cookie,
  * and the password never reaches the browser. New pages and routes join these
- * lists as each milestone adds them.
+ * lists as each milestone adds them (milestone 4: the guest list, its import
+ * page, the sample file, and the guest and group routes).
  */
 import { expect, request as playwrightRequest, test } from '@playwright/test'
+import { apiAddGuests, apiCreateGroup, apiListGroups, apiListGuests } from './guest-list'
 import { apiCreateLayout, apiCreateWedding, signIn, signInRequest, sitePassword } from './helpers'
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 const NO_ID = '00000000-0000-4000-8000-000000000000'
 
-/** Every page, with `:wedding` and `:layout` standing for ids. */
+/** Every page, with `:wedding` and `:layout` standing for ids, and the sample guest file. */
 const PAGE_PATHS = [
   '/',
   '/w/:wedding',
   '/w/:wedding/layouts',
   '/w/:wedding/guests',
+  '/w/:wedding/guests/import',
   '/w/:wedding/groups',
   '/w/:wedding/rules',
   '/w/:wedding/venues',
   '/w/:wedding/links',
   '/w/:wedding/layouts/:layout',
   '/venues/:layout',
+  '/samples/guests-sample.csv',
 ]
 
-/** Every API route but the login route, with a body where the route takes one. */
+/** One row of an import, as the column step sends it. */
+const IMPORT_ROW = { rowNumber: 2, firstName: 'Sneaky', lastName: 'Guest', groups: [], extraNotes: [] }
+
+/**
+ * Every API route but the login route, with a body where the route takes
+ * one; `:guest` and `:group` stand for ids too.
+ */
 const API_ROUTES: { method: Method; path: string; body?: unknown }[] = [
   { method: 'GET', path: '/api/weddings' },
   { method: 'POST', path: '/api/weddings', body: { name: 'Sneaky' } },
@@ -47,16 +57,36 @@ const API_ROUTES: { method: Method; path: string; body?: unknown }[] = [
   { method: 'POST', path: '/api/layouts/:layout/duplicate', body: { editedBy: 'Noa' } },
   { method: 'GET', path: '/api/venues' },
   { method: 'POST', path: '/api/auth/logout' },
+  // Guests (milestone 4).
+  { method: 'GET', path: '/api/weddings/:wedding/guests' },
+  { method: 'POST', path: '/api/weddings/:wedding/guests', body: { firstName: 'Sneaky', lastName: 'Guest' } },
+  { method: 'POST', path: '/api/weddings/:wedding/guests/bulk', body: { guests: [{ firstName: 'Sneaky', lastName: 'Guest' }] } },
+  { method: 'GET', path: '/api/weddings/:wedding/guests/export' },
+  { method: 'POST', path: '/api/weddings/:wedding/guests/import/preview', body: { rows: [IMPORT_ROW] } },
+  { method: 'POST', path: '/api/weddings/:wedding/guests/import/commit', body: { rows: [IMPORT_ROW], removeMissing: true } },
+  { method: 'PATCH', path: '/api/guests/:guest', body: { firstName: 'Sneaky' } },
+  { method: 'DELETE', path: '/api/guests/:guest' },
+  { method: 'GET', path: '/api/guests/:guest/delete-summary' },
+  // Groups (milestone 4).
+  { method: 'GET', path: '/api/weddings/:wedding/groups' },
+  { method: 'POST', path: '/api/weddings/:wedding/groups', body: { name: 'Sneaky' } },
+  { method: 'PATCH', path: '/api/groups/:group', body: { name: 'Sneaky' } },
+  { method: 'DELETE', path: '/api/groups/:group' },
+  { method: 'POST', path: '/api/groups/:group/members', body: { guestIds: [NO_ID] } },
+  { method: 'DELETE', path: '/api/groups/:group/members/:guest' },
 ]
 
-function fill(path: string, ids: { wedding: string; layout: string }): string {
-  return path.replace(':wedding', ids.wedding).replace(':layout', ids.layout)
+type Ids = { wedding: string; layout: string; guest: string; group: string }
+const NO_IDS: Ids = { wedding: NO_ID, layout: NO_ID, guest: NO_ID, group: NO_ID }
+
+function fill(path: string, ids: Ids): string {
+  return path.replace(':wedding', ids.wedding).replace(':layout', ids.layout).replace(':guest', ids.guest).replace(':group', ids.group)
 }
 
 test.describe('without the cookie', () => {
   for (const path of PAGE_PATHS) {
-    test(`page ${fill(path, { wedding: NO_ID, layout: NO_ID })} goes to the password page`, async ({ request }) => {
-      const res = await request.get(fill(path, { wedding: NO_ID, layout: NO_ID }), { maxRedirects: 0 })
+    test(`page ${fill(path, NO_IDS)} goes to the password page`, async ({ request }) => {
+      const res = await request.get(fill(path, NO_IDS), { maxRedirects: 0 })
       expect(res.status()).toBe(307)
       expect(res.headers()['location']).toMatch(/\/login/)
       expect(res.headers()['x-robots-tag']).toContain('noindex')
@@ -64,8 +94,8 @@ test.describe('without the cookie', () => {
   }
 
   for (const { method, path, body } of API_ROUTES) {
-    test(`${method} ${fill(path, { wedding: NO_ID, layout: NO_ID })} answers 401`, async ({ request }) => {
-      const res = await request.fetch(fill(path, { wedding: NO_ID, layout: NO_ID }), {
+    test(`${method} ${fill(path, NO_IDS)} answers 401`, async ({ request }) => {
+      const res = await request.fetch(fill(path, NO_IDS), {
         method,
         data: body,
         maxRedirects: 0,
@@ -75,29 +105,30 @@ test.describe('without the cookie', () => {
     })
   }
 
-  test('real weddings and layouts stay hidden, and nothing changes', async ({ request, baseURL }) => {
-    // Make a real wedding and layout as a signed-in visitor.
+  test('real weddings, layouts, guests and groups stay hidden, and nothing changes', async ({ request, baseURL }) => {
+    // Make a real wedding, layout, guest and group as a signed-in visitor.
     const owner = await playwrightRequest.newContext({ baseURL })
     try {
       await signInRequest(owner)
       const secret = `Hidden wedding ${Date.now()}`
       const wedding = await apiCreateWedding(owner, secret)
       const layout = await apiCreateLayout(owner, wedding.id, { name: `Hidden layout ${Date.now()}` })
-      const ids = { wedding: wedding.id, layout: layout.id }
+      const [guest] = await apiAddGuests(owner, wedding.id, [{ firstName: 'Hiddenfirst', lastName: `Hiddenlast${Date.now()}`, notes: 'Hidden note' }])
+      const group = await apiCreateGroup(owner, wedding.id, `Hidden group ${Date.now()}`, [guest.id])
+      const ids: Ids = { wedding: wedding.id, layout: layout.id, guest: guest.id, group: group.id }
+      const hidden = [secret, layout.name, guest.lastName, 'Hidden note', group.name]
 
       for (const path of PAGE_PATHS) {
         const res = await request.get(fill(path, ids), { maxRedirects: 0 })
         expect(res.status(), path).toBe(307)
         const text = await res.text()
-        expect(text, path).not.toContain(secret)
-        expect(text, path).not.toContain(layout.name)
+        for (const word of hidden) expect(text, path).not.toContain(word)
       }
       for (const { method, path, body } of API_ROUTES) {
         const res = await request.fetch(fill(path, ids), { method, data: body, maxRedirects: 0 })
         expect(res.status(), `${method} ${path}`).toBe(401)
         const text = await res.text()
-        expect(text, `${method} ${path}`).not.toContain(secret)
-        expect(text, `${method} ${path}`).not.toContain(layout.name)
+        for (const word of hidden) expect(text, `${method} ${path}`).not.toContain(word)
       }
 
       // The signed-out PATCH, DELETE and PUT changed nothing.
@@ -107,6 +138,11 @@ test.describe('without the cookie', () => {
       const layoutNow = await owner.get(`/api/layouts/${layout.id}`)
       expect(layoutNow.status()).toBe(200)
       expect(await layoutNow.json()).toMatchObject({ name: layout.name, version: 1 })
+      // No guest added or removed, the guest and the group as they were.
+      const guestsNow = await apiListGuests(owner, wedding.id)
+      expect(guestsNow.map((g) => [g.id, g.firstName, g.lastName])).toEqual([[guest.id, guest.firstName, guest.lastName]])
+      const groupsNow = await apiListGroups(owner, wedding.id)
+      expect(groupsNow.map((g) => [g.id, g.name, g.memberIds])).toEqual([[group.id, group.name, [guest.id]]])
     } finally {
       await owner.dispose()
     }
@@ -141,7 +177,14 @@ test('no response the app loads contains the password', async ({ page }) => {
   // The wedding pages and the editor too.
   const wedding = await apiCreateWedding(page.request, `Password check ${Date.now()}`)
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })
-  for (const path of [`/w/${wedding.id}/layouts`, `/w/${wedding.id}/guests`, `/w/${wedding.id}/layouts/${layout.id}`]) {
+  await apiAddGuests(page.request, wedding.id, [{ firstName: 'Ava', lastName: 'Cohen' }])
+  for (const path of [
+    `/w/${wedding.id}/layouts`,
+    `/w/${wedding.id}/guests`,
+    `/w/${wedding.id}/guests/import`,
+    `/w/${wedding.id}/groups`,
+    `/w/${wedding.id}/layouts/${layout.id}`,
+  ]) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
   }

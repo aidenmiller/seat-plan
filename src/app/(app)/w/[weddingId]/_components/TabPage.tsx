@@ -1,9 +1,12 @@
 import type { ReactNode } from 'react'
 
-/** The frame every wedding tab shares: a heading row and the tab's content. */
-export function TabPage({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
+/**
+ * The frame every wedding tab shares: a heading row and the tab's content.
+ * `wide` lets a tab with a wide table (the guest list) use up to 1536 px.
+ */
+export function TabPage({ title, actions, wide = false, children }: { title: string; actions?: ReactNode; wide?: boolean; children: ReactNode }) {
   return (
-    <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6">
+    <main className={`mx-auto w-full ${wide ? 'max-w-screen-2xl' : 'max-w-5xl'} flex-1 px-4 py-6`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
         {actions}

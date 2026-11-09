@@ -1,10 +1,11 @@
 /**
- * Straight to the end-to-end database, for data the app has no screen or
- * route for yet: guests arrive with milestone 4, but seat tests need someone
- * to sit down now. Local databases only.
+ * Straight to the end-to-end database, for setting up many guests in one
+ * statement (the speed test's 400). Tests that need a few guests can also
+ * use the guest routes (e2e/guest-list.ts). Local databases only.
  */
 import { randomUUID } from 'node:crypto'
 import pg from 'pg'
+import { nameKey } from '../src/domain/names'
 import { assertLocalDatabase } from '../test/db'
 
 /** Adds guests to a wedding and returns their ids, in order. */
@@ -20,7 +21,7 @@ export async function dbAddGuests(weddingId: string, names: readonly (readonly [
     await client.query(
       `insert into guests (id, wedding_id, first_name, last_name, name_key)
        select id, $1, f, l, k from unnest($2::uuid[], $3::text[], $4::text[], $5::text[]) as n(id, f, l, k)`,
-      [weddingId, ids, names.map((n) => n[0]), names.map((n) => n[1]), names.map(([f, l]) => `${f}|${l}`.toLowerCase())],
+      [weddingId, ids, names.map((n) => n[0]), names.map((n) => n[1]), names.map(([f, l]) => nameKey(f, l))],
     )
     return ids
   } finally {

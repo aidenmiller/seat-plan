@@ -33,7 +33,9 @@ import {
   zoomPercent,
   zoomTo as zoomCameraTo,
   centerOn as centerCameraOn,
+  NO_FIT_INSETS,
   type Camera,
+  type FitInsets,
   type Viewport,
 } from '@/domain/camera'
 import { levelForZoom, type DetailLevel } from '@/domain/detail-level'
@@ -98,8 +100,15 @@ export type CameraController = {
   zoomOut(): void
   /** 100%, about the viewport's center. */
   zoomReset(): void
-  /** Fits a world box (the content) in the viewport. */
+  /** Fits a world box (the content) in the viewport, less the fit insets. */
   fit(box: Box | null): void
+  /**
+   * What covers the viewport's edges (the toolbar, the zoom controls and on
+   * phones the bottom sheet's strip). Every fit (the zoom button, the canvas
+   * menu, Ctrl+1, the first fit on mount) keeps the content clear of them.
+   */
+  setFitInsets(insets: FitInsets): void
+  fitInsets(): FitInsets
   /** Shows a world point at the viewport's center, at `zoom` or the zoom now. */
   centerOn(world: Point, zoom?: number): void
   screenToWorld(screen: Point): Point
@@ -172,6 +181,7 @@ export function createCameraController(options: CameraControllerOptions = {}): C
   let drawn = live
   let unit: LengthUnit = options.gridUnit ?? 'ft'
   let size: Viewport = { width: 0, height: 0 }
+  let insets: FitInsets = NO_FIT_INSETS
   let origin = { left: 0, top: 0 }
   let targets: CameraTargets | null = null
   let frame = 0
@@ -272,7 +282,11 @@ export function createCameraController(options: CameraControllerOptions = {}): C
     zoomIn: () => change(stepZoom(live, size, 1), true),
     zoomOut: () => change(stepZoom(live, size, -1), true),
     zoomReset: () => change(zoomCameraTo(live, center(), 1), true),
-    fit: (box) => change(fitToContent(box, size), true),
+    fit: (box) => change(fitToContent(box, size, undefined, { insets }), true),
+    setFitInsets(next) {
+      insets = Object.freeze({ top: next.top, right: next.right, bottom: next.bottom, left: next.left })
+    },
+    fitInsets: () => insets,
     centerOn: (world, zoom) => change(centerCameraOn(live, world, size, zoom ?? live.zoom), true),
     screenToWorld: (screen) => toWorld(live, screen),
     worldToScreen: (world) => toScreen(live, world),

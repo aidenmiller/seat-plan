@@ -140,7 +140,12 @@ function DialogPanel({
       <div
         className="flex min-h-full items-center justify-center p-4"
         onMouseDown={(event) => {
-          if (dismissable && event.target === event.currentTarget) onCloseRef.current()
+          if (!dismissable || event.target !== event.currentTarget) return
+          // A field still open inside (a nickname being typed) saves on blur.
+          // Closing first would take it off the page before its blur runs.
+          const active = document.activeElement
+          if (active instanceof HTMLElement && panelRef.current?.contains(active)) active.blur()
+          onCloseRef.current()
         }}
       >
         <div

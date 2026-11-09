@@ -228,6 +228,30 @@ describe('the camera controller', () => {
     expect(clock.frameCount()).toBe(0)
   })
 
+  it('keeps the fitted content clear of the fit insets (phone toolbar and bottom sheet)', () => {
+    const clock = fakeScheduler()
+    const page = fakeTargets(390, 700)
+    const camera = createCameraController({ scheduler: clock.scheduler })
+    camera.attach(page.targets)
+    expect(camera.fitInsets()).toEqual({ top: 0, right: 0, bottom: 0, left: 0 })
+    const insets = { top: 66, right: 0, bottom: 154, left: 0 }
+    camera.setFitInsets(insets)
+    // Stored as a copy: changing the object passed in changes nothing.
+    insets.top = 500
+    expect(camera.fitInsets()).toEqual({ top: 66, right: 0, bottom: 154, left: 0 })
+    const box = { minX: 0, minY: 0, maxX: 1000, maxY: 2000 }
+    camera.fit(box)
+    expect(camera.get().zoom).toBeCloseTo((700 - 66 - 154 - 96) / 2000, 9)
+    expect(camera.worldToScreen({ x: 500, y: 0 }).y).toBeCloseTo(66 + 48, 9)
+    expect(camera.worldToScreen({ x: 500, y: 2000 }).y).toBeCloseTo(700 - 154 - 48, 9)
+    expect(camera.worldToScreen({ x: 500, y: 1000 }).x).toBeCloseTo(195, 9)
+    // Back to no insets: the whole viewport again, where the width decides.
+    camera.setFitInsets({ top: 0, right: 0, bottom: 0, left: 0 })
+    camera.fit(box)
+    expect(camera.get().zoom).toBeCloseTo(Math.min((390 - 96) / 1000, (700 - 96) / 2000), 9)
+    expect(camera.worldToScreen({ x: 500, y: 1000 })).toEqual({ x: 195, y: 350 })
+  })
+
   it('turns client coordinates into viewport coordinates', () => {
     const camera = createCameraController({ scheduler: fakeScheduler().scheduler })
     camera.attach(fakeTargets().targets)

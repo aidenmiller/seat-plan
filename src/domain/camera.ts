@@ -75,25 +75,54 @@ export function centerOn(camera: Camera, world: Point, viewport: Viewport, zoom:
   return { zoom: z, x: viewport.width / 2 - world.x * z, y: viewport.height / 2 - world.y * z }
 }
 
+/** What covers the viewport's edges (toolbar, zoom controls, a bottom sheet), in screen px. */
+export type FitInsets = { top: number; right: number; bottom: number; left: number }
+export const NO_FIT_INSETS: FitInsets = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 })
+
+const insetPx = (v: number) => (Number.isFinite(v) && v > 0 ? v : 0)
+
+/**
+ * The part of the viewport fit to content may use: the viewport less its
+ * insets. A pair of insets that would leave nothing (an unmeasured or tiny
+ * viewport) is ignored on that axis, so fit still frames the content.
+ */
+export function fitArea(viewport: Viewport, insets: FitInsets = NO_FIT_INSETS): { x: number; y: number; width: number; height: number } {
+  let left = insetPx(insets.left)
+  let right = insetPx(insets.right)
+  let top = insetPx(insets.top)
+  let bottom = insetPx(insets.bottom)
+  if (viewport.width - left - right < 1) left = right = 0
+  if (viewport.height - top - bottom < 1) top = bottom = 0
+  return { x: left, y: top, width: viewport.width - left - right, height: viewport.height - top - bottom }
+}
+
 /**
  * The camera that fits `box` in the viewport with `padding` screen pixels
- * around it, centered, never past `maxZoom`. An empty canvas (null box)
- * shows the origin at 100% in the middle.
+ * around it, centered, never past `maxZoom`. With `insets`, it fits and
+ * centers the box in the part of the viewport they leave free, so the
+ * toolbar and, on phones, the bottom sheet never cover it. An empty canvas
+ * (null box) shows the origin at 100% in the middle of that part.
  */
 export function fitToContent(
   box: Box | null,
   viewport: Viewport,
   padding: number = FIT_PADDING_PX,
-  options: { maxZoom?: number } = {},
+  options: { maxZoom?: number; insets?: FitInsets } = {},
 ): Camera {
-  const center = box ? { x: (box.minX + box.maxX) / 2, y: (box.minY + box.maxY) / 2 } : { x: 0, y: 0 }
-  if (!box) return centerOn(DEFAULT_CAMERA, center, viewport, 1)
+  const area = fitArea(viewport, options.insets)
+  const screenCenter = { x: area.x + area.width / 2, y: area.y + area.height / 2 }
+  const at = (world: Point, zoom: number): Camera => {
+    const z = clampZoom(zoom)
+    return { zoom: z, x: screenCenter.x - world.x * z, y: screenCenter.y - world.y * z }
+  }
+  if (!box) return at({ x: 0, y: 0 }, 1)
+  const center = { x: (box.minX + box.maxX) / 2, y: (box.minY + box.maxY) / 2 }
   const w = Math.max(box.maxX - box.minX, 1)
   const h = Math.max(box.maxY - box.minY, 1)
-  const availW = Math.max(viewport.width - 2 * padding, 1)
-  const availH = Math.max(viewport.height - 2 * padding, 1)
+  const availW = Math.max(area.width - 2 * padding, 1)
+  const availH = Math.max(area.height - 2 * padding, 1)
   const zoom = Math.min(availW / w, availH / h, options.maxZoom ?? FIT_MAX_ZOOM)
-  return centerOn(DEFAULT_CAMERA, center, viewport, zoom)
+  return at(center, zoom)
 }
 
 /** The part of the world the viewport shows. */

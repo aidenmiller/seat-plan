@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   centerOn,
   clampZoom,
+  fitArea,
   fitToContent,
   MAX_ZOOM,
   MIN_ZOOM,
@@ -130,6 +131,62 @@ describe('fit to content', () => {
   it('shows the origin at 100% for an empty canvas', () => {
     const cam = fitToContent(null, viewport)
     expect(cam).toEqual({ zoom: 1, x: 500, y: 400 })
+  })
+})
+
+describe('fit to content with insets', () => {
+  // A phone: 390 by 700, the toolbar's 66 px at the top, the sheet's strip and the zoom controls' 154 px at the bottom.
+  const phone = { width: 390, height: 700 }
+  const insets = { top: 66, right: 0, bottom: 154, left: 0 }
+
+  it('fits the box inside the part of the viewport the insets leave free', () => {
+    // 1000 by 2000 cm: the height decides, 480 px free less 2 x 48 padding.
+    const box = { minX: 0, minY: 0, maxX: 1000, maxY: 2000 }
+    const cam = fitToContent(box, phone, 48, { insets })
+    expect(cam.zoom).toBeCloseTo((700 - 66 - 154 - 96) / 2000, 9)
+    const top = worldToScreen(cam, { x: 500, y: 0 })
+    const bottom = worldToScreen(cam, { x: 500, y: 2000 })
+    expect(top.y).toBeCloseTo(66 + 48, 9)
+    expect(bottom.y).toBeCloseTo(700 - 154 - 48, 9)
+    expect(top.x).toBeCloseTo(195, 9)
+  })
+
+  it('centers the content between the insets, not in the whole viewport', () => {
+    const box = { minX: -100, minY: -100, maxX: 100, maxY: 100 }
+    const cam = fitToContent(box, phone, 48, { insets })
+    const center = worldToScreen(cam, { x: 0, y: 0 })
+    expect(center.y).toBeCloseTo(66 + (700 - 66 - 154) / 2, 9)
+    expect(center.x).toBeCloseTo(195, 9)
+  })
+
+  it('takes left and right insets too', () => {
+    const box = { minX: 0, minY: 0, maxX: 4000, maxY: 100 }
+    const cam = fitToContent(box, viewport, 0, { insets: { top: 0, right: 200, bottom: 0, left: 100 } })
+    expect(cam.zoom).toBeCloseTo(700 / 4000, 9)
+    expect(worldToScreen(cam, { x: 0, y: 0 }).x).toBeCloseTo(100, 9)
+    expect(worldToScreen(cam, { x: 4000, y: 0 }).x).toBeCloseTo(800, 9)
+  })
+
+  it('puts the origin of an empty canvas in the middle of the free part', () => {
+    expect(fitToContent(null, phone, 48, { insets })).toEqual({ zoom: 1, x: 195, y: 66 + 240 })
+  })
+
+  it('gives the same camera as before with no insets', () => {
+    const box = { minX: -1000, minY: -500, maxX: 3000, maxY: 1500 }
+    expect(fitToContent(box, viewport, 50, { insets: { top: 0, right: 0, bottom: 0, left: 0 } })).toEqual(
+      fitToContent(box, viewport, 50),
+    )
+  })
+
+  it('ignores insets that would leave no room, and bad numbers', () => {
+    expect(fitArea({ width: 0, height: 0 }, insets)).toEqual({ x: 0, y: 0, width: 0, height: 0 })
+    expect(fitArea({ width: 390, height: 100 }, insets)).toEqual({ x: 0, y: 0, width: 390, height: 100 })
+    expect(fitArea(phone, { top: Number.NaN, right: -5, bottom: 10, left: Infinity })).toEqual({
+      x: 0,
+      y: 0,
+      width: 390,
+      height: 690,
+    })
   })
 })
 

@@ -1,13 +1,16 @@
 /**
  * Guest removal across layouts (PLAN change 7, section 5 "Removing a guest"),
- * against the test database, including a save racing the removal.
+ * against the test database, including a save racing the removal; and
+ * partner links, imports, removals and member adds racing each other.
  */
 import { randomUUID } from 'node:crypto'
 import { and, eq, inArray } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 import { makeTestDb } from '../../../test/db'
 import { guests, layoutSeats, layouts, weddings } from '../db/schema'
-import { removeGuests } from './guests'
+import { commitImport } from './guest-import'
+import { addGroupMembers, createGroup } from './groups'
+import { removeGuests, updateGuest } from './guests'
 import { saveLayout } from './layouts'
 import {
   canvasOf,
@@ -167,5 +170,74 @@ describe('removeGuests', () => {
     }
     // Not asserted, since timing decides it, but useful when reading a failure.
     expect(orders.size).toBeGreaterThan(0)
+  })
+})
+
+describe('partner links and imports running at once', () => {
+  /** Every live link points both ways, and nobody has two partners. */
+  async function expectTwoWay(weddingId: string) {
+    const rows = await db
+      .select({ id: guests.id, partnerId: guests.partnerId, deletedAt: guests.deletedAt })
+      .from(guests)
+      .where(eq(guests.weddingId, weddingId))
+    const live = new Map(rows.filter((r) => r.deletedAt === null).map((r) => [r.id, r.partnerId]))
+    for (const r of rows) {
+      if (r.deletedAt !== null) {
+        expect(r.partnerId).toBeNull()
+        continue
+      }
+      if (r.partnerId === null) continue
+      expect(live.get(r.partnerId), `${r.id} -> ${r.partnerId}`).toBe(r.id)
+    }
+  }
+
+  it('concurrent partner changes always leave links two-way (20 rounds)', async () => {
+    const w = await makeWedding(db)
+    const ids = await Promise.all(['Ann', 'Ben', 'Cy', 'Dee', 'Eve'].map((n) => makeGuest(db, w, n)))
+    for (let round = 0; round < 20; round++) {
+      const pick = (k: number) => ids[(round * 3 + k) % ids.length]!
+      const results = await Promise.all([
+        updateGuest(db, pick(0), { partnerId: pick(1) }),
+        updateGuest(db, pick(1), { partnerId: pick(2) }),
+        updateGuest(db, pick(3), { partnerId: pick(0) }),
+        updateGuest(db, pick(2), { partnerId: null }),
+        updateGuest(db, pick(4), { coupleRuleEnabled: round % 2 === 0 }),
+      ])
+      for (const r of results) expect(r.status).toBe('updated')
+      await expectTwoWay(w)
+    }
+  })
+
+  it('an import, a removal, member adds and partner links at once never deadlock (10 rounds)', async () => {
+    const w = await makeWedding(db)
+    const rows = ['Ann', 'Ben', 'Cy', 'Dee'].map((first, i) => ({
+      rowNumber: i + 2,
+      firstName: first,
+      lastName: 'Lee',
+      partnerName: i % 2 === 0 ? `${['Ben', 'Ann', 'Dee', 'Cy'][i]} Lee` : undefined,
+      groups: ['Family'],
+      extraNotes: [],
+    }))
+    await commitImport(db, w, { rows, removeMissing: false })
+    const group = await createGroup(db, w, { name: 'Friends' })
+    if (group.status !== 'created') throw new Error(group.status)
+
+    for (let round = 0; round < 10; round++) {
+      const extra = await makeGuest(db, w, `Extra${round}`)
+      const doomed = await makeGuest(db, w, `Doomed${round}`)
+      const live = (await db.select({ id: guests.id }).from(guests).where(eq(guests.weddingId, w))).map((r) => r.id)
+      const layoutId = await makeLayout(db, w, canvasOf(roundTable('t1', 1, [doomed, extra])))
+      const results = await Promise.allSettled([
+        commitImport(db, w, { rows, removeMissing: false }),
+        removeGuests(db, w, [doomed]),
+        addGroupMembers(db, group.group.id, [extra]),
+        updateGuest(db, extra, { partnerId: live[round % live.length] === extra ? null : live[round % live.length]! }),
+        save(layoutId, 1, canvasOf(roundTable('t1', 1, [doomed, extra]))),
+      ])
+      for (const r of results) expect(r.status, r.status === 'rejected' ? String(r.reason) : '').toBe('fulfilled')
+      await expectTwoWay(w)
+      const seats = canvasSeats((await layoutRow(db, layoutId)).canvas).map((s) => s.guestId)
+      expect(seats).not.toContain(doomed)
+    }
   })
 })

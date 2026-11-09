@@ -383,7 +383,13 @@ test('zoom buttons step the zoom, show the percent and fit the content', async (
     await expectZoom(100)
   }
 
-  // Fit to content: both tables on screen, their middle at the canvas's middle.
+  // Fit to content: both tables on screen, their middle at the middle of the
+  // canvas less what covers its edges (EditorShell's canvasInsets): the
+  // toolbar's band along the top (58 px, PHONE_TOOLBAR_BOTTOM_PX) and the zoom
+  // controls along the bottom, which sit above the sheet's strip on a phone,
+  // each with 8 px to spare. On a laptop the two bands are equal, so that is
+  // the canvas's own middle.
+  const fitArea = { top: view.y + 58 + 8, bottom: box.y - 8 }
   await press(page, button('Fit to content'))
   const camera = await settledCamera(page)
   for (const id of ids) {
@@ -396,7 +402,7 @@ test('zoom buttons step the zoom, show the percent and fit the content', async (
   const a = await tableClientCenter(page, ids[0], camera)
   const b = await tableClientCenter(page, ids[1], camera)
   expect(Math.abs((a.x + b.x) / 2 - (view.x + view.width / 2))).toBeLessThan(2)
-  expect(Math.abs((a.y + b.y) / 2 - (view.y + view.height / 2))).toBeLessThan(2)
+  expect(Math.abs((a.y + b.y) / 2 - (fitArea.top + fitArea.bottom) / 2)).toBeLessThan(2)
   await expect(zoomLevel(page)).toHaveText(`${Math.round(camera.zoom * 100)}%`)
 })
 

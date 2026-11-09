@@ -1,5 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiRequestError, createWedding, deleteLayout, errorMessage, getLayout, listVenues } from './api'
+import {
+  addGroupMembers,
+  ApiRequestError,
+  commitGuestImport,
+  createGroup,
+  createGuest,
+  createWedding,
+  deleteGuest,
+  deleteLayout,
+  errorMessage,
+  getLayout,
+  guestsExportUrl,
+  listGuests,
+  listVenues,
+  removeGroupMember,
+  updateGuest,
+} from './api'
 
 function reply(status: number, body: unknown) {
   return new Response(body === undefined ? null : JSON.stringify(body), {
@@ -65,8 +81,48 @@ describe('errorMessage', () => {
     expect(errorMessage(new Error('boom'))).toBe('Something went wrong. Try again.')
   })
 
+  it('shows the plain message a 409 or 413 carries', () => {
+    const taken = new ApiRequestError(409, { error: 'name_taken', message: 'A group with that name already exists.' }, 'x')
+    expect(errorMessage(taken)).toBe('A group with that name already exists.')
+    const big = new ApiRequestError(413, { error: 'too_large', message: 'Send at most 5,000 rows at a time.' }, 'x')
+    expect(errorMessage(big)).toBe('Send at most 5,000 rows at a time.')
+    expect(errorMessage(new ApiRequestError(409, { error: 'id_taken' }, 'x'))).toBe('Something went wrong. Try again.')
+  })
+
   it('reads the first issue of a 422', () => {
     const error = new ApiRequestError(422, { error: 'invalid', issues: ['name: Names cannot be empty'] }, 'x')
     expect(errorMessage(error)).toBe('Names cannot be empty.')
+  })
+})
+
+describe('guest and group helpers', () => {
+  it('call the routes in src/app/api with the method and body each expects', async () => {
+    const fetchMock = vi.fn(async () => reply(200, {}))
+    vi.stubGlobal('fetch', fetchMock)
+    const W = 'w 1'
+    await listGuests(W)
+    await createGuest(W, { id: 'g1', firstName: 'Ann', lastName: 'Lee' })
+    await updateGuest('g1', { meal: 'Fish' })
+    await deleteGuest('g1')
+    await commitGuestImport(W, { rows: [], removeMissing: false })
+    await createGroup(W, { name: 'Book Club', guestIds: ['g1'] })
+    await addGroupMembers('gr1', { guestIds: ['g1'] })
+    await removeGroupMember('gr1', 'g1')
+    const calls = (fetchMock.mock.calls as unknown as [string, RequestInit][]).map(([path, init]) => [
+      init.method,
+      path,
+      init.body === undefined ? undefined : JSON.parse(String(init.body)),
+    ])
+    expect(calls).toEqual([
+      ['GET', '/api/weddings/w%201/guests', undefined],
+      ['POST', '/api/weddings/w%201/guests', { id: 'g1', firstName: 'Ann', lastName: 'Lee' }],
+      ['PATCH', '/api/guests/g1', { meal: 'Fish' }],
+      ['DELETE', '/api/guests/g1', undefined],
+      ['POST', '/api/weddings/w%201/guests/import/commit', { rows: [], removeMissing: false }],
+      ['POST', '/api/weddings/w%201/groups', { name: 'Book Club', guestIds: ['g1'] }],
+      ['POST', '/api/groups/gr1/members', { guestIds: ['g1'] }],
+      ['DELETE', '/api/groups/gr1/members/g1', undefined],
+    ])
+    expect(guestsExportUrl(W)).toBe('/api/weddings/w%201/guests/export')
   })
 })

@@ -15,6 +15,7 @@ import { loadEnvConfig } from '@next/env'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { perfCanvas, perfGuestNames } from '../e2e/perf-layout'
+import { nameKey } from '../src/domain/names'
 import { createPool, requireDatabaseUrl } from '../src/server/db/connection'
 import * as schema from '../src/server/db/schema'
 
@@ -66,7 +67,7 @@ async function main() {
         weddingId,
         firstName,
         lastName,
-        nameKey: `${firstName}|${lastName}`.toLowerCase(),
+        nameKey: nameKey(firstName, lastName),
       }))
       await db.insert(schema.guests).values(rows)
       guests = rows.map((r) => ({ id: r.id }))
