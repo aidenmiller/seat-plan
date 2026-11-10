@@ -510,7 +510,7 @@ function roomCounts(items: readonly Item[]): { tables: number; seats: number; ta
 }
 
 function RoomSummary() {
-  const { layoutName, venueLabel } = useEditorUi()
+  const { layoutName, venueLabel, onPickVenue } = useEditorUi()
   const { tables, seats } = useCanvas((c) => roomCounts(c.items), shallowEqual)
   return (
     <>
@@ -535,7 +535,16 @@ function RoomSummary() {
           </div>
           <div>
             <dt className="text-stone-500">Venue</dt>
-            <dd className="text-stone-900">{venueLabel}</dd>
+            <dd className="flex flex-wrap items-center justify-between gap-2 text-stone-900">
+              <span className="min-w-0 break-words" data-testid="layout-venue">
+                {venueLabel}
+              </span>
+              {onPickVenue && (
+                <button type="button" className={smallButton} onClick={onPickVenue} data-testid="change-venue">
+                  Change venue
+                </button>
+              )}
+            </dd>
           </div>
         </dl>
       </Section>

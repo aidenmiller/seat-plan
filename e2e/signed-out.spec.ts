@@ -2,17 +2,22 @@
  * Acceptance check 2: no page or API route returns data without the cookie,
  * and the password never reaches the browser. New pages and routes join these
  * lists as each milestone adds them (milestone 4: the guest list, its import
- * page, the sample file, and the guest and group routes).
+ * page, the sample file, and the guest and group routes; milestone 7: the
+ * template editor and every venue, image, import and revision route).
  */
+import { randomUUID } from 'node:crypto'
 import { expect, request as playwrightRequest, test } from '@playwright/test'
 import { apiAddGuests, apiCreateGroup, apiListGroups, apiListGuests } from './guest-list'
+import { makePlanPng } from './fixtures/floorplan-png'
 import { apiCreateLayout, apiCreateWedding, signIn, signInRequest, sitePassword } from './helpers'
+import { apiCreateVenue, apiGetVenue, apiSaveVenue, apiVenueRevisions } from './venues'
+import type { VenueImageInfo } from '../src/shared/api'
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 const NO_ID = '00000000-0000-4000-8000-000000000000'
 
-/** Every page, with `:wedding` and `:layout` standing for ids, and the sample guest file. */
+/** Every page, with `:wedding`, `:layout` and `:venue` standing for ids, and the sample guest file. */
 const PAGE_PATHS = [
   '/',
   '/w/:wedding',
@@ -24,16 +29,20 @@ const PAGE_PATHS = [
   '/w/:wedding/venues',
   '/w/:wedding/links',
   '/w/:wedding/layouts/:layout',
-  '/venues/:layout',
+  '/venues/:venue',
+  '/venues/:venue?from=:wedding',
   '/samples/guests-sample.csv',
 ]
 
 /** One row of an import, as the column step sends it. */
 const IMPORT_ROW = { rowNumber: 2, firstName: 'Sneaky', lastName: 'Guest', groups: [], extraNotes: [] }
 
+/** A template save, as the template editor sends it. */
+const VENUE_SAVE = { baseVersion: 1, saveId: NO_ID, editedBy: 'Noa' }
+
 /**
  * Every API route but the login route, with a body where the route takes
- * one; `:guest` and `:group` stand for ids too.
+ * one; `:guest`, `:group`, `:image` and `:revision` stand for ids too.
  */
 const API_ROUTES: { method: Method; path: string; body?: unknown }[] = [
   { method: 'GET', path: '/api/weddings' },
@@ -55,7 +64,6 @@ const API_ROUTES: { method: Method; path: string; body?: unknown }[] = [
   { method: 'GET', path: '/api/layouts/:layout/delete-summary' },
   { method: 'GET', path: '/api/layouts/:layout/version' },
   { method: 'POST', path: '/api/layouts/:layout/duplicate', body: { editedBy: 'Noa' } },
-  { method: 'GET', path: '/api/venues' },
   { method: 'POST', path: '/api/auth/logout' },
   // Guests (milestone 4).
   { method: 'GET', path: '/api/weddings/:wedding/guests' },
@@ -74,13 +82,36 @@ const API_ROUTES: { method: Method; path: string; body?: unknown }[] = [
   { method: 'DELETE', path: '/api/groups/:group' },
   { method: 'POST', path: '/api/groups/:group/members', body: { guestIds: [NO_ID] } },
   { method: 'DELETE', path: '/api/groups/:group/members/:guest' },
+  // Seated guests across a wedding's layouts.
+  { method: 'GET', path: '/api/weddings/:wedding/guests/seats' },
+  // Venue templates (milestone 7).
+  { method: 'GET', path: '/api/venues' },
+  { method: 'POST', path: '/api/venues', body: { name: 'Sneaky' } },
+  { method: 'GET', path: '/api/venues/:venue' },
+  { method: 'PUT', path: '/api/venues/:venue', body: { ...VENUE_SAVE, fixedItems: [], reference: null } },
+  { method: 'PATCH', path: '/api/venues/:venue', body: { name: 'Sneaky' } },
+  { method: 'DELETE', path: '/api/venues/:venue', body: { confirm: 'delete' } },
+  { method: 'GET', path: '/api/venues/:venue/delete-summary' },
+  { method: 'POST', path: '/api/venues/:venue/duplicate', body: { name: 'Sneaky' } },
+  { method: 'GET', path: '/api/venues/:venue/wall-check' },
+  { method: 'GET', path: '/api/venues/:venue/revisions' },
+  { method: 'POST', path: '/api/venues/:venue/revisions/:revision/restore', body: VENUE_SAVE },
+  // Floor plan images and the AI import (milestone 7).
+  { method: 'POST', path: '/api/venues/:venue/images', body: 'not an image' },
+  { method: 'GET', path: '/api/venues/:venue/images/:image' },
+  { method: 'POST', path: '/api/venues/:venue/import', body: { imageId: NO_ID, imageWidth: 1000, imageHeight: 700 } },
+  {
+    method: 'POST',
+    path: '/api/venues/:venue/accept-import',
+    body: { ...VENUE_SAVE, fixedItems: [], imageId: NO_ID, reference: { scaleCmPerPx: 1, offsetX: 0, offsetY: 0, rotation: 0, opacity: 0.5 }, importedBy: 'ai' },
+  },
 ]
 
-type Ids = { wedding: string; layout: string; guest: string; group: string }
-const NO_IDS: Ids = { wedding: NO_ID, layout: NO_ID, guest: NO_ID, group: NO_ID }
+type Ids = { wedding: string; layout: string; guest: string; group: string; venue: string; image: string; revision: string }
+const NO_IDS: Ids = { wedding: NO_ID, layout: NO_ID, guest: NO_ID, group: NO_ID, venue: NO_ID, image: NO_ID, revision: NO_ID }
 
 function fill(path: string, ids: Ids): string {
-  return path.replace(':wedding', ids.wedding).replace(':layout', ids.layout).replace(':guest', ids.guest).replace(':group', ids.group)
+  return path.replace(/:(wedding|layout|guest|group|venue|image|revision)\b/g, (_, key: keyof Ids) => ids[key])
 }
 
 test.describe('without the cookie', () => {
@@ -105,8 +136,8 @@ test.describe('without the cookie', () => {
     })
   }
 
-  test('real weddings, layouts, guests and groups stay hidden, and nothing changes', async ({ request, baseURL }) => {
-    // Make a real wedding, layout, guest and group as a signed-in visitor.
+  test('real weddings, layouts, guests, groups and venues stay hidden, and nothing changes', async ({ request, baseURL }) => {
+    // Make a real wedding, layout, guest, group and venue (with a floor plan image) as a signed-in visitor.
     const owner = await playwrightRequest.newContext({ baseURL })
     try {
       await signInRequest(owner)
@@ -115,8 +146,17 @@ test.describe('without the cookie', () => {
       const layout = await apiCreateLayout(owner, wedding.id, { name: `Hidden layout ${Date.now()}` })
       const [guest] = await apiAddGuests(owner, wedding.id, [{ firstName: 'Hiddenfirst', lastName: `Hiddenlast${Date.now()}`, notes: 'Hidden note' }])
       const group = await apiCreateGroup(owner, wedding.id, `Hidden group ${Date.now()}`, [guest.id])
-      const ids: Ids = { wedding: wedding.id, layout: layout.id, guest: guest.id, group: group.id }
-      const hidden = [secret, layout.name, guest.lastName, 'Hidden note', group.name]
+      const venue = await apiCreateVenue(owner, `Hidden venue ${Date.now()}`)
+      const wallName = `Hidden wall ${Date.now()}`
+      await apiSaveVenue(owner, venue, [
+        { id: randomUUID(), type: 'wall', name: wallName, points: [{ x: 0, y: 0 }, { x: 500, y: 0 }], thickness: 15, unsure: false, unsureNote: '' },
+      ])
+      const upload = await owner.post(`/api/venues/${venue.id}/images`, { data: makePlanPng(), headers: { 'content-type': 'application/octet-stream' } })
+      expect(upload.status()).toBe(201)
+      const image = (await upload.json()) as VenueImageInfo
+      const [revision] = (await apiVenueRevisions(owner, venue.id)).revisions
+      const ids: Ids = { wedding: wedding.id, layout: layout.id, guest: guest.id, group: group.id, venue: venue.id, image: image.id, revision: revision.id }
+      const hidden = [secret, layout.name, guest.lastName, 'Hidden note', group.name, venue.name, wallName, image.sha256]
 
       for (const path of PAGE_PATHS) {
         const res = await request.get(fill(path, ids), { maxRedirects: 0 })
@@ -143,6 +183,13 @@ test.describe('without the cookie', () => {
       expect(guestsNow.map((g) => [g.id, g.firstName, g.lastName])).toEqual([[guest.id, guest.firstName, guest.lastName]])
       const groupsNow = await apiListGroups(owner, wedding.id)
       expect(groupsNow.map((g) => [g.id, g.name, g.memberIds])).toEqual([[group.id, group.name, [guest.id]]])
+      // The venue as it was: same name, version and wall, no reference image, not deleted, no copy made.
+      const venueNow = await apiGetVenue(owner, venue.id)
+      expect(venueNow).toMatchObject({ name: venue.name, version: 2, referenceImage: null })
+      expect(venueNow.fixedItems.map((i) => i.name)).toEqual([wallName])
+      const venues = (await (await owner.get('/api/venues')).json()) as { name: string }[]
+      expect(venues.filter((v) => v.name === 'Sneaky' || v.name.startsWith(venue.name))).toEqual([expect.objectContaining({ name: venue.name })])
+      expect((await owner.get(`/api/venues/${venue.id}/images/${image.id}`)).status()).toBe(200)
     } finally {
       await owner.dispose()
     }
@@ -176,14 +223,17 @@ test('no response the app loads contains the password', async ({ page }) => {
   await page.waitForLoadState('networkidle')
   // The wedding pages and the editor too.
   const wedding = await apiCreateWedding(page.request, `Password check ${Date.now()}`)
-  const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })
+  const venue = await apiCreateVenue(page.request, `Password check venue ${Date.now()}`)
+  const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan', venueTemplateId: venue.id })
   await apiAddGuests(page.request, wedding.id, [{ firstName: 'Ava', lastName: 'Cohen' }])
   for (const path of [
     `/w/${wedding.id}/layouts`,
     `/w/${wedding.id}/guests`,
     `/w/${wedding.id}/guests/import`,
     `/w/${wedding.id}/groups`,
+    `/w/${wedding.id}/venues`,
     `/w/${wedding.id}/layouts/${layout.id}`,
+    `/venues/${venue.id}?from=${wedding.id}`,
   ]) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')

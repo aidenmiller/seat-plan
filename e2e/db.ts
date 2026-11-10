@@ -28,3 +28,21 @@ export async function dbAddGuests(weddingId: string, names: readonly (readonly [
     await client.end()
   }
 }
+
+/**
+ * Marks a venue template deleted while layouts still use it, as restoring a
+ * wedding from the database can leave things (DECISIONS 29). The app itself
+ * refuses that delete.
+ */
+export async function dbMarkTemplateDeleted(templateId: string): Promise<void> {
+  const url = process.env.E2E_DATABASE_URL
+  if (!url) throw new Error('E2E_DATABASE_URL is not set; run through playwright.config.ts')
+  assertLocalDatabase(url)
+  const client = new pg.Client({ connectionString: url })
+  await client.connect()
+  try {
+    await client.query('update venue_templates set deleted_at = now() where id = $1', [templateId])
+  } finally {
+    await client.end()
+  }
+}

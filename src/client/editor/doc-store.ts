@@ -21,44 +21,49 @@ import type { Canvas } from '@/domain/canvas-schema'
 import { canRedo, canUndo, clearHistory, emptyHistory, record, redo, undo, type History, type RecordOptions } from '@/domain/history'
 import type { DroppedSeat } from '@/shared/api'
 
-export type DocState = {
-  canvas: Canvas
-  history: History<Canvas>
+export type DocState<T = Canvas> = {
+  canvas: T
+  history: History<T>
   canUndo: boolean
   canRedo: boolean
 }
 
-export type DocStore = {
-  getState(): DocState
+/**
+ * The store is generic in its document so the venue template editor can keep
+ * its fixed items in one too; the layout editor uses the default, Canvas.
+ */
+export type DocStore<T = Canvas> = {
+  getState(): DocState<T>
   subscribe(listener: () => void): () => void
-  edit(label: string, recipe: (canvas: Canvas) => Canvas, options?: RecordOptions): Canvas | null
-  undo(): Canvas | null
-  redo(): Canvas | null
-  replace(canvas: Canvas): void
-  patchOutsideHistory(recipe: (canvas: Canvas) => Canvas): Canvas | null
+  edit(label: string, recipe: (canvas: T) => T, options?: RecordOptions): T | null
+  undo(): T | null
+  redo(): T | null
+  replace(canvas: T): void
+  patchOutsideHistory(recipe: (canvas: T) => T): T | null
   /** A change the server already made: through the editor's handler when one is attached, else patchOutsideHistory. */
-  patchFromServer(recipe: (canvas: Canvas) => Canvas): Canvas | null
+  patchFromServer(recipe: (canvas: T) => T): T | null
   /** The editor's document takes server patches from now on. Returns a function that hands them back. */
-  routeServerPatches(handler: ServerPatchHandler): () => void
+  routeServerPatches(handler: ServerPatchHandler<T>): () => void
 }
 
-export type ServerPatchHandler = (recipe: (canvas: Canvas) => Canvas) => Canvas | null
+export type ServerPatchHandler<T = Canvas> = (recipe: (canvas: T) => T) => T | null
 
-function state(canvas: Canvas, history: History<Canvas>): DocState {
+function state<T>(canvas: T, history: History<T>): DocState<T> {
   return { canvas, history, canUndo: canUndo(history), canRedo: canRedo(history) }
 }
 
-export function createDocStore(initial: Canvas, historyLimit?: number): DocStore {
-  let current = state(initial, emptyHistory<Canvas>(historyLimit))
+/** T is never inferred from `initial` (a literal would narrow it): the default is Canvas, other documents name it. */
+export function createDocStore<T = Canvas>(initial: NoInfer<T>, historyLimit?: number): DocStore<T> {
+  let current = state(initial, emptyHistory<T>(historyLimit))
   const listeners = new Set<() => void>()
-  let serverPatches: ServerPatchHandler | null = null
+  let serverPatches: ServerPatchHandler<T> | null = null
 
-  function set(next: DocState) {
+  function set(next: DocState<T>) {
     current = next
     for (const listener of [...listeners]) listener()
   }
 
-  function patchOutsideHistory(recipe: (canvas: Canvas) => Canvas): Canvas | null {
+  function patchOutsideHistory(recipe: (canvas: T) => T): T | null {
     const after = recipe(current.canvas)
     if (after === current.canvas) return null
     set(state(after, current.history))

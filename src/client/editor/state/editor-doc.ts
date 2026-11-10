@@ -23,54 +23,55 @@ import type { Canvas } from '@/domain/canvas-schema'
 import type { RecordOptions } from '@/domain/history'
 import type { DocStore } from '../doc-store'
 
-export type DocGesture = {
+export type DocGesture<T = Canvas> = {
   readonly label: string
   /** The canvas when the gesture began (with any server patch since). Commands for each frame start from it, so a drag never drifts. */
-  readonly start: Canvas
+  readonly start: T
   /** Shows recipe(start). False when the gesture is over (refused, cancelled or lost). */
-  preview(recipe: (start: Canvas) => Canvas): boolean
+  preview(recipe: (start: T) => T): boolean
   /** The canvas the last preview showed. */
-  current(): Canvas
+  current(): T
   /** Records the gesture as one undo step and saves it. Null when nothing changed or it was lost. */
-  commit(options?: RecordOptions): Canvas | null
+  commit(options?: RecordOptions): T | null
   /** Puts the canvas back as it was when the gesture began. */
   cancel(): void
   isActive(): boolean
 }
 
-export type EditorDoc = {
-  readonly store: DocStore
-  canvas(): Canvas
+/** Generic in its document, like the store: the venue template editor uses it for fixed items. */
+export type EditorDoc<T = Canvas> = {
+  readonly store: DocStore<T>
+  canvas(): T
   /** True in Edit mode when the page can edit. */
   canEdit(): boolean
   /** One finished change: one undo step, saved. Null when refused or nothing changed. Cancels a gesture under way. */
-  edit(label: string, recipe: (canvas: Canvas) => Canvas, options?: RecordOptions): Canvas | null
-  undo(): Canvas | null
-  redo(): Canvas | null
+  edit(label: string, recipe: (canvas: T) => T, options?: RecordOptions): T | null
+  undo(): T | null
+  redo(): T | null
   /** Starts a drag. Null when editing is refused. Cancels a gesture already under way. */
-  begin(label: string): DocGesture | null
+  begin(label: string): DocGesture<T> | null
   /** The gesture under way, if any. */
-  gesture(): DocGesture | null
+  gesture(): DocGesture<T> | null
   /** Esc, a mode switch or a lost pointer: put back and forget the gesture under way. */
   cancelGesture(): void
   /** A change the server already made (seats it emptied): applied outside the undo history, into a drag under way too. Never refused. */
-  patchFromServer(recipe: (canvas: Canvas) => Canvas): Canvas | null
+  patchFromServer(recipe: (canvas: T) => T): T | null
 }
 
-export type EditorDocOptions = {
-  store: DocStore
+export type EditorDocOptions<T = Canvas> = {
+  store: DocStore<T>
   /** Edit mode, and the page's own gate. Read on every change. */
   canEdit: () => boolean
   /** A finished change: hand the canvas to the save engine. */
-  onCommit: (canvas: Canvas) => void
+  onCommit: (canvas: T) => void
 }
 
-export function createEditorDoc({ store, canEdit, onCommit }: EditorDocOptions): EditorDoc {
-  let active: DocGesture | null = null
+export function createEditorDoc<T = Canvas>({ store, canEdit, onCommit }: EditorDocOptions<T>): EditorDoc<T> {
+  let active: DocGesture<T> | null = null
   /** Puts a server patch into the gesture under way; null with none. */
-  let patchActive: ((recipe: (canvas: Canvas) => Canvas) => Canvas | null) | null = null
+  let patchActive: ((recipe: (canvas: T) => T) => T | null) | null = null
 
-  function commitOut(canvas: Canvas | null): Canvas | null {
+  function commitOut(canvas: T | null): T | null {
     if (canvas) onCommit(canvas)
     return canvas
   }
@@ -80,13 +81,13 @@ export function createEditorDoc({ store, canEdit, onCommit }: EditorDocOptions):
     active = null
   }
 
-  function begin(label: string): DocGesture | null {
+  function begin(label: string): DocGesture<T> | null {
     cancelGesture()
     if (!canEdit()) return null
     let start = store.getState().canvas
     let last = start
     /** The latest frame's recipe, to redraw that frame from a patched start. */
-    let lastRecipe: ((start: Canvas) => Canvas) | null = null
+    let lastRecipe: ((start: T) => T) | null = null
     let live = true
 
     const end = () => {
@@ -99,7 +100,7 @@ export function createEditorDoc({ store, canEdit, onCommit }: EditorDocOptions):
     /** True when the document is still the one this gesture last drew. */
     const ours = () => store.getState().canvas === last
 
-    const gesture: DocGesture = {
+    const gesture: DocGesture<T> = {
       label,
       get start() {
         return start

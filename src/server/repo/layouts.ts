@@ -139,11 +139,18 @@ export type CreateLayoutResult =
   | { status: 'id-taken' }
   | { status: 'invalid'; issues: string[] }
 
-async function templateIsLive(db: Db | Tx, id: string): Promise<boolean> {
-  const [row] = await db
+/**
+ * True when the template is live, holding a share lock on its row until the
+ * transaction ends. A template delete locks the row for update and then counts
+ * the layouts using it, so it waits for this layout write and sees it; a
+ * write that waits behind a delete finds the template deleted.
+ */
+async function templateIsLive(tx: Tx, id: string): Promise<boolean> {
+  const [row] = await tx
     .select({ id: venueTemplates.id })
     .from(venueTemplates)
     .where(and(eq(venueTemplates.id, id), isNull(venueTemplates.deletedAt)))
+    .for('share')
   return Boolean(row)
 }
 
@@ -246,10 +253,12 @@ export async function updateLayout(db: Db, layoutId: string, body: UpdateLayoutB
     if (body.venueTemplateId !== undefined && body.venueTemplateId !== row.venueTemplateId) {
       let fixedItems: Parameters<typeof renderThumbnailSvg>[1] = []
       if (body.venueTemplateId !== null) {
+        // Share lock: a template delete waits for this change and then sees the layout (see templateIsLive).
         const [template] = await tx
           .select({ fixedItems: venueTemplates.fixedItems })
           .from(venueTemplates)
           .where(and(eq(venueTemplates.id, body.venueTemplateId), isNull(venueTemplates.deletedAt)))
+          .for('share')
         if (!template) return 'bad-template'
         const parsed = fixedItemsSchema.safeParse(template.fixedItems)
         fixedItems = parsed.success ? parsed.data : []

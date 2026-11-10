@@ -10,7 +10,8 @@ import { authors, canvasSchema, wellFormedText, type Canvas } from '@/domain/can
 import { cleanNotes, cleanOneLine } from '@/domain/csv/columns'
 import type { ImportPlan } from '@/domain/csv/import-diff'
 import { HEX_COLOR_RE } from '@/domain/group-colors'
-import type { FixedItem } from '@/domain/venue-schema'
+import type { FloorplanDraft } from '@/domain/floorplan/draft-schema'
+import { fixedItemsSchema, importedByValues, referenceMetaSchema, type FixedItem, type ReferenceMeta } from '@/domain/venue-schema'
 
 export const uuid = z.uuid()
 /** Cleaned like the canvas text (no NUL, no lone surrogates), then trimmed. */
@@ -187,7 +188,15 @@ export type LayoutDeleteSummary = {
   shareLinks: number
 }
 
-// ---------- Venues (list only in milestone 2) ----------
+// ---------- Venues ----------
+//
+// Venue templates are shared by all weddings (PLAN change 5). A template's
+// fixed items, reference meta and reference image change only through a save,
+// an accepted import or a restored revision; each raises the version, uses the
+// same conflict check as layouts (DECISIONS 28) and writes a revision row.
+// Renames leave the version alone.
+
+export type VenueImportedBy = (typeof importedByValues)[number]
 
 export type VenueSummary = {
   id: string
@@ -195,7 +204,242 @@ export type VenueSummary = {
   updatedAt: string
   /** Live layouts in live weddings that use this template. */
   usedBy: number
+  version: number
+  editedBy: 'Noa' | 'Aiden' | null
+  importedBy: VenueImportedBy
+  fixedItemCount: number
+  hasReferenceImage: boolean
 }
+
+/** The largest floor plan image the server stores (PLAN change 6: the browser aims for about 3 MB). */
+export const MAX_VENUE_IMAGE_BYTES = 3.5 * 1024 * 1024
+/** The largest side of a stored image, in pixels (the model's own hard limit). */
+export const MAX_VENUE_IMAGE_SIDE = 8000
+
+/** A stored floor plan image. `url` serves it behind the site cookie. */
+export type VenueImageInfo = {
+  id: string
+  templateId: string
+  contentType: 'image/png' | 'image/jpeg'
+  width: number
+  height: number
+  byteSize: number
+  sha256: string
+  url: string
+  createdAt: string
+}
+
+export type VenueDetail = {
+  id: string
+  name: string
+  version: number
+  lastSaveId: string | null
+  editedBy: 'Noa' | 'Aiden' | null
+  updatedAt: string
+  importedBy: VenueImportedBy
+  fixedItems: FixedItem[]
+  /** Where the reference image sits under the fixed items, or null without one. */
+  reference: ReferenceMeta | null
+  /** The original plan the template points at (set on Accept), or null. */
+  referenceImage: VenueImageInfo | null
+  /** Live layouts in live weddings that use this template. */
+  usedBy: number
+}
+
+/** POST /api/venues. 201 VenueDetail. A retry with the same id gives the same template back. */
+export const createVenueBody = z.object({ id: uuid.optional(), name, editedBy: author.optional() })
+export type CreateVenueBody = z.infer<typeof createVenueBody>
+
+/** PATCH /api/venues/:id: rename only. The version stays as it is. */
+export const renameVenueBody = z.object({ name })
+export type RenameVenueBody = z.infer<typeof renameVenueBody>
+
+/** POST /api/venues/:id/duplicate. 201 VenueDetail. The default name is "<name> copy". */
+export const duplicateVenueBody = z.object({ id: uuid.optional(), name: name.optional(), editedBy: author.optional() })
+export type DuplicateVenueBody = z.infer<typeof duplicateVenueBody>
+
+const venueSaveFields = {
+  baseVersion: z.int().min(1),
+  /** The same id on every retry of the same save. */
+  saveId: uuid,
+  editedBy: author,
+}
+
+/** PUT /api/venues/:id: the template editor's save. */
+export const saveVenueBody = z.object({
+  ...venueSaveFields,
+  fixedItems: fixedItemsSchema,
+  reference: referenceMetaSchema.nullable(),
+})
+export type SaveVenueBody = z.infer<typeof saveVenueBody>
+
+/** POST /api/venues/:id/accept-import: the draft the editor shows, saved in one go. */
+export const acceptImportBody = z.object({
+  ...venueSaveFields,
+  fixedItems: fixedItemsSchema,
+  /** An image uploaded to this template (POST /api/venues/:id/images). */
+  imageId: uuid,
+  reference: referenceMetaSchema,
+  importedBy: z.enum(['ai', 'pdf vectors']),
+})
+export type AcceptImportBody = z.infer<typeof acceptImportBody>
+
+/** POST /api/venues/:id/revisions/:revisionId/restore ("Undo import" and the like). */
+export const restoreRevisionBody = z.object(venueSaveFields)
+export type RestoreRevisionBody = z.infer<typeof restoreRevisionBody>
+
+/** 200 reply to a save, an accepted import or a restore. */
+export type SaveVenueOk = {
+  /** 'already-saved': this saveId landed earlier (a retry after a lost reply). */
+  status: 'saved' | 'already-saved'
+  version: number
+  updatedAt: string
+  editedBy: 'Noa' | 'Aiden' | null
+}
+
+/** 409: someone saved the template since baseVersion. */
+export type SaveVenueConflict = {
+  error: 'conflict'
+  /** A plain sentence to show, naming who saved when known. */
+  message: string
+  version: number
+  updatedAt: string
+  editedBy: 'Noa' | 'Aiden' | null
+  lastSaveId: string | null
+}
+
+/** 410: the template was deleted. 422: a body the server cannot accept. */
+export type SaveVenueFailure = { error: 'gone' } | { error: 'invalid'; issues: string[] }
+
+/** One revision: the template's fixed items, reference and image after a save. */
+export type VenueRevision = {
+  id: string
+  reason: 'save' | 'import'
+  createdAt: string
+  fixedItemCount: number
+  referenceImageId: string | null
+  hasReference: boolean
+}
+
+/** GET /api/venues/:id/revisions: newest first, at most MAX_LISTED_REVISIONS. */
+export type VenueRevisionList = {
+  revisions: VenueRevision[]
+  /** The revision just before the newest import: restoring it is "Undo import". Null without an import. */
+  undoImportRevisionId: string | null
+}
+export const MAX_LISTED_REVISIONS = 200
+
+/** A live layout in a live wedding that uses a template. */
+export type VenueUse = { weddingId: string; weddingName: string; layoutId: string; layoutName: string }
+
+/** 409 reply to DELETE /api/venues/:id while layouts use the template. */
+export type VenueInUse = { error: 'in_use'; message: string; layouts: VenueUse[] }
+
+/** GET /api/venues/:id/delete-summary. Delete is blocked while `layouts` is not empty. */
+export type VenueDeleteSummary = {
+  kind: 'venue'
+  name: string
+  layouts: VenueUse[]
+  images: number
+  revisions: number
+}
+
+/** GET /api/venues/:id/wall-check: every live layout using the template, with the tables a wall runs through. */
+export type VenueWallCheck = {
+  templateVersion: number
+  layouts: (VenueUse & { tables: { tableId: string; label: string; wallIds: string[] }[] })[]
+}
+
+// ---------- Floor plan import ----------
+
+const pixel = z.number().finite().min(-1_000_000).max(1_000_000)
+const pixelPoint = z.object({ x: pixel, y: pixel })
+
+/** The most PDF lines, texts and door hints one import may send. */
+export const MAX_IMPORT_SEGMENTS = 2000
+export const MAX_IMPORT_LABELS = 2000
+export const MAX_IMPORT_DOOR_HINTS = 500
+
+/**
+ * POST /api/venues/:id/import. The image is one uploaded to this template,
+ * with its size as stored. For a vector PDF, `segments` are the cleaned lines
+ * (src/domain/floorplan/cleanup.ts) and `labels` the PDF's text, both in the
+ * image's pixels; without segments the plan is read as a picture.
+ */
+export const floorplanImportBody = z.object({
+  imageId: uuid,
+  imageWidth: z.int().min(1).max(MAX_VENUE_IMAGE_SIDE),
+  imageHeight: z.int().min(1).max(MAX_VENUE_IMAGE_SIDE),
+  segments: z
+    .array(
+      z.object({
+        id: z.string().regex(/^[A-Za-z0-9_-]{1,16}$/, 'Line ids are short letters and digits'),
+        x1: pixel,
+        y1: pixel,
+        x2: pixel,
+        y2: pixel,
+        thickness: z.number().finite().min(0).max(100_000),
+        source: z.enum(['stroke', 'fill']),
+      }),
+    )
+    .max(MAX_IMPORT_SEGMENTS)
+    .optional(),
+  labels: z
+    .array(z.object({ text: z.string().overwrite(wellFormedText).trim().min(1).max(200), center: pixelPoint }))
+    .max(MAX_IMPORT_LABELS)
+    .optional(),
+  doorHints: z
+    .array(
+      z.object({
+        hinge: pixelPoint,
+        radius: z.number().finite().positive().max(1_000_000),
+        from: pixelPoint,
+        to: pixelPoint,
+        sweep: z.number().finite(),
+      }),
+    )
+    .max(MAX_IMPORT_DOOR_HINTS)
+    .optional(),
+})
+  .superRefine((body, ctx) => {
+    const seen = new Set<string>()
+    body.segments?.forEach((s, i) => {
+      if (seen.has(s.id)) ctx.addIssue({ code: 'custom', path: ['segments', i, 'id'], message: `Line id ${s.id} is sent twice` })
+      seen.add(s.id)
+    })
+  })
+export type FloorplanImportBody = z.input<typeof floorplanImportBody>
+
+/**
+ * The import route answers 200 with NDJSON (one JSON object per line):
+ * progress lines about every 2 seconds, then one draft or error line. Errors
+ * found before the call starts are ordinary JSON replies instead (404, 400,
+ * 422, and 503 ImportNotConfigured).
+ */
+export type FloorplanImportLine =
+  | {
+      type: 'progress'
+      elapsedMs: number
+      /** Output tokens so far (an estimate until the reply ends). */
+      outputTokens: number
+    }
+  | { type: 'draft'; draft: FloorplanDraft; model: string; outputTokens: number }
+  | { type: 'error'; code: FloorplanImportErrorCode; message: string }
+
+export type FloorplanImportErrorCode =
+  | 'refusal'
+  | 'max_tokens'
+  | 'invalid_reply'
+  | 'timeout'
+  | 'auth'
+  | 'busy'
+  | 'bad_request'
+  | 'unavailable'
+  | 'failed'
+
+/** 503 from the import route when the server has no ANTHROPIC_API_KEY. */
+export type ImportNotConfigured = { error: 'not_configured'; message: string }
+export const IMPORT_NOT_CONFIGURED_MESSAGE = 'The floor plan import needs ANTHROPIC_API_KEY set on the server.'
 
 // ---------- Guests ----------
 
@@ -533,6 +777,6 @@ export type AddGroupMembersReply = {
 
 /**
  * Every non-2xx JSON reply has an `error` field. 422 replies list `issues`
- * ("field: message"); 409 and 413 replies carry a plain `message` to show.
+ * ("field: message"); 409, 413, 415 and 503 replies carry a plain `message` to show.
  */
 export type ApiError = { error: string; issues?: string[]; message?: string }

@@ -7,7 +7,9 @@
  * Notes fill in with later milestones.
  */
 import { useId, type KeyboardEvent, type ReactNode } from 'react'
+import { useEditorUi } from './editor-ui'
 import { GuestsPanel } from './GuestsPanel'
+import { ProblemsPanel } from './ProblemsPanel'
 import { PropertiesPanel } from './PropertiesPanel'
 
 export type PanelTab = 'properties' | 'guests' | 'groups' | 'problems' | 'notes'
@@ -20,9 +22,8 @@ export const PANEL_TABS: readonly { id: PanelTab; label: string }[] = [
   { id: 'notes', label: 'Notes' },
 ]
 
-const EMPTY_TEXT: Record<Exclude<PanelTab, 'properties' | 'guests'>, string> = {
+const EMPTY_TEXT: Record<Exclude<PanelTab, 'properties' | 'guests' | 'problems'>, string> = {
   groups: 'Groups show here once the guest list is in.',
-  problems: 'Seating problems and warnings show here.',
   notes: 'Notes on the plan show here.',
 }
 
@@ -89,9 +90,11 @@ export function PanelTabs({
 }
 
 export function PanelContent({ tab, ids }: { tab: PanelTab; ids: (tab: PanelTab) => { tab: string; panel: string } }) {
+  const { venue } = useEditorUi()
   let body: ReactNode
   if (tab === 'properties') body = <PropertiesPanel />
   else if (tab === 'guests') body = <GuestsPanel />
+  else if (tab === 'problems') body = <ProblemsPanel venue={venue} />
   else
     body = (
       <p className="px-4 py-6 text-sm text-stone-600" data-testid={`${tab}-empty`}>

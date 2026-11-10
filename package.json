@@ -21,15 +21,18 @@
     "seed": "tsx --conditions=react-server scripts/seed.ts",
     "seed:perf": "tsx --conditions=react-server scripts/seed-perf.ts",
     "check:secrets": "tsx scripts/check-secrets.ts",
-    "vercel-build": "tsx scripts/vercel-build.ts"
+    "vercel-build": "tsx scripts/vercel-build.ts",
+    "pdfjs:wasm": "tsx scripts/copy-pdfjs-wasm.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.6.0",
     "@node-rs/argon2": "2.2.2",
     "@vercel/functions": "3.11.0",
     "drizzle-orm": "0.45.4",
     "idb-keyval": "6.3.0",
     "next": "16.4.5",
     "papaparse": "5.7.0",
+    "pdfjs-dist": "6.5.438",
     "pg": "8.23.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",
@@ -49,6 +52,7 @@
     "eslint": "10.14.0",
     "eslint-config-next": "16.4.5",
     "fake-indexeddb": "6.2.8",
+    "pdf-lib": "1.17.1",
     "tailwindcss": "4.3.5",
     "tsx": "4.23.15",
     "typescript": "5.9.3",

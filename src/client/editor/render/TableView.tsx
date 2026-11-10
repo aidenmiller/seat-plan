@@ -20,10 +20,15 @@
  * pulses round it for two seconds. The guests' initials and names live in
  * the names layer (NamesLayer.tsx), so zooming changes nothing here.
  *
+ * A table a venue wall runs through (spec section 5) gets a red outline and
+ * a small badge at its corner, both the same size on screen at every zoom.
+ *
  * Test hooks: <g data-item-id data-kind="table">, each seat circle
  * data-seat-index and data-seat-state="taken|empty" (data-drop-target on the
  * seat that grows), data-drag-tint="good|bad" on the group and body,
- * [data-seat-pulse], and [data-seat-plus] with data-plus-for.
+ * [data-seat-pulse], [data-seat-plus] with data-plus-for, and
+ * data-wall-crossing="true" with the red outline data-wall-outline and the
+ * badge data-wall-badge.
  */
 import { memo, useMemo } from 'react'
 import type { Table } from '@/domain/canvas-schema'
@@ -78,7 +83,10 @@ export function tightRing(
   }
 }
 
-export const TableView = memo(function TableView({ table, selected }: { table: Table; selected: boolean }) {
+/** The red of a table a wall runs through. */
+export const WALL_CROSSING_STROKE = '#dc2626'
+
+export const TableView = memo(function TableView({ table, selected, crossed = false }: { table: Table; selected: boolean; crossed?: boolean }) {
   const { shape, width, height, seatCount, seatSides } = table
   const places = useMemo(() => seatLocalLayout({ shape, width, height, seatCount, seatSides }), [shape, width, height, seatCount, seatSides])
   const tight = isTight(table)
@@ -102,9 +110,10 @@ export const TableView = memo(function TableView({ table, selected }: { table: T
       data-tight={tight ? 'true' : undefined}
       data-locked={table.locked ? 'true' : undefined}
       data-drag-tint={tinted ?? undefined}
+      data-wall-crossing={crossed ? 'true' : undefined}
       transform={itemTransform(table)}
     >
-      <title>{title}</title>
+      <title>{crossed ? `${title} crosses a wall` : title}</title>
       {ring &&
         (ring.kind === 'circle' ? (
           <circle r={ring.r} fill="none" stroke={TIGHT_STROKE} strokeWidth={TIGHT_STROKE_CM} data-tight-outline="" />
@@ -137,6 +146,22 @@ export const TableView = memo(function TableView({ table, selected }: { table: T
           data-drag-tint={tinted ?? undefined}
         />
       )}
+      {crossed &&
+        (round ? (
+          <circle r={width / 2} fill="none" stroke={WALL_CROSSING_STROKE} style={{ strokeWidth: 'calc(4px / var(--zoom, 1))' }} data-wall-outline="" />
+        ) : (
+          <rect
+            x={-width / 2}
+            y={-height / 2}
+            width={width}
+            height={height}
+            rx={3}
+            fill="none"
+            stroke={WALL_CROSSING_STROKE}
+            style={{ strokeWidth: 'calc(4px / var(--zoom, 1))' }}
+            data-wall-outline=""
+          />
+        ))}
       {places.map((p) => {
         const taken = (table.seats[p.index]?.guestId ?? null) !== null
         const grows = target === p.index
@@ -161,6 +186,14 @@ export const TableView = memo(function TableView({ table, selected }: { table: T
         )}
       </g>
       {pulse && places[pulse.seatIndex] && <SeatPulseRing key={pulse.id} x={places[pulse.seatIndex].x} y={places[pulse.seatIndex].y} />}
+      {crossed && (
+        <g transform={`translate(${width / 2} ${-height / 2})`} data-wall-badge="">
+          <g style={{ transform: 'scale(calc(1 / var(--zoom, 1)))' }}>
+            <circle r={11} fill={WALL_CROSSING_STROKE} stroke="#ffffff" strokeWidth={2} />
+            <path d="M0 -6V2M0 5.5V6" stroke="#ffffff" strokeWidth={2.4} strokeLinecap="round" />
+          </g>
+        </g>
+      )}
       <g transform={labels.rotation ? `rotate(${labels.rotation})` : undefined} textAnchor="middle" textRendering="geometricPrecision">
         <text y={labels.name.y} dominantBaseline="central" fontSize={labels.name.fontSize} fontWeight={600} fill={INK} data-table-name="">
           {labels.name.text}

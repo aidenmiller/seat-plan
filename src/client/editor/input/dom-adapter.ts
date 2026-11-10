@@ -4,7 +4,8 @@
  *
  *  - pointer events on the viewport (captured, so a drag keeps going outside
  *    it), with handles found by their data attributes in the overlay:
- *    data-handle="nw" and so on, data-rotate-handle. Anything inside
+ *    data-handle="nw" and so on, data-rotate-handle, and in the template
+ *    editor data-vertex="<index>" for a wall's points. Anything inside
  *    [data-overlay-control] (the + and − seat buttons, menus) is left to its
  *    own handlers;
  *  - wheel, with { passive: false } so it can stop the page from scrolling
@@ -33,10 +34,13 @@ import type { PointerKind } from './pointer-machine'
 
 const HANDLES = new Set(['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'])
 
+/** What the adapter feeds: the layout editor's controller, or the venue template editor's. */
+export type InputController = Pick<EditorController, 'pointer' | 'targetAt' | 'hover' | 'contextMenu' | 'wheel' | 'gesture' | 'keyDown' | 'keyUp' | 'blur'>
+
 export type AttachInputOptions = {
   /** The element the canvas fills: the world wrapper and the overlay are inside it. */
   viewport: HTMLElement
-  controller: EditorController
+  controller: InputController
   camera: CameraController
 }
 
@@ -86,8 +90,18 @@ function nearestHandle(root: RootLike, itemId: string, x: number, y: number): st
   return best
 }
 
-/** A handle (the nearest of the item's handles under the pointer) or the rotate handle in the overlay, from their data attributes. */
+/**
+ * A handle (the nearest of the item's handles under the pointer), the rotate
+ * handle, or a point of a wall or outline (the template editor's
+ * data-vertex="<index>") in the overlay, from their data attributes.
+ */
 export function overlayTarget(event: Pick<Event, 'target'> & { clientX?: number; clientY?: number }, root: RootLike): Target | null {
+  const vertex = closestWithin(event.target, '[data-vertex]', root)
+  if (vertex) {
+    const index = Number(vertex.getAttribute('data-vertex'))
+    const itemId = vertex.getAttribute('data-item-id') ?? ''
+    if (Number.isInteger(index) && index >= 0 && itemId) return { kind: 'vertex', itemId, index }
+  }
   const handle = closestWithin(event.target, '[data-handle]', root)
   if (handle) {
     const h = handle.getAttribute('data-handle') ?? ''

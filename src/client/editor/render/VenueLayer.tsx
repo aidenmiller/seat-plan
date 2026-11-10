@@ -71,7 +71,8 @@ function stairTreads(width: number, height: number): string {
   return parts.join('')
 }
 
-function fixedItem(f: FixedItem): ReactElement | null {
+/** One fixed item's drawing, in world cm. The venue template editor draws its items with it too. */
+export function fixedItemElement(f: FixedItem): ReactElement | null {
   switch (f.type) {
     case 'wall':
       return (
@@ -164,7 +165,7 @@ export const VenueLayer = memo(function VenueLayer({ items, visible }: { items: 
   if (items.length === 0) return null
   return (
     <g data-layer="venue" display={visible ? undefined : 'none'}>
-      {items.map(fixedItem)}
+      {items.map(fixedItemElement)}
     </g>
   )
 })

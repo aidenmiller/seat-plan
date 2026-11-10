@@ -1,0 +1,2 @@
+ALTER TABLE "venue_templates" ADD COLUMN "recent_saves" jsonb DEFAULT '[]'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "venue_templates" ADD CONSTRAINT "venue_templates_recent_saves_array" CHECK (jsonb_typeof("venue_templates"."recent_saves") = 'array');
