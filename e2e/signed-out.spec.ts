@@ -3,15 +3,19 @@
  * and the password never reaches the browser. New pages and routes join these
  * lists as each milestone adds them (milestone 4: the guest list, its import
  * page, the sample file, and the guest and group routes; milestone 7: the
- * template editor and every venue, image, import and revision route).
+ * template editor and every venue, image, import and revision route;
+ * milestone 10: the share link and backup routes, and every restore step).
+ * Share pages run their own check: without a cookie, /share/<token> shows
+ * only its password page and its data route answers 401.
  */
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { expect, request as playwrightRequest, test } from '@playwright/test'
 import { apiAddGuests, apiCreateGroup, apiListGroups, apiListGuests } from './guest-list'
 import { makePlanPng } from './fixtures/floorplan-png'
 import { apiCreateLayout, apiCreateWedding, signIn, signInRequest, sitePassword } from './helpers'
 import { apiCreateVenue, apiGetVenue, apiSaveVenue, apiVenueRevisions } from './venues'
-import type { VenueImageInfo } from '../src/shared/api'
+import { emptyCanvas } from '../src/domain/canvas-schema'
+import type { ShareLink, VenueImageInfo } from '../src/shared/api'
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -40,9 +44,26 @@ const IMPORT_ROW = { rowNumber: 2, firstName: 'Sneaky', lastName: 'Guest', group
 /** A template save, as the template editor sends it. */
 const VENUE_SAVE = { baseVersion: 1, saveId: NO_ID, editedBy: 'Noa' }
 
+/** A share link password made up for this run. */
+const LINK_PASSWORD = `sneaky-${randomBytes(6).toString('hex')}`
+
+/** Restore step 1, as the browser sends it, for a wedding named Sneaky. */
+const RESTORE_START = {
+  format: 'seat-plan-backup',
+  version: 1,
+  jobId: NO_ID,
+  wedding: { id: NO_ID, name: 'Sneaky', date: null, unit: 'ft', minGapCm: 152.4 },
+  guests: [],
+  groups: [],
+  groupMembers: [],
+  rules: [],
+  ruleGuests: [],
+}
+
 /**
  * Every API route but the login route, with a body where the route takes
- * one; `:guest`, `:group`, `:image` and `:revision` stand for ids too.
+ * one; `:guest`, `:group`, `:image`, `:revision`, `:link` and `:job` stand
+ * for ids too.
  */
 const API_ROUTES: { method: Method; path: string; body?: unknown }[] = [
   { method: 'GET', path: '/api/weddings' },
@@ -105,13 +126,33 @@ const API_ROUTES: { method: Method; path: string; body?: unknown }[] = [
     path: '/api/venues/:venue/accept-import',
     body: { ...VENUE_SAVE, fixedItems: [], imageId: NO_ID, reference: { scaleCmPerPx: 1, offsetX: 0, offsetY: 0, rotation: 0, opacity: 0.5 }, importedBy: 'ai' },
   },
+  // Share links (milestone 10).
+  { method: 'GET', path: '/api/weddings/:wedding/share-links' },
+  { method: 'GET', path: '/api/layouts/:layout/share-links' },
+  { method: 'POST', path: '/api/layouts/:layout/share-links', body: { password: LINK_PASSWORD } },
+  { method: 'PATCH', path: '/api/share-links/:link', body: { enabled: false, password: LINK_PASSWORD } },
+  { method: 'DELETE', path: '/api/share-links/:link' },
+  // Backup and the restore steps (milestone 10).
+  { method: 'GET', path: '/api/weddings/:wedding/backup' },
+  { method: 'POST', path: '/api/weddings/restore', body: RESTORE_START },
+  {
+    method: 'POST',
+    path: '/api/weddings/restore/:job/templates',
+    body: { id: NO_ID, name: 'Sneaky', fixedItems: [], reference: null, importedBy: 'hand', imageId: null },
+  },
+  { method: 'PUT', path: '/api/weddings/restore/:job/templates/:venue/image', body: 'not an image' },
+  {
+    method: 'POST',
+    path: '/api/weddings/restore/:job/layouts',
+    body: { id: NO_ID, name: 'Sneaky', kind: 'reception', venueTemplateId: null, editedBy: 'Noa', canvas: emptyCanvas() },
+  },
 ]
 
-type Ids = { wedding: string; layout: string; guest: string; group: string; venue: string; image: string; revision: string }
-const NO_IDS: Ids = { wedding: NO_ID, layout: NO_ID, guest: NO_ID, group: NO_ID, venue: NO_ID, image: NO_ID, revision: NO_ID }
+type Ids = { wedding: string; layout: string; guest: string; group: string; venue: string; image: string; revision: string; link: string; job: string }
+const NO_IDS: Ids = { wedding: NO_ID, layout: NO_ID, guest: NO_ID, group: NO_ID, venue: NO_ID, image: NO_ID, revision: NO_ID, link: NO_ID, job: NO_ID }
 
 function fill(path: string, ids: Ids): string {
-  return path.replace(/:(wedding|layout|guest|group|venue|image|revision)\b/g, (_, key: keyof Ids) => ids[key])
+  return path.replace(/:(wedding|layout|guest|group|venue|image|revision|link|job)\b/g, (_, key: keyof Ids) => ids[key])
 }
 
 test.describe('without the cookie', () => {
@@ -155,8 +196,24 @@ test.describe('without the cookie', () => {
       expect(upload.status()).toBe(201)
       const image = (await upload.json()) as VenueImageInfo
       const [revision] = (await apiVenueRevisions(owner, venue.id)).revisions
-      const ids: Ids = { wedding: wedding.id, layout: layout.id, guest: guest.id, group: group.id, venue: venue.id, image: image.id, revision: revision.id }
-      const hidden = [secret, layout.name, guest.lastName, 'Hidden note', group.name, venue.name, wallName, image.sha256]
+      const linkRes = await owner.post(`/api/layouts/${layout.id}/share-links`, {
+        data: { id: randomUUID(), label: `Hidden caterer ${Date.now()}`, password: LINK_PASSWORD },
+      })
+      expect(linkRes.status()).toBe(201)
+      const link = (await linkRes.json()) as ShareLink
+      const token = link.path.split('/')[2]!
+      const ids: Ids = {
+        wedding: wedding.id,
+        layout: layout.id,
+        guest: guest.id,
+        group: group.id,
+        venue: venue.id,
+        image: image.id,
+        revision: revision.id,
+        link: link.id,
+        job: randomUUID(),
+      }
+      const hidden = [secret, layout.name, guest.lastName, 'Hidden note', group.name, venue.name, wallName, image.sha256, link.label, token]
 
       for (const path of PAGE_PATHS) {
         const res = await request.get(fill(path, ids), { maxRedirects: 0 })
@@ -170,6 +227,19 @@ test.describe('without the cookie', () => {
         const text = await res.text()
         for (const word of hidden) expect(text, `${method} ${path}`).not.toContain(word)
       }
+
+      // The share link's own page shows only its password form; its data stays closed.
+      const sharePage = await request.get(link.path, { maxRedirects: 0 })
+      expect(sharePage.status()).toBe(200)
+      expect(sharePage.headers()['x-robots-tag']).toContain('noindex')
+      expect(sharePage.headers()['referrer-policy']).toBe('no-referrer')
+      const sharePageText = await sharePage.text()
+      expect(sharePageText).toContain('Type the password you were given with this link.')
+      for (const word of hidden.filter((w) => w !== token)) expect(sharePageText, link.path).not.toContain(word)
+      const shareData = await request.get(`${link.path}/data`, { maxRedirects: 0 })
+      expect(shareData.status()).toBe(401)
+      const shareDataText = await shareData.text()
+      for (const word of hidden) expect(shareDataText, `${link.path}/data`).not.toContain(word)
 
       // The signed-out PATCH, DELETE and PUT changed nothing.
       const weddingNow = await owner.get(`/api/weddings/${wedding.id}`)
@@ -190,6 +260,12 @@ test.describe('without the cookie', () => {
       const venues = (await (await owner.get('/api/venues')).json()) as { name: string }[]
       expect(venues.filter((v) => v.name === 'Sneaky' || v.name.startsWith(venue.name))).toEqual([expect.objectContaining({ name: venue.name })])
       expect((await owner.get(`/api/venues/${venue.id}/images/${image.id}`)).status()).toBe(200)
+      // The share link is still on with its password, and no restore made a wedding.
+      const linksNow = (await (await owner.get(`/api/layouts/${layout.id}/share-links`)).json()) as ShareLink[]
+      expect(linksNow.map((l) => [l.id, l.enabled, l.lastOpenedAt])).toEqual([[link.id, true, null]])
+      expect((await request.post(`${link.path}/login`, { data: { password: LINK_PASSWORD } })).status()).toBe(200)
+      const weddingsNow = (await (await owner.get('/api/weddings')).json()) as { name: string }[]
+      expect(weddingsNow.filter((w) => w.name.startsWith('Sneaky'))).toEqual([])
     } finally {
       await owner.dispose()
     }
@@ -232,6 +308,7 @@ test('no response the app loads contains the password', async ({ page }) => {
     `/w/${wedding.id}/guests/import`,
     `/w/${wedding.id}/groups`,
     `/w/${wedding.id}/venues`,
+    `/w/${wedding.id}/links`,
     `/w/${wedding.id}/layouts/${layout.id}`,
     `/venues/${venue.id}?from=${wedding.id}`,
   ]) {

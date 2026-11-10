@@ -58,6 +58,12 @@ pdf.js decodes black and white scans (JBIG2, CCITT fax) and JPEG 2000 with WebAs
 
 **Toronto Beach Club.** The template exists but is empty: its floor plan and room sizes have not been sent yet, and the layout is not guessed. Once the file is here and `ANTHROPIC_API_KEY` is set on the live site, open the template, import the plan, check the draft against the original and the room sizes, and Accept.
 
+## Backup and share links
+
+Wedding settings has Download backup: one JSON file with the guests, groups, rules, layouts and the venues they use, floor plan images included. Restore from file on the home screen checks the file and makes a new wedding, "Name (restored)", in steps (rows, then each venue and its image, then each layout), showing each step; if one fails, Try again picks up where it stopped. A venue that still has the same walls is reused, otherwise it comes back as "Name (restored)". Share links are not in the backup.
+
+Share in the layout editor makes a view-only link for the venue, with its own password and switches for guest names and notes. The wedding's Links tab lists the links that are on, when each was last opened, and lets you change a link's password, switch names or notes, or turn it off; a new password or turning it off signs out anyone using it. The link's page asks for its password; the site password opens every link too. For now the page after the password shows the layout's name; the plan view comes later.
+
 ## Deploy
 
 1. In Vercel, import the GitHub repo. `vercel.json` sets the build command. This first deployment fails, because there is no database or password yet. That is expected; step 4 redeploys it.

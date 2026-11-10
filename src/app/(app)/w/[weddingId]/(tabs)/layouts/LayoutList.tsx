@@ -17,7 +17,7 @@ import { EmptyState } from '../../_components/TabPage'
 export function LayoutList({ weddingId, layouts }: { weddingId: string; layouts: LayoutSummary[] }) {
   if (layouts.length === 0) return <EmptyState>No layouts yet.</EmptyState>
   return (
-    <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="layout-list">
+    <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="layout-list">
       {layouts.map((layout) => (
         <li key={layout.id}>
           <LayoutCard weddingId={weddingId} layout={layout} />

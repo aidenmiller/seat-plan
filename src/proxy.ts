@@ -16,6 +16,13 @@ function noindex(res: NextResponse): NextResponse {
 export function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl
   const kind = classifyPath(pathname)
+  if (kind === 'share') {
+    // The share page and routes run their own check (src/server/auth/share.ts).
+    // The token is in the address, so the browser must never pass it on.
+    const res = noindex(NextResponse.next())
+    res.headers.set('Referrer-Policy', 'no-referrer')
+    return res
+  }
   if (kind !== 'protected') return noindex(NextResponse.next())
 
   if (verifySiteToken(req.cookies.get(SITE_COOKIE)?.value)) return noindex(NextResponse.next())

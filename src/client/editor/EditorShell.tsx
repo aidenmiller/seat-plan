@@ -33,6 +33,7 @@ import { errorMessage, updateLayout } from '@/client/api'
 import { getAuthor, useAuthor } from '@/client/author'
 import type { LayoutSaver, SaveStatus } from '@/client/sync/types'
 import { useUnloadGuard } from '@/client/sync/unload'
+import { ShareButton } from '@/client/share/ShareButton'
 import { AuthorSwitch } from '@/client/ui/AuthorSwitch'
 import { BottomSheet, type SheetSnap } from '@/client/ui/BottomSheet'
 import { ContextMenu } from '@/client/ui/ContextMenu'
@@ -465,6 +466,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
                 />
               </h1>
               <SaveStatusSlot status={status} />
+              <ShareButton layoutId={initial.id} compact={phone} />
               <ModeSwitch compact={phone} />
               <AuthorSwitch compact />
             </header>

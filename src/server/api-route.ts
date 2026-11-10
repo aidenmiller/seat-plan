@@ -19,6 +19,12 @@ export function json(data: unknown, status = 200): NextResponse {
   return NextResponse.json(data, { status, headers: NO_STORE })
 }
 
+/** RFC 6266: a plain ASCII name for old browsers, and the full name in UTF-8. */
+export function attachmentDisposition(fileName: string, fallback: string): string {
+  const ascii = fileName.normalize('NFKD').replace(/[^\x20-\x7e]/g, '').replace(/["\\%]/g, '').trim() || fallback
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
+}
+
 export function notFound(): NextResponse {
   return json({ error: 'not_found' }, 404)
 }

@@ -32,7 +32,7 @@ export function VenueList({ weddingId, venues }: { weddingId: string; venues: Ve
     return <p className="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center text-stone-600">No venues yet. Make one with New venue.</p>
   }
   return (
-    <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="venue-list">
+    <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="venue-list">
       {venues.map((v) => (
         <li key={v.id}>
           <VenueCard weddingId={weddingId} venue={v} />
