@@ -67,8 +67,8 @@ export function PickStrip({ top }: { top: number }) {
   )
 }
 
-/** Keeps a box of `w` by `h` px near `at` inside the window. */
-function nearPoint(at: { x: number; y: number }, w: number, h: number): { left: number; top: number } {
+/** Keeps a box of `w` by `h` px near `at` inside the window. The share viewer's seat card uses it too. */
+export function nearPoint(at: { x: number; y: number }, w: number, h: number): { left: number; top: number } {
   const vw = typeof window === 'undefined' ? 1440 : window.innerWidth
   const vh = typeof window === 'undefined' ? 900 : window.innerHeight
   const left = Math.min(Math.max(8, at.x + 24), Math.max(8, vw - w - 8))

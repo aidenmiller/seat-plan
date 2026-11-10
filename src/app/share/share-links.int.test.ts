@@ -165,7 +165,7 @@ describe('share links', () => {
     expect(view.status).toBe(200)
     expect(view.headers.get('referrer-policy')).toBe('no-referrer')
     expect(view.headers.get('cache-control')).toBe('no-store')
-    expect(view.body as ShareView).toMatchObject({ layoutName: 'Dinner', kind: 'reception', showNames: true, showNotes: false })
+    expect(view.body as ShareView).toMatchObject({ weddingName: 'Share test', layoutName: 'Dinner', kind: 'reception', showNames: true, showNotes: false })
 
     // Opening it counts as opened.
     const after = await send(await routes.layoutLinks(), 'GET', `/api/layouts/${layoutId}/share-links`, { id: layoutId })
@@ -244,7 +244,7 @@ describe('share links', () => {
     // Names and notes are not sign-out changes: the same cookie still works.
     const shown = await data(token, jar)
     expect(shown.status).toBe(200)
-    expect(shown.text).toContain('Annabel Quist')
+    expect((shown.body as ShareView).guests).toEqual([{ key: 'g1', firstName: 'Annabel', lastName: 'Quist', meal: null, isChild: false }])
     expect(shown.text).toContain('Uncle Bob')
   })
 
@@ -269,7 +269,7 @@ describe('share links', () => {
     expect(res.status).toBe(200)
     const view = res.body as ShareView
     expect(view.kind).toBe('ceremony')
-    expect(view.guests).toEqual([{ key: 'g1', name: 'Cyrille Okafor', meal: null, isChild: false }])
+    expect(view.guests).toEqual([{ key: 'g1', firstName: 'Cyrille', lastName: 'Okafor', meal: null, isChild: false }])
     expect(res.text).not.toContain(cy)
     // Every row as drawn in the editor: block, side label, aisle end, reserved label, chairs; only the guest id becomes its key.
     expect(view.items).toEqual(

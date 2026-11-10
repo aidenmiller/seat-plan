@@ -254,6 +254,7 @@ export async function shareViewData(db: Db, link: LiveShareLink): Promise<ShareV
       canvas: layouts.canvas,
       updatedAt: layouts.updatedAt,
       unit: weddings.unit,
+      weddingName: weddings.name,
       fixedItems: venueTemplates.fixedItems,
       templateDeletedAt: venueTemplates.deletedAt,
     })
@@ -279,6 +280,7 @@ export async function shareViewData(db: Db, link: LiveShareLink): Promise<ShareV
   // A deleted template draws no venue layer (DECISIONS 29).
   const venue = row.fixedItems && row.templateDeletedAt === null ? fixedItemsSchema.safeParse(row.fixedItems) : null
   return buildShareView({
+    weddingName: row.weddingName,
     layoutName: row.name,
     kind: row.kind,
     unit: row.unit,

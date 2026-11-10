@@ -14,18 +14,22 @@
  * layouts and the original floor plan image.
  */
 import type { Canvas, Item } from './canvas-schema'
+import { compareByName, matchesSearch, searchTerms } from './guest-list'
 import type { FixedItem } from './venue-schema'
 
 export type ShareGuest = {
   /** The key seats use for this guest in this reply. */
   key: string
   /** Only when the link shows names. */
-  name?: string
+  firstName?: string
+  lastName?: string
   meal: string | null
   isChild: boolean
 }
 
 export type ShareView = {
+  /** For the viewer's top bar, beside the layout's name. */
+  weddingName: string
   layoutName: string
   kind: 'reception' | 'ceremony'
   unit: 'ft' | 'm'
@@ -39,6 +43,7 @@ export type ShareView = {
 }
 
 export type ShareViewInput = {
+  weddingName: string
   layoutName: string
   kind: 'reception' | 'ceremony'
   unit: 'ft' | 'm'
@@ -67,7 +72,7 @@ export function buildShareView(input: ShareViewInput): ShareView {
     keys.set(guestId, key)
     shared.push({
       key,
-      ...(input.showNames ? { name: `${guest.firstName} ${guest.lastName}` } : {}),
+      ...(input.showNames ? { firstName: guest.firstName, lastName: guest.lastName } : {}),
       meal: guest.meal,
       isChild: guest.isChild,
     })
@@ -98,6 +103,7 @@ export function buildShareView(input: ShareViewInput): ShareView {
   }
 
   return {
+    weddingName: input.weddingName,
     layoutName: input.layoutName,
     kind: input.kind,
     unit: input.unit,
@@ -108,4 +114,73 @@ export function buildShareView(input: ShareViewInput): ShareView {
     items,
     guests: shared,
   }
+}
+
+// ---------------------------------------------------------------- the viewer (PLAN section 7, "Share view")
+
+/** How often an open share page asks for the data again: it shows the latest save, and signs out a link turned off. */
+export const SHARE_RECHECK_MS = 60_000
+
+/** A guest whose name the link shows. */
+export type NamedShareGuest = ShareGuest & { firstName: string; lastName: string }
+
+export function isNamed(guest: ShareGuest): guest is NamedShareGuest {
+  return guest.firstName !== undefined && guest.lastName !== undefined
+}
+
+/** "Ann Lee", or null when the link shows table names only. */
+export function shareGuestName(guest: ShareGuest): string | null {
+  return isNamed(guest) ? `${guest.firstName} ${guest.lastName}`.trim() : null
+}
+
+/**
+ * The viewer's search: guests whose first or last name holds every word
+ * typed, ignoring case and accents, by last name, at most `limit`. Nothing
+ * for an empty search, and nothing at all when the link shows table names
+ * only.
+ */
+export function searchShareGuests(guests: readonly ShareGuest[], query: string, limit = 8): NamedShareGuest[] {
+  const terms = searchTerms(query)
+  if (terms.length === 0) return []
+  return guests
+    .filter(isNamed)
+    .filter((g) => matchesSearch({ firstName: g.firstName, lastName: g.lastName, nickname: null }, terms))
+    .sort((a, b) => compareByName({ ...a, id: a.key }, { ...b, id: b.key }))
+    .slice(0, limit)
+}
+
+/**
+ * The guests as the editor's seating tools read them (names for labels,
+ * initials and the pan to a seat). Only named guests: with table names only
+ * the seats show no names or initials.
+ */
+export function sharePeopleGuests(guests: readonly ShareGuest[]) {
+  return guests.filter(isNamed).map((g) => ({
+    id: g.key,
+    firstName: g.firstName,
+    lastName: g.lastName,
+    nickname: null,
+    rsvp: 'yes' as const,
+    partnerId: null,
+    coupleRuleEnabled: false,
+  }))
+}
+
+/** What a seat's card shows: the name (when the link shows names), the meal and the child flag, nothing else. */
+export function shareSeatCard(guest: ShareGuest | undefined): { name: string | null; meal: string | null; child: boolean } {
+  if (!guest) return { name: null, meal: null, child: false }
+  const meal = guest.meal?.trim() ? guest.meal.trim() : null
+  return { name: shareGuestName(guest), meal, child: guest.isChild }
+}
+
+/**
+ * What a reply from the data route means for an open viewer: show the plan
+ * (200); sign out (401 when the link was turned off or its password changed,
+ * 404 or 410 when the layout is gone); anything else is a hiccup to retry
+ * on the next check.
+ */
+export function shareRecheckOutcome(status: number): 'show' | 'signedOut' | 'retry' {
+  if (status === 200) return 'show'
+  if (status === 401 || status === 404 || status === 410) return 'signedOut'
+  return 'retry'
 }

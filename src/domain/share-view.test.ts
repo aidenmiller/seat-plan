@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { Canvas } from './canvas-schema'
 import type { FixedItem } from './venue-schema'
-import { buildShareView, type ShareViewInput } from './share-view'
+import {
+  buildShareView,
+  searchShareGuests,
+  shareGuestName,
+  sharePeopleGuests,
+  shareRecheckOutcome,
+  shareSeatCard,
+  type ShareGuest,
+  type ShareViewInput,
+} from './share-view'
 
 const ANN = '00000000-0000-4000-8000-0000000000a1'
 const BEN = '00000000-0000-4000-8000-0000000000b1'
@@ -99,6 +108,7 @@ const venue: FixedItem[] = [
 
 function input(over: Partial<ShareViewInput> = {}): ShareViewInput {
   return {
+    weddingName: 'Noa and Aiden',
     layoutName: 'Dinner',
     kind: 'reception',
     unit: 'ft',
@@ -119,8 +129,8 @@ describe('buildShareView', () => {
   it('sends names, meals and child flags under short keys, never guest ids', () => {
     const view = buildShareView(input())
     expect(view.guests).toEqual([
-      { key: 'g1', name: 'Ann Lee', meal: 'Fish', isChild: false },
-      { key: 'g2', name: 'Ben Ray', meal: null, isChild: true },
+      { key: 'g1', firstName: 'Ann', lastName: 'Lee', meal: 'Fish', isChild: false },
+      { key: 'g2', firstName: 'Ben', lastName: 'Ray', meal: null, isChild: true },
     ])
     const table = view.items.find((i) => i.id === 't1')
     expect(table).toMatchObject({ name: 'Family', seats: [{ index: 0, guestId: 'g1' }, { index: 1, guestId: null }, { index: 2, guestId: null }] })
@@ -152,5 +162,56 @@ describe('buildShareView', () => {
 
   it('keeps the venue walls without the import notes', () => {
     expect(buildShareView(input()).venue).toEqual([{ ...venue[0], unsure: false, unsureNote: '' }])
+  })
+
+  it('names the wedding and the layout for the top bar', () => {
+    expect(buildShareView(input())).toMatchObject({ weddingName: 'Noa and Aiden', layoutName: 'Dinner' })
+  })
+})
+
+const named: ShareGuest[] = [
+  { key: 'g1', firstName: 'Zoë', lastName: 'Kowalczyk', meal: 'Fish', isChild: false },
+  { key: 'g2', firstName: 'Ann', lastName: 'Lee', meal: null, isChild: true },
+  { key: 'g3', firstName: 'Bo', lastName: 'Annan', meal: ' ', isChild: false },
+]
+const nameless: ShareGuest[] = [{ key: 'g1', meal: 'Fish', isChild: false }]
+
+describe('the share viewer', () => {
+  it('finds guests by part of a first or last name, ignoring case and accents, by last name', () => {
+    expect(searchShareGuests(named, 'zoe').map((g) => g.key)).toEqual(['g1'])
+    expect(searchShareGuests(named, 'kow ZO').map((g) => g.key)).toEqual(['g1'])
+    expect(searchShareGuests(named, 'ann').map((g) => g.key)).toEqual(['g3', 'g2'])
+    expect(searchShareGuests(named, 'ann', 1).map((g) => g.key)).toEqual(['g3'])
+    expect(searchShareGuests(named, 'nobody')).toEqual([])
+  })
+
+  it('finds nothing for an empty search, or when the link shows table names only', () => {
+    expect(searchShareGuests(named, '   ')).toEqual([])
+    expect(searchShareGuests(nameless, 'fish')).toEqual([])
+  })
+
+  it('hands the seating tools only the named guests, under their keys', () => {
+    expect(sharePeopleGuests(nameless)).toEqual([])
+    expect(sharePeopleGuests(named.slice(0, 1))).toEqual([
+      { id: 'g1', firstName: 'Zoë', lastName: 'Kowalczyk', nickname: null, rsvp: 'yes', partnerId: null, coupleRuleEnabled: false },
+    ])
+  })
+
+  it('shows a seat card with the name, meal and child flag only', () => {
+    expect(shareGuestName(named[0]!)).toBe('Zoë Kowalczyk')
+    expect(shareGuestName(nameless[0]!)).toBeNull()
+    expect(shareSeatCard(named[1])).toEqual({ name: 'Ann Lee', meal: null, child: true })
+    expect(shareSeatCard(named[2])).toEqual({ name: 'Bo Annan', meal: null, child: false })
+    expect(shareSeatCard(nameless[0])).toEqual({ name: null, meal: 'Fish', child: false })
+    expect(shareSeatCard(undefined)).toEqual({ name: null, meal: null, child: false })
+  })
+
+  it('signs the viewer out when the link was turned off, its password changed or its layout went', () => {
+    expect(shareRecheckOutcome(200)).toBe('show')
+    expect(shareRecheckOutcome(401)).toBe('signedOut')
+    expect(shareRecheckOutcome(404)).toBe('signedOut')
+    expect(shareRecheckOutcome(410)).toBe('signedOut')
+    expect(shareRecheckOutcome(500)).toBe('retry')
+    expect(shareRecheckOutcome(503)).toBe('retry')
   })
 })
