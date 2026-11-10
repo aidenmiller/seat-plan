@@ -35,11 +35,10 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { emptyCanvas, type Author, type Canvas, type Item } from '../src/domain/canvas-schema'
 import { nameKey } from '../src/domain/names'
-import { makeItem, type PresetId } from '../src/domain/presets'
-import { addRoundTable } from '../src/domain/round-table'
 import { createPool, requireDatabaseUrl } from '../src/server/db/connection'
 import * as schema from '../src/server/db/schema'
-import { demoPlan, PLAN_A_TABLES, type DemoPlan } from './demo-guests'
+import { demoPlan, type DemoPlan } from './demo-guests'
+import { canvasTour, receptionPlanA } from './demo-layouts'
 import { addDemoNotes } from './demo-notes'
 
 export const DEMO_WEDDING_NAME = 'Demo wedding'
@@ -47,47 +46,6 @@ export const BLANK_LAYOUT_NAME = 'Reception plan A'
 export const TOUR_LAYOUT_NAME = 'Canvas tour'
 export const BEACH_LAYOUT_NAME = 'Beach Club reception'
 export const BEACH_TEMPLATE_NAME = 'Toronto Beach Club'
-
-/** Five Round preset tables (60 in, 8 seats), numbered 1 to 5 and set side by side, every seat empty. */
-export function receptionPlanA(): Canvas {
-  let canvas = emptyCanvas()
-  for (let i = 0; i < PLAN_A_TABLES.length; i++) canvas = addRoundTable(canvas, randomUUID())
-  return canvas
-}
-
-/**
- * One of every table preset and fixture, set out like a small reception (cm,
- * centers): the head table seated along its back edge facing the dance
- * floor, the sweetheart table beside it, round, square and rectangle tables
- * around the floor, and the fixtures at the edges. Tables are numbered in the
- * order they are placed, every seat empty.
- */
-export function canvasTour(): Canvas {
-  const placed: [PresetId, number, number, number?][] = [
-    ['stage', 0, -820],
-    ['dj', 520, -820],
-    ['head', 0, -470],
-    ['sweetheart', -560, -470],
-    ['danceFloor', 0, 0],
-    ['round', -620, 0],
-    ['round', 620, 0],
-    ['square', -620, 480],
-    ['rect', 620, 480],
-    ['bar', -1060, 0, 90],
-    ['food', 1060, 0, 90],
-    ['cake', -300, 520],
-    ['gifts', 0, 700],
-    ['photoBooth', 1060, 560],
-    ['text', 0, 1000],
-  ]
-  let canvas = emptyCanvas()
-  for (const [preset, x, y, rotation = 0] of placed) {
-    let item: Item = { ...makeItem(preset, { x, y }, randomUUID(), canvas), rotation }
-    if (item.kind === 'shape' && item.type === 'text') item = { ...item, text: 'Entrance', width: 240 }
-    canvas = { ...canvas, items: [...canvas.items, item] }
-  }
-  return canvas
-}
 
 /** The server modules, loaded after the condition check so a wrong start gets a plain hint. */
 async function loadServerModules() {

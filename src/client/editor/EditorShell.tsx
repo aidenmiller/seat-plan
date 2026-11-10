@@ -43,6 +43,8 @@ import { randomId } from '@/client/sync/random-id'
 import { getAuthor, useAuthor } from '@/client/author'
 import type { LayoutSaver, SaveStatus } from '@/client/sync/types'
 import { useUnloadGuard } from '@/client/sync/unload'
+import { ExportButton } from '@/client/export/ExportButton'
+import { ExportDialog, type ExportSource } from '@/client/export/ExportDialog'
 import { ShareButton } from '@/client/share/ShareButton'
 import { AuthorSwitch } from '@/client/ui/AuthorSwitch'
 import { BottomSheet, type SheetSnap } from '@/client/ui/BottomSheet'
@@ -109,8 +111,8 @@ function createBridge(wedding: EditorWedding, venue: readonly FixedItem[]) {
   }
 }
 
-/** What the editor reads from the wedding: the grid and lengths unit, and the narrowest gap between tables. */
-export type EditorWedding = { unit: LengthUnit; minGapCm: number }
+/** What the editor reads from the wedding: the grid and lengths unit, the narrowest gap between tables, and its name and date for exports. */
+export type EditorWedding = { unit: LengthUnit; minGapCm: number; name?: string; date?: string | null }
 
 const DEFAULT_WEDDING: EditorWedding = { unit: 'ft', minGapCm: DEFAULT_MIN_GAP_CM }
 /** The bottom sheet's strip on phones: its 44 px handle and the 44 px tabs. */
@@ -210,6 +212,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   const canvasAreaRef = useRef<HTMLDivElement>(null)
   const guestList = useEditorGuestList(layout.weddingId, guests, groups, rules)
   const [addToGroup, setAddToGroup] = useState<readonly string[] | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   const canEdit = saver !== null && author !== null && conflict === null && !leaving
   const venue = useMemo(() => venueItemsOf(venueInfo), [venueInfo])
@@ -462,6 +465,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
             onSeatRequest,
             onDetails: showDetails,
             onEditNote: showCanvas,
+            onExport: () => setExporting(true),
           })
           if (!built) return
           setMenu({ at, menu: built })
@@ -540,6 +544,17 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
+  /** What the Export dialog prints: the plan as it is on screen, saved or not. */
+  const exportSource = (): ExportSource => ({
+    layoutName: name,
+    kind: initial.kind,
+    canvas: store.getState().canvas,
+    venue,
+    guests: guestList.guests,
+    weddingName: wedding.name ?? null,
+    weddingDate: wedding.date ?? null,
+  })
+
   const blank = venueInfo.venueTemplateId === null
   const venueLabel = blank ? 'Blank canvas' : venueInfo.venueDeleted ? `${venueInfo.venueName ?? 'Venue'} (deleted)` : (venueInfo.venueName ?? 'Venue')
   const onPickVenue = useCallback(() => setPickingVenue(true), [])
@@ -595,6 +610,8 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
               </h1>
               <ProblemCount compact={phone} onOpen={openProblems} />
               <SaveStatusSlot status={status} />
+              {/* Phones reach Export from the canvas menu (a long press on the plan) and the Layouts tab: the top bar has no room. */}
+              {!phone && <ExportButton compact={false} load={exportSource} />}
               <ShareButton layoutId={initial.id} compact={phone} />
               <ModeSwitch compact={phone} />
               <AuthorSwitch compact />
@@ -714,6 +731,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
               onClose={() => setAddToGroup(null)}
             />
             <UnseatDialog ask={unseat} canvas={store.getState().canvas} onClose={() => setUnseat(null)} />
+            <ExportDialog open={exporting} onClose={() => setExporting(false)} load={exportSource} />
             <ContextMenu at={menu?.at ?? null} items={menu?.menu.items ?? []} label={menu?.menu.label ?? 'Menu'} onClose={() => setMenu(null)} testId="canvas-menu" />
             <SeatPicker />
             <SeatCard layoutKind={initial.kind} />

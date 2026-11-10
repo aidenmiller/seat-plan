@@ -5,8 +5,8 @@
  * of an arrow. Widths come from textWidthEm (text-fit.ts), which errs a
  * little wide, so text stays inside its note.
  */
-import type { Point } from '@/domain/geometry'
-import { NOTE_FONT_CM, NOTE_LINE_CM } from '@/domain/notes'
+import type { Point } from './geometry'
+import { NOTE_FONT_CM, NOTE_LINE_CM } from './notes'
 import { textWidthEm } from './text-fit'
 
 /** The smallest text a note shrinks to before its text is cut short, in cm. */

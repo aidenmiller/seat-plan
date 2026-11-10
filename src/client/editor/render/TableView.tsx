@@ -56,7 +56,7 @@ import {
   TIGHT_STROKE,
   TIGHT_STROKE_CM,
 } from './style'
-import { tableCenterLabels } from './text-fit'
+import { tableCenterLabels } from '@/domain/text-fit'
 import { SeatPlus, SeatPulseRing } from './seat-marks'
 import { useItemMarks } from '../problems/analysis'
 import { FADED_OPACITY, ItemBadge, SeatRings } from './rule-marks'

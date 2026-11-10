@@ -8,7 +8,7 @@
  * Every size is in world units (cm), so text scales with the plan like
  * everything else in the world SVG.
  */
-import type { Table } from '@/domain/canvas-schema'
+import type { Table } from './canvas-schema'
 
 /** The smallest text drawn inside an item, in cm. Smaller text is cut short with an ellipsis instead. */
 export const MIN_ITEM_FONT_CM = 6

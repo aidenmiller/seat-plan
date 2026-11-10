@@ -256,6 +256,8 @@ export type ChairNameInput = {
   /** The settled zoom: 10 px on screen is 10 / zoom cm. */
   zoom: number
   measure: MeasureText
+  /** The largest name font in cm; MAX_LABEL_FONT_CM unless given (print). */
+  maxFont?: number
 }
 
 /** How far back from each chair a name can run before it meets another row's chairs. */
@@ -286,7 +288,7 @@ export function chairNameLabels(input: ChairNameInput): ChairNameLabel[] {
   const { row, names, measure } = input
   const xs = chairLocalXs(row)
   const room = roomBehind(row, xs, input.rows)
-  const maxFont = Math.min(MAX_LABEL_FONT_CM, (row.spacing * LANE_SHARE) / LINE_HEIGHT_EM)
+  const maxFont = Math.min(input.maxFont !== undefined && input.maxFont > 0 ? input.maxFont : MAX_LABEL_FONT_CM, (row.spacing * LANE_SHARE) / LINE_HEIGHT_EM)
   const minFont = input.zoom > 0 ? MIN_NAME_PX / input.zoom : maxFont
   const world = normalizeDegrees(row.rotation + 90)
   const flipped = world > 90 && world <= 270

@@ -9,7 +9,7 @@ import { memo, type ReactElement } from 'react'
 import type { Fixture } from '@/domain/canvas-schema'
 import { Glyph } from '../icons/glyphs'
 import { FIXTURE_COLORS, FIXTURE_LABEL, FIXTURE_STROKE_CM } from './style'
-import { iconAndLabel } from './text-fit'
+import { iconAndLabel } from '@/domain/text-fit'
 import { itemTransform } from './TableView'
 
 /** Dance floor tiles: 2 ft squares (61 cm), at most 40 lines a side. */
