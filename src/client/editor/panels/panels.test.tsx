@@ -13,7 +13,7 @@ import { canvasMenu, type CanvasMenuInput } from './canvas-menu'
 import { EditorUiProvider, type EditorUi } from './editor-ui'
 import { panelFields, PropertiesPanel, samePanelItems, selectPanelItems, tableNumberCount } from './PropertiesPanel'
 import { dropTile, ShapePanel, tileDragStarts } from './ShapePanel'
-import { unseatSeatNumbers, unseatTitle } from './UnseatDialog'
+import { unseatLines, unseatSeatNumbers, unseatTitle } from './UnseatDialog'
 
 const GUEST_A = '11111111-1111-4111-8111-111111111111'
 const GUEST_B = '22222222-2222-4222-8222-222222222222'
@@ -283,7 +283,7 @@ describe('canvasMenu', () => {
     expect(m?.items.map((i) => i.label)).toEqual(['Show seats', 'Fit to content'])
   })
 
-  it('leaves seated guests to milestone 5', () => {
+  it('leaves seated guests to the guest menu', () => {
     expect(menu({ target: { kind: 'seat', itemId: 't1', seatIndex: 0, guestId: GUEST_A, locked: false }, guestCount: 1 })).toBeNull()
   })
 })
@@ -298,6 +298,15 @@ describe('the unseat dialog', () => {
     const canvas = { ...emptyCanvas(), items: [t] }
     expect(unseatSeatNumbers(canvas, { tableId: 't1', unseated: [GUEST_A, GUEST_B] })).toEqual([8, 7])
     expect(unseatSeatNumbers(canvas, { tableId: 'nope', unseated: [GUEST_A] })).toEqual([null])
+  })
+
+  it('names who loses their seat, lowest seat first (review finding)', () => {
+    const t = item('round', 't1') as Table
+    t.seats[7] = { index: 7, guestId: GUEST_A }
+    t.seats[6] = { index: 6, guestId: GUEST_B }
+    const canvas = { ...emptyCanvas(), items: [t] }
+    expect(unseatLines(canvas, { tableId: 't1', unseated: [GUEST_A, GUEST_B], names: ['Jane Doe', 'John Roe'] })).toEqual(['Seat 7: John Roe', 'Seat 8: Jane Doe'])
+    expect(unseatLines(canvas, { tableId: 'nope', unseated: [GUEST_A], names: ['Jane Doe'] })).toEqual(['Jane Doe'])
   })
 })
 

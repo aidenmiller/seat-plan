@@ -11,8 +11,9 @@
  *  - Drag on an unlocked item moves the selection (selecting the item first
  *    if it was not selected). Shift+drag on a table resizes it about its
  *    center. Drag on a handle resizes, on the rotate handle turns. Drag from
- *    a seated guest starts a guest drag (milestone 5). Drag on empty canvas
- *    or a locked item draws a selection box.
+ *    a seated guest starts a guest drag, on a locked table too (DECISIONS
+ *    56: seats on locked items still change). Drag on empty canvas or a
+ *    locked item draws a selection box.
  *  - Middle button, Space+drag and the hand tool pan.
  *
  * Touch (PLAN change 12):
@@ -23,10 +24,17 @@
  *  - Holding 450 ms within 8 px arms a long press: letting go opens the menu
  *    right click opens; moving then drags the item (or the guest).
  *  - Two fingers pinch and pan. A second finger ends a one-finger drag where
- *    it is (kept, one undo step) and starts the pinch.
+ *    it is (kept, one undo step) and starts the pinch; a guest drag is
+ *    cancelled instead, since a guest is only dropped where the finger lifts.
  *
  * View mode: clicks and taps still select (to list a table's guests), every
  * drag pans, and long press still opens the (read-only) menu.
+ *
+ * Seating (milestone 5): while a name waits for a seat (tap-then-tap,
+ * `picking`), a click or tap selects nothing and only reports the tap. In
+ * Edit mode a click on an empty seat's + (a seat target marked plus) opens
+ * its guest picker instead of selecting the table, unless Shift or the phone
+ * Select switch makes it a toggle.
  */
 import type { Point } from '@/domain/geometry'
 import { isTableTarget, type Target } from './hit-test'
@@ -55,6 +63,8 @@ export type MachineContext = {
   phoneSelect: boolean
   spaceHeld: boolean
   isSelected(itemId: string): boolean
+  /** A name waits for a seat (tap-then-tap): taps select nothing. */
+  picking?: boolean
 }
 
 export type DragKind = 'move' | 'resize' | 'rotate' | 'centerResize' | 'marquee' | 'guest'
@@ -195,8 +205,9 @@ export function chooseDrag(press: Press, ctx: MachineContext): DragKind | 'pan' 
   if (t.kind === 'handle') return 'resize'
   if (t.kind === 'rotate') return 'rotate'
   const touch = press.pointer === 'touch'
+  // Seats on a locked table still take guests (DECISIONS 56).
+  if (t.kind === 'seat' && t.guestId !== null && (!touch || press.longPressed)) return 'guest'
   if ((t.kind === 'item' || t.kind === 'seat') && !t.locked) {
-    if (t.kind === 'seat' && t.guestId !== null && (!touch || press.longPressed)) return 'guest'
     if (touch && !press.longPressed && !ctx.isSelected(t.itemId)) return 'pan'
     if (press.shift && !touch && isTableTarget(t)) return 'centerResize'
     return 'move'
@@ -211,8 +222,10 @@ function clickIntents(press: Press, ctx: MachineContext): Intent[] {
   const edit = ctx.mode === 'edit'
   const tap: Intent = { type: 'tap', target: t, at: press.start, pointer: press.pointer }
   if (t.kind === 'handle' || t.kind === 'rotate') return []
+  if (ctx.picking) return [tap]
   if (edit && ctx.tool === 'place') return [{ type: 'place', at: press.start }]
   const toggle = press.shift || (press.pointer === 'touch' && ctx.phoneSelect && edit)
+  if (edit && !toggle && t.kind === 'seat' && t.plus === true) return [tap]
   if (t.kind === 'seat' && t.guestId !== null) return [{ type: 'selectGuest', itemId: t.itemId, seatIndex: t.seatIndex, toggle }, tap]
   if (t.kind === 'seat' || t.kind === 'item') return [toggle ? { type: 'toggleSelect', id: t.itemId } : { type: 'select', ids: [t.itemId] }, tap]
   return toggle ? [tap] : [{ type: 'clearSelection' }, tap]
@@ -269,7 +282,11 @@ function onDown(state: MachineState, input: Extract<PointerInput, { type: 'down'
       phase.press.pointer === 'touch'
     if (!singleTouch) return next(phase)
     const intents: Intent[] = []
-    if (phase.kind === 'dragging') intents.push({ type: 'dragEnd', ...dragInfo(phase.press, phase.drag, phase.last, phase.shift, phase.alt) })
+    if (phase.kind === 'dragging') {
+      // A guest is dropped only where the finger lifts: a second finger cancels the guest drag, so pinch to look further.
+      if (phase.drag === 'guest') intents.push({ type: 'dragCancel', drag: 'guest' })
+      else intents.push({ type: 'dragEnd', ...dragInfo(phase.press, phase.drag, phase.last, phase.shift, phase.alt) })
+    }
     if (phase.kind === 'panning') intents.push({ type: 'panEnd' })
     intents.push({ type: 'pinchStart' })
     return next(startPinch(pointers, phase.press.id, input.id), intents)

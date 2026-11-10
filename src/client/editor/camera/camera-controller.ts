@@ -17,6 +17,10 @@
  *  - Each frame also writes the grid's CSS variables on the viewport:
  *    --grid-step (px between the lines shown), --grid-x and --grid-y (where a
  *    line falls), for a CSS background grid.
+ *  - animateTo() glides to a camera (pan to a seat, spec section 6) over
+ *    about 300 ms, one wrapper write per frame like a gesture, and settles
+ *    when it arrives. Any other move (a gesture, a button) stops it where it
+ *    is. With no viewport attached, or a duration of 0, it jumps.
  *
  * Screen points are CSS px from the viewport's top left; world points are cm.
  */
@@ -80,7 +84,12 @@ export type CameraControllerOptions = {
   gridUnit?: LengthUnit
   /** After each settle: save the camera for this device. */
   onSettle?(camera: Camera): void
+  /** The animation clock in ms (performance.now). */
+  now?: () => number
 }
+
+/** How long animateTo takes by default. */
+export const ANIMATE_MS = 300
 
 export type CameraController = {
   /** The camera now, mid-gesture included. */
@@ -111,6 +120,14 @@ export type CameraController = {
   fitInsets(): FitInsets
   /** Shows a world point at the viewport's center, at `zoom` or the zoom now. */
   centerOn(world: Point, zoom?: number): void
+  /**
+   * Glides to `camera` (about 300 ms, eased), then settles. Any other camera
+   * change stops the glide where it is. Jumps when nothing is attached or
+   * durationMs is 0.
+   */
+  animateTo(camera: Camera, options?: { durationMs?: number }): void
+  /** True while animateTo is under way. */
+  isAnimating(): boolean
   screenToWorld(screen: Point): Point
   worldToScreen(world: Point): Point
   /** A pointer event's clientX and clientY to a screen point. */
@@ -129,7 +146,7 @@ export type CameraController = {
   subscribeDetailLevel(listener: () => void): () => void
   /** Writes the zoom text into an element on each frame, without React. Returns unbind. */
   bindZoomLabel(element: { textContent: string | null }): () => void
-  /** True between the first change of a gesture and its settle. */
+  /** True between the first change of a gesture (or a glide) and its settle. */
   isMoving(): boolean
   /** Settles now. */
   flush(): void
@@ -165,6 +182,33 @@ export function gridVars(camera: Camera, unit: LengthUnit): { step: number; x: n
   return { step, x: mod(camera.x), y: mod(camera.y) }
 }
 
+/** Slow, fast, slow. */
+export function easeInOutCubic(t: number): number {
+  if (t <= 0) return 0
+  if (t >= 1) return 1
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+}
+
+/**
+ * The camera a share `t` (0 to 1) of the way from `a` to `b`: the zoom moves
+ * by equal ratios (so zooming in 4 times feels even) and the world point at
+ * `center` (screen px) moves in a straight line. Gives `b` itself at 1.
+ */
+export function interpolateCamera(a: Camera, b: Camera, t: number, center: Point): Camera {
+  if (t <= 0) return a
+  if (t >= 1) return b
+  const zoom = a.zoom * Math.pow(b.zoom / a.zoom, t)
+  const wa = toWorld(a, center)
+  const wb = toWorld(b, center)
+  const wx = wa.x + (wb.x - wa.x) * t
+  const wy = wa.y + (wb.y - wa.y) * t
+  return { zoom, x: center.x - wx * zoom, y: center.y - wy * zoom }
+}
+
+function defaultNow(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
 function sameCamera(a: Camera, b: Camera): boolean {
   return a.zoom === b.zoom && a.x === b.x && a.y === b.y
 }
@@ -188,6 +232,9 @@ export function createCameraController(options: CameraControllerOptions = {}): C
   let timer: number | null = null
   let level: DetailLevel = levelForZoom(null, live.zoom)
   let text = zoomPercent(live.zoom)
+  const now = options.now ?? defaultNow
+  /** The glide under way: from, to, start time, duration, and its frame request. */
+  let glide: { from: Camera; to: Camera; start: number; duration: number; frame: number } | null = null
 
   const frameListeners = new Set<(camera: Camera) => void>()
   const settleListeners = new Set<(camera: Camera) => void>()
@@ -233,6 +280,27 @@ export function createCameraController(options: CameraControllerOptions = {}): C
     writeGrid()
   }
 
+  function stopGlide() {
+    if (!glide) return
+    if (glide.frame) scheduler.cancelFrame(glide.frame)
+    glide = null
+  }
+
+  function glideFrame() {
+    const g = glide
+    if (!g) return
+    g.frame = 0
+    const t = g.duration > 0 ? (now() - g.start) / g.duration : 1
+    live = cleanCamera(t >= 1 ? g.to : interpolateCamera(g.from, g.to, easeInOutCubic(t), center()))
+    if (t >= 1) {
+      glide = null
+      settle()
+      return
+    }
+    drawFrame()
+    g.frame = scheduler.requestFrame(glideFrame)
+  }
+
   function settle() {
     if (timer !== null) scheduler.clearTimer(timer)
     timer = null
@@ -251,6 +319,7 @@ export function createCameraController(options: CameraControllerOptions = {}): C
   }
 
   function change(next: Camera, immediate = false) {
+    stopGlide()
     const c = cleanCamera(next)
     if (sameCamera(c, live) && !immediate) return
     live = c
@@ -288,6 +357,22 @@ export function createCameraController(options: CameraControllerOptions = {}): C
     },
     fitInsets: () => insets,
     centerOn: (world, zoom) => change(centerCameraOn(live, world, size, zoom ?? live.zoom), true),
+    animateTo(target, opts) {
+      const to = cleanCamera(target)
+      const duration = opts?.durationMs ?? ANIMATE_MS
+      if (!targets || !(duration > 0)) {
+        change(to, true)
+        return
+      }
+      stopGlide()
+      if (timer !== null) scheduler.clearTimer(timer)
+      timer = null
+      if (frame) scheduler.cancelFrame(frame)
+      frame = 0
+      glide = { from: live, to, start: now(), duration, frame: 0 }
+      glide.frame = scheduler.requestFrame(glideFrame)
+    },
+    isAnimating: () => glide !== null,
     screenToWorld: (screen) => toWorld(live, screen),
     worldToScreen: (world) => toScreen(live, world),
     clientToScreen: (clientX, clientY) => ({ x: clientX - origin.left, y: clientY - origin.top }),
@@ -344,11 +429,19 @@ export function createCameraController(options: CameraControllerOptions = {}): C
       element.textContent = text
       return () => void labels.delete(element)
     },
-    isMoving: () => timer !== null,
+    isMoving: () => timer !== null || glide !== null,
     flush() {
+      if (glide) {
+        // Lands where the glide was going.
+        live = glide.to
+        stopGlide()
+        settle()
+        return
+      }
       if (timer !== null || frame) settle()
     },
     destroy() {
+      stopGlide()
       if (timer !== null) scheduler.clearTimer(timer)
       if (frame) scheduler.cancelFrame(frame)
       timer = null

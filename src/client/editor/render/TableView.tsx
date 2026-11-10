@@ -13,14 +13,27 @@
  * Seats are never stored as positions: they come from seatLocalLayout(), in
  * the table's own frame, inside the group that turns and moves the table.
  *
+ * Seating (milestone 5): a + in each empty seat, which CSS shows in Edit
+ * mode at middle and close level; while a guest is dragged, the table tints
+ * green (partner or group there) or red (a rule would break), and the seat
+ * they would land in grows and gets an outline; after pan to a seat, a ring
+ * pulses round it for two seconds. The guests' initials and names live in
+ * the names layer (NamesLayer.tsx), so zooming changes nothing here.
+ *
  * Test hooks: <g data-item-id data-kind="table">, each seat circle
- * data-seat-index and data-seat-state="taken|empty".
+ * data-seat-index and data-seat-state="taken|empty" (data-drop-target on the
+ * seat that grows), data-drag-tint="good|bad" on the group and body,
+ * [data-seat-pulse], and [data-seat-plus] with data-plus-for.
  */
 import { memo, useMemo } from 'react'
 import type { Table } from '@/domain/canvas-schema'
 import type { Box } from '@/domain/geometry'
 import { CHAIR_DEPTH_CM, isTight, seatLocalLayout, SEAT_RADIUS_CM, sideSeatCounts } from '@/domain/seats'
+import { useDragTint, useDropTargetSeat, useSeatPulse } from '../seating/react'
 import {
+  DROP_TARGET_SCALE,
+  DROP_TARGET_STROKE,
+  DROP_TARGET_STROKE_CM,
   INK,
   INK_SOFT,
   SEAT_EMPTY,
@@ -29,10 +42,12 @@ import {
   TABLE_STROKE,
   TABLE_STROKE_CM,
   TIGHT_OFFSET_CM,
+  TINT,
   TIGHT_STROKE,
   TIGHT_STROKE_CM,
 } from './style'
 import { tableCenterLabels } from './text-fit'
+import { SeatPlus, SeatPulseRing } from './seat-marks'
 
 export function itemTransform(item: { x: number; y: number; rotation: number }): string {
   return item.rotation ? `translate(${item.x} ${item.y}) rotate(${item.rotation})` : `translate(${item.x} ${item.y})`
@@ -71,6 +86,12 @@ export const TableView = memo(function TableView({ table, selected }: { table: T
   const labels = tableCenterLabels(table)
   const title = table.name.trim() || `Table ${table.number}`
   const round = shape === 'round'
+  const tint = useDragTint(table.id)
+  const tinted = tint === 'good' || tint === 'bad' ? tint : null
+  const target = useDropTargetSeat(table.id)
+  const pulse = useSeatPulse(table.id)
+  const bodyFill = tinted ? TINT[tinted].fill : TABLE_FILL
+  const bodyStroke = tinted ? TINT[tinted].stroke : TABLE_STROKE
 
   return (
     <g
@@ -80,6 +101,7 @@ export const TableView = memo(function TableView({ table, selected }: { table: T
       data-selected={selected ? 'true' : undefined}
       data-tight={tight ? 'true' : undefined}
       data-locked={table.locked ? 'true' : undefined}
+      data-drag-tint={tinted ?? undefined}
       transform={itemTransform(table)}
     >
       <title>{title}</title>
@@ -100,7 +122,7 @@ export const TableView = memo(function TableView({ table, selected }: { table: T
           />
         ))}
       {round ? (
-        <circle r={width / 2} fill={TABLE_FILL} stroke={TABLE_STROKE} strokeWidth={TABLE_STROKE_CM} data-table-body="" />
+        <circle r={width / 2} fill={bodyFill} stroke={bodyStroke} strokeWidth={TABLE_STROKE_CM} data-table-body="" data-drag-tint={tinted ?? undefined} />
       ) : (
         <rect
           x={-width / 2}
@@ -108,26 +130,37 @@ export const TableView = memo(function TableView({ table, selected }: { table: T
           width={width}
           height={height}
           rx={3}
-          fill={TABLE_FILL}
-          stroke={TABLE_STROKE}
+          fill={bodyFill}
+          stroke={bodyStroke}
           strokeWidth={TABLE_STROKE_CM}
           data-table-body=""
+          data-drag-tint={tinted ?? undefined}
         />
       )}
       {places.map((p) => {
         const taken = (table.seats[p.index]?.guestId ?? null) !== null
+        const grows = target === p.index
         return (
           <circle
             key={p.index}
             cx={p.x}
             cy={p.y}
-            r={SEAT_RADIUS_CM}
+            r={grows ? SEAT_RADIUS_CM * DROP_TARGET_SCALE : SEAT_RADIUS_CM}
             fill={taken ? SEAT_TAKEN : SEAT_EMPTY}
+            stroke={grows ? DROP_TARGET_STROKE : undefined}
+            strokeWidth={grows ? DROP_TARGET_STROKE_CM : undefined}
             data-seat-index={p.index}
             data-seat-state={taken ? 'taken' : 'empty'}
+            data-drop-target={grows ? '' : undefined}
           />
         )
       })}
+      <g data-seat-marks="">
+        {places.map((p) =>
+          (table.seats[p.index]?.guestId ?? null) === null ? <SeatPlus key={p.index} x={p.x} y={p.y} index={p.index} /> : null,
+        )}
+      </g>
+      {pulse && places[pulse.seatIndex] && <SeatPulseRing key={pulse.id} x={places[pulse.seatIndex].x} y={places[pulse.seatIndex].y} />}
       <g transform={labels.rotation ? `rotate(${labels.rotation})` : undefined} textAnchor="middle" textRendering="geometricPrecision">
         <text y={labels.name.y} dominantBaseline="central" fontSize={labels.name.fontSize} fontWeight={600} fill={INK} data-table-name="">
           {labels.name.text}

@@ -18,6 +18,9 @@
  *    (DECISIONS 10).
  *  - Copies (duplicate, paste) get new ids, empty seats and the next table
  *    numbers (PLAN changes 3 and 9).
+ *  - Seating a guest (seat, move, swap, unseat) is src/domain/seating.ts;
+ *    the two seating commands here build on it for the guest menu and the
+ *    swap action. Seats on locked items still change (DECISIONS 56).
  */
 import {
   MIN_TABLE_CM,
@@ -39,6 +42,7 @@ import {
   type Handle,
   type ResizeOptions,
 } from '@/domain/resize'
+import { guestSeat, seatGuest, unseatGuest, type SeatMove, type SeatRef } from '@/domain/seating'
 import {
   addSeat as addSeatDomain,
   fitSeatCount,
@@ -455,4 +459,31 @@ export function setStyle(canvas: Canvas, id: string, patch: StylePatch): Canvas 
       style.fontSize === item.style.fontSize
     return same ? item : { ...item, style }
   })
+}
+
+// ---------------------------------------------------------------- seating
+
+/**
+ * Sends several guests to Unassigned as one change (the guest menu's
+ * Unseat). `from` is the first seat emptied. The same canvas when none of
+ * them was seated.
+ */
+export function unseatGuests(canvas: Canvas, guestIds: IdList): SeatMove {
+  let next = canvas
+  let from: SeatRef | null = null
+  for (const id of idSet(guestIds)) {
+    const r = unseatGuest(next, id)
+    if (!r.changed) continue
+    from ??= r.from
+    next = r.canvas
+  }
+  return { canvas: next, changed: next !== canvas, seat: null, from, displaced: null }
+}
+
+/** Two seated guests trade seats. The same canvas unless both are seated, apart. */
+export function swapGuests(canvas: Canvas, a: string, b: string): SeatMove {
+  const from = guestSeat(canvas, a)
+  const to = guestSeat(canvas, b)
+  if (!from || !to || a === b) return { canvas, changed: false, seat: from, from, displaced: null }
+  return seatGuest(canvas, a, to.itemId, to.seatIndex)
 }

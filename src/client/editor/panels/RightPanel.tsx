@@ -105,13 +105,18 @@ export function PanelContent({ tab, ids }: { tab: PanelTab; ids: (tab: PanelTab)
   )
 }
 
-/** The desktop column: tabs on top, the open tab's contents scrolling under them. */
+/**
+ * The desktop column: tabs on top, the open tab's contents scrolling under
+ * them. The whole column counts as the side list for a seated guest dragged
+ * back to it (unseat), whichever tab is open.
+ */
 export function RightPanel({ tab, onTab }: { tab: PanelTab; onTab(tab: PanelTab): void }) {
   const ids = usePanelIds()
   return (
     <aside
       aria-label="Details"
       data-testid="right-panel"
+      data-guest-list-zone=""
       className="hidden w-72 shrink-0 flex-col border-l border-stone-200 bg-white md:flex lg:w-80"
     >
       <PanelTabs tab={tab} onSelect={onTab} ids={ids} />

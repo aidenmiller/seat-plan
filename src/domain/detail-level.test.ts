@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { initialLevel, levelForZoom, nextLevel, seatScreenPx, type DetailLevel } from './detail-level'
+import {
+  initialLevel,
+  levelForZoom,
+  MIN_NAME_PX,
+  minZoomForLevel,
+  nextLevel,
+  pxToCm,
+  seatScreenPx,
+  zoomForSeatFocus,
+  type DetailLevel,
+} from './detail-level'
 
 describe('detail levels (PLAN section 6)', () => {
   it('measures a seat in screen pixels', () => {
@@ -63,5 +73,31 @@ describe('detail levels (PLAN section 6)', () => {
         expect(changes, `${point} px from ${from} px`).toBeLessThanOrEqual(1)
       }
     }
+  })
+
+  it('gives the lowest zoom of each level, reached zooming in from far out', () => {
+    expect(minZoomForLevel('far')).toBe(0)
+    expect(minZoomForLevel('middle')).toBeCloseTo(22 / 45, 12)
+    expect(minZoomForLevel('close')).toBeCloseTo(0.8, 12)
+    for (const level of ['middle', 'close'] as const) {
+      expect(levelForZoom(null, minZoomForLevel(level))).toBe(level)
+      expect(levelForZoom('far', minZoomForLevel(level))).toBe(level)
+      expect(levelForZoom('far', minZoomForLevel(level) * 0.999)).not.toBe(level)
+    }
+  })
+
+  it('zooms to at least close level to show a seat (DECISIONS 23)', () => {
+    expect(zoomForSeatFocus(0.1)).toBeCloseTo(0.8, 12)
+    expect(levelForZoom('far', zoomForSeatFocus(0.1))).toBe('close')
+    expect(levelForZoom('middle', zoomForSeatFocus(0.5))).toBe('close')
+    expect(zoomForSeatFocus(2)).toBe(2)
+  })
+
+  it('turns screen pixels into world centimeters', () => {
+    expect(MIN_NAME_PX).toBe(10)
+    expect(pxToCm(10, 1)).toBe(10)
+    expect(pxToCm(10, 0.5)).toBe(20)
+    expect(pxToCm(22, 8)).toBe(2.75)
+    expect(pxToCm(10, 0)).toBe(Infinity)
   })
 })

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { emptyCanvas, type Item, type Table } from '@/domain/canvas-schema'
+import { emptyCanvas, type ChairRow, type Item, type Table } from '@/domain/canvas-schema'
 import { makeItem } from '@/domain/presets'
+import { chairRowSeatCenters } from '@/domain/seating'
 import { seatLayout } from '@/domain/seats'
 import { defaultLayers } from '../state/device-view'
-import { hitTest, itemsInBox, selectableIds } from './hit-test'
+import { hitTest, isTableTarget, itemsInBox, selectableIds } from './hit-test'
 
 const G1 = '00000000-0000-4000-8000-000000000001'
 
@@ -21,6 +22,36 @@ describe('hit testing', () => {
     expect(hitTest(c, seat0)).toEqual({ kind: 'seat', itemId: 't', seatIndex: 0, guestId: G1, locked: false })
     expect(hitTest(c, { x: 10, y: 10 })).toEqual({ kind: 'item', itemId: 't', itemKind: 'table', locked: false })
     expect(hitTest(c, { x: 500, y: 500 })).toEqual({ kind: 'empty' })
+  })
+
+  it('finds a ceremony chair as a seat, and the row between its chairs (review finding)', () => {
+    const row: ChairRow = {
+      id: 'r',
+      kind: 'chairRow',
+      x: 0,
+      y: 300,
+      rotation: 0,
+      locked: false,
+      chairCount: 5,
+      spacing: 50.8,
+      blockId: null,
+      blockLabel: null,
+      rowNumber: 1,
+      rowLabel: '',
+      reservedFor: null,
+      seats: Array.from({ length: 5 }, (_, index) => ({ index, guestId: index === 2 ? G1 : null })),
+    }
+    const c = canvasOf([row])
+    const chairs = chairRowSeatCenters(row)
+    const jane = hitTest(c, chairs[2])
+    expect(jane).toEqual({ kind: 'seat', itemId: 'r', seatIndex: 2, guestId: G1, locked: false, itemKind: 'chairRow' })
+    expect(isTableTarget(jane)).toBe(false)
+    expect(hitTest(c, { x: chairs[1].x + 2, y: chairs[1].y })).toMatchObject({ kind: 'seat', seatIndex: 1, guestId: null })
+    // Turned rows too.
+    const turned = { ...row, rotation: 90 }
+    expect(hitTest(canvasOf([turned]), chairRowSeatCenters(turned)[2])).toMatchObject({ kind: 'seat', seatIndex: 2, guestId: G1 })
+    // A table's seat is still a table target.
+    expect(isTableTarget(hitTest(canvasOf([seated]), seatLayout(seated)[0]))).toBe(true)
   })
 
   it('takes the topmost item', () => {

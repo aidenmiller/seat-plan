@@ -262,6 +262,19 @@ describe('touch', () => {
     expect(types(intents)).toEqual(['wantTimer', 'dragStart', 'dragMove', 'dragEnd', 'pinchStart'])
     expect(intents[3]).toMatchObject({ at: { x: 30, y: 0 } })
   })
+
+  it('cancels a guest drag when a second finger lands, so nobody is dropped where the finger still is (review finding)', () => {
+    const { intents, state } = run([
+      down(takenSeat, 0, 0, { ...touch, id: 1 }),
+      { type: 'timer', time: LONG_PRESS_MS },
+      move(60, 0, { id: 1 }),
+      down(empty, 300, 0, { ...touch, id: 2 }),
+      move(320, 0, { id: 2 }),
+    ])
+    expect(types(intents)).toEqual(['wantTimer', 'longPress', 'dragStart', 'dragMove', 'dragCancel', 'pinchStart', 'pinch'])
+    expect(intents[4]).toEqual({ type: 'dragCancel', drag: 'guest' })
+    expect(state.phase.kind).toBe('pinching')
+  })
 })
 
 describe('View mode', () => {
@@ -324,5 +337,39 @@ describe('a release that never came (A7)', () => {
     // The same pointer coming down again while waiting still waits.
     state = run([down(empty, 0, 0, { button: 2 })]).state
     expect(stepPointer(state, down(table, 0, 0), ctx()).state.phase.kind).toBe('draining')
+  })
+})
+
+describe('seating', () => {
+  const plusSeat: Target = { kind: 'seat', itemId: 't1', seatIndex: 3, guestId: null, locked: false, plus: true }
+  const lockedTaken: Target = { kind: 'seat', itemId: 't1', seatIndex: 2, guestId: 'g1', locked: true }
+  const types = (intents: Intent[]) => intents.map((i) => i.type)
+
+  it('a click on an empty seat with a + reports only the tap, so it opens the picker and selects nothing', () => {
+    expect(types(run([down(plusSeat, 10, 10), up(10, 10)]).intents)).toEqual(['tap'])
+    // Shift or the phone Select switch still toggle the table.
+    expect(types(run([down(plusSeat, 10, 10, { shift: true }), up(10, 10, { shift: true })]).intents)).toEqual(['toggleSelect', 'tap'])
+    // In View mode there is no +: the tap selects the table as before.
+    expect(types(run([down(plusSeat, 10, 10), up(10, 10)], ctx({ mode: 'view' })).intents)).toEqual(['select', 'tap'])
+  })
+
+  it('a drag from an empty seat with a + still moves the table', () => {
+    const r = run([down(plusSeat, 0, 0), move(20, 0)])
+    expect(r.intents.find((i) => i.type === 'dragStart')).toMatchObject({ drag: 'move' })
+  })
+
+  it('while a name waits for a seat, taps select nothing', () => {
+    const picking = ctx({ picking: true })
+    expect(types(run([down(table, 0, 0), up(0, 0)], picking).intents)).toEqual(['tap'])
+    expect(types(run([down(takenSeat, 0, 0), up(0, 0)], picking).intents)).toEqual(['tap'])
+    expect(types(run([down(empty, 0, 0), up(0, 0)], picking).intents)).toEqual(['tap'])
+  })
+
+  it('picks a guest up from a locked table', () => {
+    const press = { id: 1, pointer: 'mouse' as const, start: { x: 0, y: 0 }, last: { x: 0, y: 0 }, startTime: 0, shift: false, alt: false, target: lockedTaken, longPressed: false }
+    expect(chooseDrag(press, ctx())).toBe('guest')
+    expect(chooseDrag({ ...press, pointer: 'touch' }, ctx())).toBe('pan')
+    expect(chooseDrag({ ...press, pointer: 'touch', longPressed: true }, ctx())).toBe('guest')
+    expect(chooseDrag(press, ctx({ mode: 'view' }))).toBe('pan')
   })
 })

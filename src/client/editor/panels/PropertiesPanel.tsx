@@ -10,7 +10,13 @@
  *  - several items: align and distribute;
  *  - nothing: the Room panel (filled in with the guest list) and the layout.
  *
- * In View mode it only shows: a tapped table lists its seats, read only.
+ * A selected table lists its seats in order with each guest's name, in both
+ * modes; in Edit mode a guest can be dragged to another seat in the list
+ * (a mouse after 4 px, a finger after a 450 ms hold) or moved with the
+ * Move up and Move down buttons, each one undo step (spec section 4,
+ * "Seating guests"). Selected guests are named, with Unseat in Edit mode.
+ *
+ * In View mode it only shows: a tapped table lists its guests, read only.
  * The Snap and Keep proportions switches and the mouse wheel setting sit at
  * the bottom on every screen size (PLAN changes 11 and 14).
  *
@@ -20,12 +26,16 @@
 import type { Canvas, Item } from '@/domain/canvas-schema'
 import { fitSeatCount, maxSeats, seatedCount, tightReason } from '@/domain/seats'
 import type { WheelSetting } from '@/domain/wheel'
+import { guestIdsAtSeats } from '../seating/guest-menu'
+import { guestFullName } from '../seating/people'
+import { GUEST_ROW_STYLE, useSeating } from '../seating/react'
 import { itemIndex, useCanvas, useEditorState, useMode, useUi, useViewState } from '../state/react'
 import { shallowEqual } from '../state/store'
 import { ButtonRow, CommitField, LengthField, NumberField, Section, Segmented, smallButton, smallDangerButton, Switch } from './controls'
 import { useEditorUi } from './editor-ui'
 import { ALIGN_BUTTONS, DISTRIBUTE_BUTTONS, FIXTURE_NAMES, itemName, SHAPE_NAMES, shapeIsLinear, shapeTakesText, type ItemFields } from './names'
 import { canTakeShape, changeTableShape } from './table-shape'
+import { useSeatReorder } from './seat-reorder'
 
 type FieldsOf<K extends ItemFields['kind']> = Extract<ItemFields, { kind: K }>
 
@@ -82,7 +92,7 @@ export function PropertiesPanel() {
   let body
   if (selected.length === 1) body = <SingleItem item={selected[0]} edit={mode === 'edit'} />
   else if (selected.length > 1) body = mode === 'edit' ? <SeveralItems items={selected} /> : <SeveralSummary items={selected} />
-  else if (guestSeats.length > 0) body = <GuestSeatsSummary count={guestSeats.length} />
+  else if (guestSeats.length > 0) body = <GuestSeatsSummary edit={mode === 'edit'} />
   else body = <RoomSummary />
   return (
     <div data-testid="properties-panel">
@@ -211,12 +221,16 @@ function TableProperties({ table }: { table: FieldsOf<'table'> }) {
         )}
       </Section>
 
+      <Section title="Guests" testId="table-guests-section">
+        <TableGuests table={table} edit />
+      </Section>
+
       <ItemOptions item={table} />
     </>
   )
 }
 
-/** View mode: the table's seats in order, read only (spec section 4, "Seating guests"). */
+/** View mode: the table's guests in seat order, read only (spec section 4, "Seating guests"). */
 function TableSeats({ table }: { table: FieldsOf<'table'> }) {
   const taken = seatedCount(table)
   return (
@@ -224,17 +238,76 @@ function TableSeats({ table }: { table: FieldsOf<'table'> }) {
       <p className="text-sm text-stone-700">
         Table {table.number} · {taken} of {table.seatCount} seats taken
       </p>
-      <ol className="space-y-1">
-        {table.seats.map((seat, i) => (
-          <li key={i} className="flex min-h-9 items-center gap-2 rounded-lg bg-stone-50 px-3 text-sm text-stone-800" data-seat-state={seat.guestId ? 'taken' : 'empty'}>
-            <span aria-hidden="true" className={`h-3 w-3 rounded-full ${seat.guestId ? 'bg-seat-taken' : 'bg-seat-empty'}`} />
-            <span className="flex-1">Seat {i + 1}</span>
-            <span className="text-stone-500">{seat.guestId ? 'Taken' : 'Empty'}</span>
-          </li>
-        ))}
-      </ol>
-      {table.seatCount === 0 && <p className="text-sm text-stone-600">This table has no seats.</p>}
+      <TableGuests table={table} edit={false} />
     </Section>
+  )
+}
+
+/**
+ * The table's seats in order, each with its guest's name or Empty. In Edit
+ * mode a guest row drags onto another row (swapping with whoever sits
+ * there), and Move up and Move down do the same one seat at a time.
+ */
+function TableGuests({ table, edit }: { table: FieldsOf<'table'>; edit: boolean }) {
+  const { actions } = useEditorState()
+  const people = useSeating((s) => s.people)
+  const id = table.id
+  const count = table.seats.length
+  const { onPointerDown, drag } = useSeatReorder((from, to) => void actions.reorderSeat(id, from, to))
+  if (table.seatCount === 0) return <p className="text-sm text-stone-600">This table has no seats.</p>
+  return (
+    <ol className="space-y-1" data-testid="table-guests" aria-label="Seats in order">
+      {table.seats.map((seat, i) => {
+        const guestId = seat.guestId
+        const name = guestId ? guestFullName(people, guestId) : null
+        const dragging = drag?.from === i
+        const over = drag !== null && drag.over === i && drag.from !== i
+        return (
+          <li
+            key={i}
+            className={`flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-stone-800 ${over ? 'bg-blue-50 ring-2 ring-blue-700' : dragging ? 'bg-stone-200' : 'bg-stone-50'} ${
+              edit && guestId ? 'cursor-grab' : ''
+            }`}
+            style={edit && guestId ? GUEST_ROW_STYLE : undefined}
+            onPointerDown={edit && guestId ? (event) => onPointerDown(event, i) : undefined}
+            data-seat-row={i}
+            data-seat-state={guestId ? 'taken' : 'empty'}
+            data-guest-id={guestId ?? undefined}
+            data-testid="table-guest"
+          >
+            <span aria-hidden="true" className={`h-3 w-3 shrink-0 rounded-full ${guestId ? 'bg-seat-taken' : 'bg-seat-empty'}`} />
+            <span className="w-14 shrink-0 text-stone-500">Seat {i + 1}</span>
+            <span className={`min-w-0 flex-1 truncate ${name ? 'text-stone-900' : 'text-stone-500'}`}>{name ?? 'Empty'}</span>
+            {edit && guestId && (
+              <span className="flex shrink-0 gap-1">
+                <button
+                  type="button"
+                  className={`${smallButton} w-11 px-0`}
+                  aria-label={`Move ${name} up a seat`}
+                  disabled={i === 0}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={() => actions.reorderSeat(id, i, i - 1)}
+                  data-testid="seat-move-up"
+                >
+                  <span aria-hidden="true">↑</span>
+                </button>
+                <button
+                  type="button"
+                  className={`${smallButton} w-11 px-0`}
+                  aria-label={`Move ${name} down a seat`}
+                  disabled={i === count - 1}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={() => actions.reorderSeat(id, i, i + 1)}
+                  data-testid="seat-move-down"
+                >
+                  <span aria-hidden="true">↓</span>
+                </button>
+              </span>
+            )}
+          </li>
+        )
+      })}
+    </ol>
   )
 }
 
@@ -398,10 +471,25 @@ function SeveralSummary({ items }: { items: ItemFields[] }) {
   )
 }
 
-function GuestSeatsSummary({ count }: { count: number }) {
+/** Guests selected on the canvas: their names, and Unseat in Edit mode. */
+function GuestSeatsSummary({ edit }: { edit: boolean }) {
+  const { actions } = useEditorState()
+  const seats = useUi((s) => s.guestSeats)
+  const ids = useCanvas((c) => guestIdsAtSeats(c, seats), shallowEqual)
+  const people = useSeating((s) => s.people)
+  const count = ids.length
   return (
-    <Section title={count === 1 ? '1 guest selected' : `${count} guests selected`}>
-      <p className="text-sm text-stone-600">Names show here once the guest list is in.</p>
+    <Section title={count === 1 ? '1 guest selected' : `${count} guests selected`} testId="selected-guests">
+      <ul className="space-y-1 text-sm text-stone-900">
+        {ids.slice(0, 50).map((id) => (
+          <li key={id}>{guestFullName(people, id)}</li>
+        ))}
+      </ul>
+      {edit && count > 0 && (
+        <button type="button" className={`${smallButton} w-full`} onClick={() => actions.unseatSelectedGuests()} data-testid="unseat-selected">
+          {count === 1 ? 'Unseat' : `Unseat ${count} guests`}
+        </button>
+      )}
     </Section>
   )
 }

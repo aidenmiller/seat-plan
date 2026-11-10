@@ -33,6 +33,26 @@ export const TIGHT_STROKE_SCREEN_PX = 3
 /** How far the yellow ring sits outside the seat circles (or the table's edge where a side has no seats). */
 export const TIGHT_OFFSET_CM = 6
 
+/** Initials inside a taken seat circle (middle level, and close-level names that do not fit): white on dark blue. */
+export const INITIALS_FONT_CM = 16
+/** The + inside an empty seat (Edit mode, middle and close level): half its arm length, and its line width. */
+export const SEAT_PLUS_ARM_CM = 9
+export const SEAT_PLUS_STROKE_CM = 3.5
+/** Close-level guest names. */
+export const NAME_INK = '#1c1917'
+/** While a guest is dragged: the seat they would land in grows by this much and gets an outline. */
+export const DROP_TARGET_SCALE = 1.3
+export const DROP_TARGET_STROKE = '#f59e0b'
+/** In print; on screen it stays 3 px at every zoom (globals.css). */
+export const DROP_TARGET_STROKE_CM = 5
+/** While a guest is dragged: green where their partner or group sits, red where a rule would break. */
+export const TINT = {
+  good: { fill: '#dcfce7', stroke: '#16a34a' },
+  bad: { fill: '#fee2e2', stroke: '#dc2626' },
+} as const
+/** The ring that pulses round a seat after pan to a seat (two seconds, globals.css). */
+export const PULSE_STROKE = '#2563eb'
+
 export const FIXTURE_STROKE_CM = 2
 export const FIXTURE_LABEL = '#292524'
 

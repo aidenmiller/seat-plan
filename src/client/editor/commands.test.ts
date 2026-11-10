@@ -28,6 +28,8 @@ import {
   setSeatCount,
   setSeatSides,
   setStyle,
+  swapGuests,
+  unseatGuests,
   setTableNumber,
   snapPoint,
 } from './commands'
@@ -431,5 +433,32 @@ describe('labels and styles', () => {
     const next = setStyle(c, 's', { fill: '#ff0000', strokeWidth: -3 })
     expect((itemIn(next, 's') as Shape).style).toMatchObject({ fill: '#ff0000', strokeWidth: 0 })
     expect(setStyle(c, 's', { strokeWidth: Number.NaN })).toBe(c)
+  })
+})
+
+describe('seating commands', () => {
+  function seated(id: string, x: number, guests: (string | null)[]): Table {
+    const t = makeItem('round', { x, y: 0 }, id, emptyCanvas()) as Table
+    return { ...t, seats: t.seats.map((seat, i) => ({ index: i, guestId: guests[i] ?? null })) }
+  }
+  const canvas: Canvas = { ...emptyCanvas(), items: [seated('a', 0, ['x', 'y']), seated('b', 400, [null, 'z'])] }
+  const guestAt = (c: Canvas, id: string, i: number) => (c.items.find((t) => t.id === id) as Table).seats[i].guestId
+
+  it('unseats several guests as one change, and keeps the canvas when none was seated', () => {
+    const r = unseatGuests(canvas, ['y', 'z', 'nobody'])
+    expect(r.changed).toBe(true)
+    expect(r.from).toEqual({ itemId: 'a', seatIndex: 1 })
+    expect(guestAt(r.canvas, 'a', 0)).toBe('x')
+    expect(guestAt(r.canvas, 'a', 1)).toBeNull()
+    expect(guestAt(r.canvas, 'b', 1)).toBeNull()
+    expect(unseatGuests(canvas, ['nobody']).canvas).toBe(canvas)
+  })
+
+  it('swaps two seated guests, and changes nothing when one is not seated', () => {
+    const r = swapGuests(canvas, 'x', 'z')
+    expect(guestAt(r.canvas, 'a', 0)).toBe('z')
+    expect(guestAt(r.canvas, 'b', 1)).toBe('x')
+    expect(swapGuests(canvas, 'x', 'nobody').canvas).toBe(canvas)
+    expect(swapGuests(canvas, 'x', 'x').changed).toBe(false)
   })
 })

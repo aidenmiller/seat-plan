@@ -26,13 +26,20 @@
  * rotate handle by data-rotate-handle. The seat buttons and More sit in
  * [data-overlay-control], which the adapter leaves to their own click
  * handlers.
+ *
+ * Seating (milestone 5): a ring round each selected guest's seat, and in
+ * Edit mode a More button beside them that opens the guest menu (the menu
+ * right click opens on a seated guest). The + on empty seats is drawn in
+ * the world SVG (TableView), and presses reach it through the canvas.
  */
 import { useLayoutEffect, useMemo, useState, useSyncExternalStore, type MouseEvent } from 'react'
-import type { Item } from '@/domain/canvas-schema'
+import type { Canvas, Item } from '@/domain/canvas-schema'
 import type { Point } from '@/domain/geometry'
+import { isSeatItem, seatCenters } from '@/domain/seating'
 import type { CameraController } from '../camera/camera-controller'
 import { Icon } from '../icons/glyphs'
-import { useEditorState, useInteraction, useMode, useSelectedItems } from '../state/react'
+import { itemIndex, useCanvas, useEditorState, useInteraction, useMode, useSelectedItems, useUi } from '../state/react'
+import type { SeatRef } from '../state/ui-store'
 import { shallowEqual } from '../state/store'
 import type { PointerKind } from '../input/pointer-machine'
 import type { SeatRequest } from '../input/controller'
@@ -42,6 +49,7 @@ import {
   NO_INSETS,
   projectOverlay,
   TAP_TARGET_PX,
+  type GuestSeatSpot,
   type OverlayInput,
   type ProjectOptions,
   type ScreenInsets,
@@ -49,7 +57,7 @@ import {
   type ScreenOverlay,
 } from './geometry'
 
-export type UnseatConfirm = { tableId: string; unseated: string[]; confirm(): boolean }
+export type UnseatConfirm = { tableId: string; unseated: string[]; names: string[]; confirm(): boolean }
 
 export type EditorOverlayProps = {
   /** − on a table whose every seat is taken: name these guests, then call confirm() to move them to Unassigned. */
@@ -98,6 +106,26 @@ export function moreMenuRequest(
     at: camera.clientToScreen(button.left, button.bottom),
     target: { kind: 'item', itemId: item.id, itemKind: item.kind, locked: item.locked },
   }
+}
+
+/** Where each selected guest's seat is, in world cm. */
+export function guestSeatSpots(canvas: Canvas, seats: readonly SeatRef[]): GuestSeatSpot[] {
+  const index = itemIndex(canvas)
+  const out: GuestSeatSpot[] = []
+  for (const s of seats) {
+    const item = index.get(s.itemId)
+    if (!item || !isSeatItem(item)) continue
+    const world = seatCenters(item)[s.seatIndex]
+    if (world) out.push({ itemId: s.itemId, seatIndex: s.seatIndex, world })
+  }
+  return out
+}
+
+function sameSpots(a: readonly GuestSeatSpot[], b: readonly GuestSeatSpot[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((s, i) => s.itemId === b[i].itemId && s.seatIndex === b[i].seatIndex && s.world.x === b[i].world.x && s.world.y === b[i].world.y)
+  )
 }
 
 function pointerKindOf(event: MouseEvent): PointerKind {
@@ -175,6 +203,8 @@ function writeOverlay(els: ReadonlyMap<string, Element>, s: ScreenOverlay) {
     move('minus', cssCenter(s.seatButtons.minus, TAP_TARGET_PX))
   }
   if (s.menuButton) move('more', cssCenter(s.menuButton.at, TAP_TARGET_PX))
+  for (const r of s.guestRings) set(`guest-ring:${r.key}`, { cx: r.cx, cy: r.cy, r: r.r })
+  if (s.guestMenuButton) move('guest-more', cssCenter(s.guestMenuButton.at, TAP_TARGET_PX))
 }
 
 export function EditorOverlay({ onConfirmUnseat, insets = NO_INSETS }: EditorOverlayProps) {
@@ -185,7 +215,9 @@ export function EditorOverlay({ onConfirmUnseat, insets = NO_INSETS }: EditorOve
     (s) => ({ marquee: s.marquee, guides: s.guides, gap: s.gap, longPress: s.longPress }),
     shallowEqual,
   )
-  const input = useMemo<OverlayInput>(() => ({ selected, mode, marquee, guides, gap }), [selected, mode, marquee, guides, gap])
+  const selectedSeats = useUi((s) => s.guestSeats)
+  const guestSeats = useCanvas((canvas) => guestSeatSpots(canvas, selectedSeats), sameSpots)
+  const input = useMemo<OverlayInput>(() => ({ selected, mode, marquee, guides, gap, guestSeats }), [selected, mode, marquee, guides, gap, guestSeats])
   const coarse = useCoarsePointer()
   const options = useMemo<ProjectOptions>(() => ({ insets, coarse }), [insets, coarse])
   const [registry] = useState(createRegistry)
@@ -204,7 +236,7 @@ export function EditorOverlay({ onConfirmUnseat, insets = NO_INSETS }: EditorOve
 
   function minus(tableId: string) {
     const r: SeatRequest = editor.actions.removeSeat(tableId)
-    if (r.status === 'confirm') onConfirmUnseat?.({ tableId, unseated: r.unseated, confirm: r.confirm })
+    if (r.status === 'confirm') onConfirmUnseat?.({ tableId, unseated: r.unseated, names: r.names, confirm: r.confirm })
   }
 
   /** More: the menu that right click opens, for the selection, below the button's left edge. */
@@ -215,8 +247,18 @@ export function EditorOverlay({ onConfirmUnseat, insets = NO_INSETS }: EditorOve
     editor.controller.contextMenu(request.at, request.target, pointerKindOf(event))
   }
 
+  /** More beside selected guests: the menu right click opens on a seated guest. */
+  function openGuestMenu(event: MouseEvent<HTMLButtonElement>, seat: SeatRef) {
+    const item = editor.store.getState().canvas.items.find((i) => i.id === seat.itemId)
+    if (!item || !isSeatItem(item)) return
+    const r = event.currentTarget.getBoundingClientRect()
+    const guestId = item.seats[seat.seatIndex]?.guestId ?? null
+    editor.controller.contextMenu(camera.clientToScreen(r.left, r.bottom), { kind: 'seat', itemId: seat.itemId, seatIndex: seat.seatIndex, guestId, locked: item.locked }, pointerKindOf(event))
+  }
+
   const buttons = screen.seatButtons
   const more = screen.menuButton
+  const guestMore = screen.guestMenuButton
   const buttonClass =
     'pointer-events-auto absolute left-0 top-0 flex h-11 w-11 items-center justify-center rounded-full border border-stone-300 bg-white text-xl font-semibold text-stone-800 shadow-md hover:bg-stone-50 disabled:opacity-40'
 
@@ -278,6 +320,21 @@ export function EditorOverlay({ onConfirmUnseat, insets = NO_INSETS }: EditorOve
             <rect x={-HANDLE_PX / 2} y={-HANDLE_PX / 2} width={HANDLE_PX} height={HANDLE_PX} fill="#ffffff" stroke={SELECT_STROKE} strokeWidth={1.5} />
           </g>
         ))}
+        {screen.guestRings.map((r) => (
+          <circle
+            key={r.key}
+            ref={register(`guest-ring:${r.key}`)}
+            cx={r.cx}
+            cy={r.cy}
+            r={r.r}
+            fill="none"
+            stroke={SELECT_STROKE}
+            strokeWidth={2.5}
+            data-testid="guest-selection"
+            data-item-id={r.itemId}
+            data-seat-index={r.seatIndex}
+          />
+        ))}
         {longPress && <circle cx={longPress.x} cy={longPress.y} r={28} fill="rgba(37, 99, 235, 0.15)" stroke={SELECT_STROKE} strokeWidth={2} />}
       </svg>
       {screen.gap && (
@@ -294,7 +351,7 @@ export function EditorOverlay({ onConfirmUnseat, insets = NO_INSETS }: EditorOve
           {screen.gap.warn ? `${screen.gap.text} · too close` : screen.gap.text}
         </div>
       )}
-      {(buttons || more) && (
+      {(buttons || more || guestMore) && (
         <div data-overlay-control="">
           {buttons && (
             <>
@@ -335,6 +392,21 @@ export function EditorOverlay({ onConfirmUnseat, insets = NO_INSETS }: EditorOve
               title="More"
               data-testid="selection-more"
               onClick={(event) => openMenu(event, more.itemId)}
+            >
+              <Icon name="more" className="h-6 w-6" />
+            </button>
+          )}
+          {guestMore && (
+            <button
+              ref={register('guest-more')}
+              type="button"
+              className={buttonClass}
+              style={{ transform: cssCenter(guestMore.at, TAP_TARGET_PX) }}
+              aria-label="Guest menu"
+              aria-haspopup="menu"
+              title="Guest menu"
+              data-testid="guest-more"
+              onClick={(event) => openGuestMenu(event, guestMore.seat)}
             >
               <Icon name="more" className="h-6 w-6" />
             </button>

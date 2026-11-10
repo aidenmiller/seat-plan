@@ -2,8 +2,9 @@
 
 /**
  * The world SVG's contents (PLAN section 6, "Two drawing layers"): the venue
- * layer, the furniture layer (tables, fixtures, chair rows, shapes) and the
- * notes layer, in that order. One world unit is one centimeter; the camera
+ * layer, the furniture layer (tables, fixtures, chair rows, shapes), the
+ * guest names at close level (NamesLayer.tsx) and the notes layer, in that
+ * order. One world unit is one centimeter; the camera
  * writes the world <g>'s transform, so panning and zooming re-render nothing.
  *
  * Each item is a memoized component that reads only its own item by id, so
@@ -17,6 +18,7 @@ import { useCanvas, useEditorState, useItem, useUi, useViewState } from '../stat
 import { shallowEqual } from '../state/store'
 import { ChairRowView } from './ChairRowView'
 import { FixtureView } from './FixtureView'
+import { NamesLayer } from './NamesLayer'
 import { NoteView } from './NoteView'
 import { ShapeView } from './ShapeView'
 import { WORLD_FONT } from './style'
@@ -68,8 +70,9 @@ function noteIds(canvas: Canvas): string[] {
 const FurnitureLayer = memo(function FurnitureLayer() {
   const ids = useCanvas(furnitureIds, shallowEqual)
   const visible = useViewState((s) => s.layers.furniture.visible)
+  const locked = useViewState((s) => s.layers.furniture.locked)
   return (
-    <g data-layer="furniture" display={visible ? undefined : 'none'}>
+    <g data-layer="furniture" data-layer-locked={locked ? 'true' : undefined} display={visible ? undefined : 'none'}>
       {ids.map((id) => (
         <ItemView key={id} id={id} />
       ))}
@@ -130,6 +133,7 @@ export const WorldSvg = memo(function WorldSvg({ worldRef, svgRef, venue }: Worl
       <g ref={worldRef} transform={worldTransform(camera.drawn())} fontFamily={WORLD_FONT} pointerEvents="none">
         <VenueLayerSwitch items={venue} />
         <FurnitureLayer />
+        <NamesLayer />
         <NotesLayer />
       </g>
     </svg>

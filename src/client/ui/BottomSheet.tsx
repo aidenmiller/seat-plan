@@ -26,6 +26,8 @@ export type BottomSheetProps = {
   /** The strip's height in px: the handle plus the header. */
   stripPx?: number
   testId?: string
+  /** Extra data attributes for the sheet itself. */
+  attributes?: Record<`data-${string}`, string>
 }
 
 /** The sheet stops this far below the top of its parent at its fullest. */
@@ -84,7 +86,7 @@ type Drag = {
   velocity: number
 }
 
-export function BottomSheet({ snap, onSnapChange, label, header, children, stripPx = 88, testId }: BottomSheetProps) {
+export function BottomSheet({ snap, onSnapChange, label, header, children, stripPx = 88, testId, attributes }: BottomSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null)
   const drag = useRef<Drag | null>(null)
   const suppressClick = useRef(false)
@@ -166,6 +168,7 @@ export function BottomSheet({ snap, onSnapChange, label, header, children, strip
     <section
       ref={sheetRef}
       aria-label={label}
+      {...attributes}
       data-testid={testId}
       data-snap={snap}
       className="absolute inset-x-0 bottom-0 z-20 flex flex-col rounded-t-2xl border-t border-stone-200 bg-white shadow-[0_-4px_24px_rgba(0,0,0,0.12)] transition-transform duration-200 ease-out"

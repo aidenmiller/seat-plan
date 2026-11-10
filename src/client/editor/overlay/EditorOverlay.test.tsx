@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { emptyCanvas, type Item } from '@/domain/canvas-schema'
+import { emptyCanvas, type Item, type Table } from '@/domain/canvas-schema'
 import { makeItem } from '@/domain/presets'
 import { createDocStore } from '../doc-store'
 import type { ContextMenuRequest } from '../input/controller'
@@ -110,5 +110,21 @@ describe('the More button', () => {
       at: { x: 290, y: 140 },
       target: { kind: 'item', itemId: 't1', itemKind: 'table', locked: true },
     })
+  })
+})
+
+describe('seating in the overlay', () => {
+  const seated = { ...(table as Table), seats: (table as Table).seats.map((seat, i) => ({ index: i, guestId: i === 0 ? 'g1' : null })) }
+
+  it('rings selected guests and offers the guest menu beside them in Edit mode', () => {
+    const html = render([seated], (e) => e.ui.selectSeat({ itemId: 't1', seatIndex: 0 }))
+    expect(html).toContain('data-testid="guest-selection"')
+    expect(html).toMatch(/aria-label="Guest menu"[^>]*aria-haspopup="menu"/)
+    const view = render([seated], (e) => {
+      e.ui.selectSeat({ itemId: 't1', seatIndex: 0 })
+      e.ui.setMode('view')
+    })
+    expect(view).toContain('data-testid="guest-selection"')
+    expect(view).not.toContain('Guest menu')
   })
 })

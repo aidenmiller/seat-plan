@@ -5,19 +5,26 @@
  * data attributes first.
  *
  * Items on hidden layers and on locked layers are not there for the pointer.
- * Topmost first: the last item in the canvas wins. A table's seats come
- * before its body, so a click on a seat circle is a seat.
+ * Topmost first: the last item in the canvas wins. A table's seats, and a
+ * ceremony row's chairs, come before its body, so a click on a seat circle
+ * is a seat.
  */
-import type { Canvas, Item } from '@/domain/canvas-schema'
+import type { Canvas, ChairRow, Item } from '@/domain/canvas-schema'
 import { boxContainsPoint, boxSelects, expandBox, footprintBox, hitTestItem, type Box, type Point } from '@/domain/geometry'
 import type { Handle } from '@/domain/resize'
-import { seatIndexAt } from '@/domain/seats'
+import { chairRowSeatCenters } from '@/domain/seating'
+import { seatIndexAt, SEAT_RADIUS_CM } from '@/domain/seats'
 import type { LayerName, Layers } from '../state/device-view'
 
 export type Target =
   | { kind: 'empty' }
   | { kind: 'item'; itemId: string; itemKind: Item['kind']; locked: boolean }
-  | { kind: 'seat'; itemId: string; seatIndex: number; guestId: string | null; locked: boolean }
+  /**
+   * A seat of a table or a ceremony chair row (itemKind 'chairRow'; left out
+   * for tables). plus: an empty seat's + (Edit mode, close and middle level):
+   * a tap opens its guest picker.
+   */
+  | { kind: 'seat'; itemId: string; seatIndex: number; guestId: string | null; locked: boolean; plus?: boolean; itemKind?: 'table' | 'chairRow' }
   | { kind: 'handle'; itemId: string; handle: Handle }
   | { kind: 'rotate'; itemId: string }
 
@@ -41,7 +48,23 @@ export function isReachable(item: Item, layers?: Layers): boolean {
 
 /** True for a target on a table: its body or one of its seats. */
 export function isTableTarget(target: Target): boolean {
-  return target.kind === 'seat' || (target.kind === 'item' && target.itemKind === 'table')
+  if (target.kind === 'seat') return target.itemKind !== 'chairRow'
+  return target.kind === 'item' && target.itemKind === 'table'
+}
+
+/** The chair of a ceremony row within `tolerance` of its circle, nearest first, or null. */
+export function chairIndexAt(row: ChairRow, point: Point, tolerance = 0): number | null {
+  const centers = chairRowSeatCenters(row)
+  let best: number | null = null
+  let bestD = SEAT_RADIUS_CM + tolerance
+  for (let i = 0; i < centers.length; i++) {
+    const d = Math.hypot(point.x - centers[i].x, point.y - centers[i].y)
+    if (d <= bestD) {
+      best = i
+      bestD = d
+    }
+  }
+  return best
 }
 
 /** The item id a target belongs to, if any. */
@@ -67,6 +90,12 @@ export function hitTest(canvas: Pick<Canvas, 'items'>, point: Point, options: Hi
       const seatIndex = seatIndexAt(item, point, tolerance)
       if (seatIndex !== null) {
         return { kind: 'seat', itemId: item.id, seatIndex, guestId: item.seats[seatIndex]?.guestId ?? null, locked: item.locked }
+      }
+    }
+    if (item.kind === 'chairRow' && item.chairCount > 0) {
+      const seatIndex = chairIndexAt(item, point, tolerance)
+      if (seatIndex !== null) {
+        return { kind: 'seat', itemId: item.id, seatIndex, guestId: item.seats[seatIndex]?.guestId ?? null, locked: item.locked, itemKind: 'chairRow' }
       }
     }
     if (hitTestItem(item, point, tolerance)) return { kind: 'item', itemId: item.id, itemKind: item.kind, locked: item.locked }

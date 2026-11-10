@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { screenToWorld } from '@/domain/camera'
 import {
+  ANIMATE_MS,
   createCameraController,
   cssMatrix,
+  easeInOutCubic,
+  interpolateCamera,
   gridVars,
   SETTLE_MS,
   worldTransform,
@@ -269,5 +272,98 @@ describe('the camera controller', () => {
     expect(page.vars.get('--grid-x')).toBe('20px')
     camera.setGridUnit('ft')
     expect(page.vars.get('--grid-step')).toBe('30.48px')
+  })
+})
+
+describe('gliding to a camera', () => {
+  it('eases from slow to fast to slow', () => {
+    expect(easeInOutCubic(0)).toBe(0)
+    expect(easeInOutCubic(0.5)).toBe(0.5)
+    expect(easeInOutCubic(1)).toBe(1)
+    expect(easeInOutCubic(0.1)).toBeLessThan(0.1)
+    expect(easeInOutCubic(0.9)).toBeGreaterThan(0.9)
+  })
+
+  it('zooms by even ratios and moves the centered world point in a straight line', () => {
+    const center = { x: 500, y: 400 }
+    const a = { zoom: 0.5, x: 0, y: 0 }
+    const b = { zoom: 2, x: -1000, y: -600 }
+    expect(interpolateCamera(a, b, 0, center)).toBe(a)
+    expect(interpolateCamera(a, b, 1, center)).toBe(b)
+    const mid = interpolateCamera(a, b, 0.5, center)
+    expect(mid.zoom).toBeCloseTo(1, 9)
+    const wa = screenToWorld(a, center)
+    const wb = screenToWorld(b, center)
+    const wm = screenToWorld(mid, center)
+    expect(wm.x).toBeCloseTo((wa.x + wb.x) / 2, 9)
+    expect(wm.y).toBeCloseTo((wa.y + wb.y) / 2, 9)
+  })
+
+  it('glides over about 300 ms, one wrapper write per frame, then settles once', () => {
+    const clock = fakeScheduler()
+    const page = fakeTargets(1000, 800)
+    const onSettle = vi.fn()
+    let t = 0
+    const camera = createCameraController({ scheduler: clock.scheduler, onSettle, now: () => t })
+    camera.attach(page.targets)
+    const target = { zoom: 2, x: -300, y: -200 }
+    camera.animateTo(target)
+    expect(camera.isAnimating()).toBe(true)
+    expect(camera.isMoving()).toBe(true)
+    expect(clock.frameCount()).toBe(1)
+
+    t = ANIMATE_MS / 2
+    clock.frame()
+    expect(camera.get().zoom).toBeGreaterThan(1)
+    expect(camera.get().zoom).toBeLessThan(2)
+    expect(page.wrapperStyle.transform).not.toBe('')
+    // The SVG keeps its drawing until the glide arrives.
+    expect(page.worldAttrs.get('transform')).toBe('matrix(1,0,0,1,0,0)')
+    expect(onSettle).not.toHaveBeenCalled()
+
+    t = ANIMATE_MS + 5
+    clock.frame()
+    expect(camera.get()).toEqual(target)
+    expect(camera.isAnimating()).toBe(false)
+    expect(camera.isMoving()).toBe(false)
+    expect(page.worldAttrs.get('transform')).toBe('matrix(2,0,0,2,-300,-200)')
+    expect(page.wrapperStyle.transform).toBe('')
+    expect(onSettle).toHaveBeenCalledTimes(1)
+    expect(clock.frameCount()).toBe(0)
+  })
+
+  it('stops where it is when a gesture or a button moves the camera', () => {
+    const clock = fakeScheduler()
+    const page = fakeTargets(1000, 800)
+    let t = 0
+    const camera = createCameraController({ scheduler: clock.scheduler, now: () => t })
+    camera.attach(page.targets)
+    camera.animateTo({ zoom: 4, x: -2000, y: -2000 })
+    t = 100
+    clock.frame()
+    const mid = camera.get()
+    camera.panBy(10, 0)
+    expect(camera.isAnimating()).toBe(false)
+    expect(camera.get()).toEqual({ ...mid, x: mid.x + 10 })
+    t = 1000
+    clock.frame()
+    expect(camera.get().zoom).toBe(mid.zoom)
+  })
+
+  it('jumps when nothing is attached or the duration is 0, and flush lands at the end', () => {
+    const clock = fakeScheduler()
+    const camera = createCameraController({ scheduler: clock.scheduler, now: () => 0 })
+    camera.animateTo({ zoom: 2, x: 5, y: 5 })
+    expect(camera.get()).toEqual({ zoom: 2, x: 5, y: 5 })
+    expect(camera.isAnimating()).toBe(false)
+
+    const attached = createCameraController({ scheduler: clock.scheduler, now: () => 0 })
+    attached.attach(fakeTargets().targets)
+    attached.animateTo({ zoom: 3, x: 1, y: 2 }, { durationMs: 0 })
+    expect(attached.get()).toEqual({ zoom: 3, x: 1, y: 2 })
+    attached.animateTo({ zoom: 1, x: 0, y: 0 })
+    attached.flush()
+    expect(attached.get()).toEqual({ zoom: 1, x: 0, y: 0 })
+    expect(attached.isAnimating()).toBe(false)
   })
 })

@@ -10,8 +10,9 @@
  *  - Empty canvas: Paste (at the pressed point), Select all, Fit to content.
  *  - View mode: Show seats for a table, Fit to content.
  *
- * Phones also get Details, which opens the Properties sheet. Guest menus
- * (Keep together, Keep apart, Unseat) come with seating in milestone 5.
+ * Phones also get Details, which opens the Properties sheet. A seated guest
+ * gets the guest menu instead (../seating/guest-menu.ts, built by the
+ * shell), so this returns null for one.
  */
 import type { Item } from '@/domain/canvas-schema'
 import type { Point } from '@/domain/geometry'

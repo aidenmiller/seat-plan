@@ -43,3 +43,34 @@ export function levelForZoom(prev: DetailLevel | null, zoom: number): DetailLeve
   const px = seatScreenPx(zoom)
   return prev === null ? initialLevel(px) : nextLevel(prev, px)
 }
+
+/** Names at close level are never drawn smaller than this on screen (spec section 4, "Detail levels"). */
+export const MIN_NAME_PX = 10
+
+/**
+ * The lowest zoom that shows `level` when zooming in: where the going-up
+ * point is reached. Far shows at any zoom, so it gives 0.
+ */
+export function minZoomForLevel(level: DetailLevel): number {
+  switch (level) {
+    case 'far':
+      return 0
+    case 'middle':
+      return UP_TO_MIDDLE_PX / SEAT_DIAMETER_CM
+    case 'close':
+      return UP_TO_CLOSE_PX / SEAT_DIAMETER_CM
+  }
+}
+
+/**
+ * The zoom for panning to a seat (DECISIONS 23): the current zoom, raised to
+ * close level when it is below it, so the names around the seat show.
+ */
+export function zoomForSeatFocus(zoom: number): number {
+  return Math.max(zoom, minZoomForLevel('close'))
+}
+
+/** A size on screen in pixels as world centimeters at this zoom. */
+export function pxToCm(px: number, zoom: number): number {
+  return zoom > 0 ? px / zoom : Infinity
+}

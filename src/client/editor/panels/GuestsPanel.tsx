@@ -10,8 +10,12 @@
  * is No. A declined guest who still holds a seat is named apart in the
  * Seated heading, so it agrees with the counts at the top.
  *
- * Each name is a row carrying data-guest-id, for the seating tools of
- * milestone 5 (drag to a seat, pan to a seat).
+ * Each name is a row carrying data-guest-id, and the seating tools
+ * (milestone 5): drag it onto a seat or a table (a mouse after 4 px, a
+ * finger after a 450 ms hold); click or tap a seated name to pan to the
+ * seat; on a phone, tap an unassigned name and then a seat. Enter or Space
+ * does the same as a tap. The whole right panel, or the phone's sheet, is
+ * where a seated guest is dragged to unseat them (EditorShell marks it).
  */
 import Link from 'next/link'
 import { memo, useId, useMemo, useState } from 'react'
@@ -30,7 +34,7 @@ import {
   type ListSide,
 } from '@/domain/guest-list'
 import type { Guest } from '@/shared/api'
-import { useCanvas } from '../state'
+import { useCanvas, useGuestRowProps } from '../state'
 import { useEditorUi } from './editor-ui'
 import { useEditorGuests } from './guests-context'
 
@@ -128,7 +132,7 @@ export function GuestsPanel() {
         {list.unassigned.length === 0 ? (
           <p className="mt-1 text-sm text-stone-600">{query || filtering ? 'No one matches.' : 'Everyone is seated.'}</p>
         ) : (
-          <ul className="mt-1">
+          <ul role="presentation" className="mt-1">
             {list.unassigned.map((g) => (
               <GuestRow key={g.id} guest={g} label={null} />
             ))}
@@ -148,7 +152,7 @@ export function GuestsPanel() {
         {list.seated.length === 0 ? (
           <p className="mt-1 text-sm text-stone-600">{query || filtering ? 'No one matches.' : 'No one is seated in this layout yet.'}</p>
         ) : (
-          <ul className="mt-1">
+          <ul role="presentation" className="mt-1">
             {list.seated.map(({ guest, label }) => (
               <GuestRow key={guest.id} guest={guest} label={label} />
             ))}
@@ -159,17 +163,21 @@ export function GuestsPanel() {
   )
 }
 
-/** One name in the side list. Milestone 5 makes it draggable and pans to the seat on a click. */
+/** One name in the side list: drag it to a seat; click or tap a seated name to pan to the seat. */
 const GuestRow = memo(function GuestRow({ guest, label }: { guest: Guest; label: string | null }) {
+  const rowProps = useGuestRowProps(guest.id)
+  const name = fullName(guest)
   return (
     <li
-      className="flex min-h-11 items-center justify-between gap-2 border-b border-stone-100 px-1 text-sm last:border-b-0"
+      role="button"
+      tabIndex={0}
+      className="flex min-h-11 items-center justify-between gap-2 border-b border-stone-100 px-1 text-sm outline-none last:border-b-0 hover:bg-stone-50 focus-visible:bg-stone-100"
       data-testid="side-list-guest"
-      data-guest-id={guest.id}
+      {...rowProps}
       data-seated={label !== null ? 'true' : 'false'}
     >
       <span className="min-w-0 truncate">
-        <span className="text-stone-900">{fullName(guest)}</span>
+        <span className="text-stone-900">{name}</span>
         {guest.nickname && <span className="text-stone-500"> ({guest.nickname})</span>}
         {guest.rsvp === 'no' && <span className="text-stone-500"> · declined</span>}
       </span>

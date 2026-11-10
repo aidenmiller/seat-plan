@@ -1,8 +1,8 @@
 /**
  * Acceptance check 7: pressing + on an 8-seat round table gives 9 evenly
- * spaced circles. And the spacing half of check 12: setting a table to 12
- * seats spaces 12 seats evenly. (Check 12's unseat question needs seated
- * guests and comes with milestone 5.)
+ * spaced circles. And check 12: setting a table to 12 seats spaces 12 seats
+ * evenly, and dropping a table with 10 guests seated to 8 seats asks before
+ * unseating 2, naming them with their seats.
  *
  * Spacing is measured from where the browser draws each seat circle: the
  * angle between neighbors around the table's center is 360/n within 0.5
@@ -33,6 +33,7 @@ import {
   type Point,
 } from './canvas'
 import { dbAddGuests } from './db'
+import { openEditor, serverSeats, setupSeating } from './seating'
 import {
   addRoundTable,
   apiCreateLayout,
@@ -270,4 +271,58 @@ test('on a phone, + and − beside a table near the bottom of the canvas sit abo
   await expectSaved(page)
   const stored = (await apiGetLayout(page.request, layout.id)).canvas.items.find((i) => i.id === id) as Table
   expect(stored.seatCount).toBe(count)
+})
+
+test('a table of 12 with 10 guests seated, set to 8 seats, asks first and names the 2 guests who would lose their seats (check 12)', async ({ context, page }, testInfo) => {
+  await presetAuthor(context, 'Noa')
+  const people: [string, string][] = [
+    ['Ava', 'Cohen'],
+    ['Ben', 'Levi'],
+    ['Cara', 'Diaz'],
+    ['Dov', 'Katz'],
+    ['Eli', 'Brooks'],
+    ['Fay', 'Adler'],
+    ['Gil', 'Moss'],
+    ['Hana', 'Roth'],
+    ['Ido', 'Sela'],
+    ['June', 'Park'],
+  ]
+  const s = await setupSeating(page, testInfo, {
+    guests: people.map(([firstName, lastName]) => ({ firstName, lastName })),
+    tables: [{ at: { x: 0, y: 0 }, seats: 12, guests: people.map(([first]) => first) }],
+  })
+  const [id] = s.tables
+  await openEditor(page, s)
+  await waitForEditor(page)
+  await selectTable(page, id)
+  const panel = await openProperties(page)
+  const count = panel.getByTestId('table-seat-count')
+  await expect(count).toHaveValue('12')
+
+  // Cancel first: nothing changes.
+  await commitField(count, '8')
+  const dialog = page.getByTestId('unseat-dialog')
+  await expect(dialog).toContainText('Remove 2 guests from their seats?')
+  await expect(dialog.getByTestId('unseat-list').locator('li')).toHaveText(['Seat 9: Ido Sela', 'Seat 10: June Park'])
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toHaveCount(0)
+  const table = page.getByTestId('canvas').locator(`[data-item-id="${id}"]`)
+  await expect(table.locator('circle[data-seat-index]')).toHaveCount(12)
+  await expect(table.locator('[data-seat-state="taken"]')).toHaveCount(10)
+
+  // Then yes: 8 seats, all taken; Ido and June go to Unassigned.
+  await commitField(count, '8')
+  await expect(dialog.getByTestId('unseat-list').locator('li')).toHaveText(['Seat 9: Ido Sela', 'Seat 10: June Park'])
+  await dialog.getByRole('button', { name: 'Remove from seats' }).click()
+  await expect(table.locator('circle[data-seat-index]')).toHaveCount(8)
+  await expect(table.locator('[data-seat-state="taken"]')).toHaveCount(8)
+  await expectSaved(page)
+  // The eight who stay keep their seats in the same order round the table (DECISIONS 63); Ido and June have none.
+  const seats = (await serverSeats(page, s.layout.id))[id]
+  const kept = people.slice(0, 8).map(([first]) => s.byName(first).id)
+  expect([...seats].sort()).toEqual([...kept].sort())
+  const start = seats.indexOf(kept[0])
+  expect([...seats.slice(start), ...seats.slice(0, start)]).toEqual(kept)
+  expect(seats).not.toContain(s.byName('Ido').id)
+  expect(seats).not.toContain(s.byName('June').id)
 })

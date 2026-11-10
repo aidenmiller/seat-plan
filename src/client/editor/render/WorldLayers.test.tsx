@@ -9,6 +9,7 @@ import type { FixedItem } from '@/domain/venue-schema'
 import { createDocStore } from '../doc-store'
 import { createEditorState, EditorStateProvider } from '../state'
 import { TABLE_STROKE_CM, TABLE_STROKE_MIN_SCREEN_PX, TIGHT_OFFSET_CM, TIGHT_STROKE, TIGHT_STROKE_SCREEN_PX } from './style'
+import { isZooming } from './NamesLayer'
 import { tightRing } from './TableView'
 import { WorldSvg } from './WorldLayers'
 
@@ -19,7 +20,15 @@ function item(preset: PresetId, id: string, x = 0, y = 0, items: Item[] = []): I
   return makeItem(preset, { x, y }, id, { items })
 }
 
-function render(items: Item[], options: { venue?: FixedItem[]; select?: string[]; hideFurniture?: boolean } = {}) {
+type RenderOptions = {
+  venue?: FixedItem[]
+  select?: string[]
+  hideFurniture?: boolean
+  /** Runs on the editor before rendering: people, seating state, the camera. */
+  setup?: (editor: ReturnType<typeof createEditorState>) => void
+}
+
+function render(items: Item[], options: RenderOptions = {}) {
   const editor = createEditorState({
     layoutId: 'L1',
     store: createDocStore({ ...emptyCanvas(), items }),
@@ -31,6 +40,7 @@ function render(items: Item[], options: { venue?: FixedItem[]; select?: string[]
   editor.loadDevice()
   if (options.select) editor.ui.select(options.select)
   if (options.hideFurniture) editor.view.setLayer('furniture', { visible: false })
+  options.setup?.(editor)
   return renderToStaticMarkup(
     <EditorStateProvider state={editor}>
       <WorldSvg worldRef={{ current: null }} svgRef={{ current: null }} venue={options.venue ?? []} />
@@ -125,6 +135,108 @@ describe('WorldSvg', () => {
     expect(css).toContain(
       `[data-editor-viewport] [data-table-body] { stroke-width: max(${TABLE_STROKE_CM}px, calc(${TABLE_STROKE_MIN_SCREEN_PX}px / var(--zoom, 1))); }`,
     )
+  })
+
+  describe('seating (review findings)', () => {
+    const people = [
+      { id: GUEST_A, firstName: 'Jane', lastName: 'Doe', nickname: null, rsvp: 'yes' as const, partnerId: null, coupleRuleEnabled: true },
+      { id: GUEST_B, firstName: 'Bo', lastName: 'Ray', nickname: null, rsvp: 'yes' as const, partnerId: null, coupleRuleEnabled: true },
+    ]
+    function seated(): Table {
+      const t = item('round', 't1') as Table
+      t.seats[0] = { index: 0, guestId: GUEST_A }
+      t.seats[3] = { index: 3, guestId: GUEST_B }
+      return t
+    }
+
+    const at = (zoom: number) => (e: ReturnType<typeof createEditorState>) => {
+      e.setPeople({ guests: people })
+      e.camera.set({ zoom, x: 500, y: 400 }, { immediate: true })
+    }
+
+    it('draws only the label set for the level, in a layer of its own after the furniture: names (close), initials (middle), none (far)', () => {
+      // Close: full names beside the seats.
+      const close = render([seated()], { setup: at(1) })
+      expect(close).toMatch(/<g data-layer="names"[^>]*><g data-labels="close">/)
+      expect(close.indexOf('data-layer="furniture"')).toBeLessThan(close.indexOf('data-layer="names"'))
+      expect(close).toMatch(/data-guest-name="" data-name-for="0" data-name-form="full">Jane Doe</)
+      expect(close).toMatch(/data-name-for="3" data-name-form="full">Bo Ray</)
+      expect(close).not.toContain('data-labels="middle"')
+      // The names layer carries no item ids, and the furniture layer holds no labels.
+      const names = close.slice(close.indexOf('data-layer="names"'))
+      expect(names).not.toContain('data-item-id')
+      const furniture = close.slice(close.indexOf('data-layer="furniture"'), close.indexOf('data-layer="names"'))
+      expect(furniture).not.toContain('data-guest-name')
+      expect(furniture).not.toContain('data-seat-initials')
+      // Middle: white initials centered in each taken seat.
+      const middle = render([seated()], { setup: at(0.6) })
+      expect(middle).toMatch(/<g data-labels="middle"[^>]*fill="#ffffff"/)
+      expect(middle).toMatch(/data-initials-for="0">JD</)
+      expect(middle).toMatch(/data-initials-for="3">BR</)
+      expect(middle).not.toContain('data-guest-name')
+      // Far: neither.
+      const far = render([seated()], { setup: at(0.2) })
+      expect(far).not.toContain('data-labels=')
+      // A + in each empty seat (CSS shows it in Edit mode at middle and close level).
+      expect(close.match(/data-seat-plus=""/g)).toHaveLength(6)
+      expect(close).not.toMatch(/data-plus-for="0"/)
+    })
+
+    it('knows when the view zooms, when no label set is in the page (DECISIONS 83; the browser test checks the page)', () => {
+      expect(isZooming({ get: () => ({ zoom: 1.2, x: 0, y: 0 }), drawn: () => ({ zoom: 1, x: 0, y: 0 }) })).toBe(true)
+      expect(isZooming({ get: () => ({ zoom: 1, x: 40, y: 0 }), drawn: () => ({ zoom: 1, x: 0, y: 0 }) })).toBe(false)
+    })
+
+    it('has no names or initials before the guest list arrives', () => {
+      const html = render([seated()])
+      expect(html).not.toContain('data-seat-initials')
+      expect(html).not.toContain('data-guest-name')
+    })
+
+    it('tints tables while a guest is dragged, grows the seat they would land in, and pulses a seat after pan to it', () => {
+      const t2 = item('round', 't2', 400, 0) as Table
+      const t3 = item('round', 't3', 800, 0) as Table
+      const html = render([seated(), t2, t3], {
+        setup: (e) => {
+          e.seating.store.setState({
+            drag: {
+              id: 1,
+              guestId: GUEST_A,
+              text: 'Jane Doe',
+              source: 'list',
+              from: null,
+              pointer: 'mouse',
+              target: { kind: 'seat', itemId: 't2', seatIndex: 2, occupant: null },
+              targetSeat: { itemId: 't2', seatIndex: 2 },
+              tints: new Map([
+                ['t1', 'good'],
+                ['t2', 'bad'],
+                ['t3', 'none'],
+              ]),
+            },
+            pulse: { itemId: 't3', seatIndex: 5, id: 7 },
+          })
+        },
+      })
+      expect(html).toMatch(/data-item-id="t1"[^>]*data-drag-tint="good"/)
+      expect(html).toMatch(/data-item-id="t2"[^>]*data-drag-tint="bad"/)
+      expect(html).not.toMatch(/data-item-id="t3"[^>]*data-drag-tint/)
+      expect(html).toMatch(/fill="#dcfce7" stroke="#16a34a"[^>]*data-table-body="" data-drag-tint="good"/)
+      expect(html).toMatch(/fill="#fee2e2" stroke="#dc2626"[^>]*data-table-body="" data-drag-tint="bad"/)
+      const grown = /<circle[^>]*r="([\d.]+)"[^>]*data-seat-index="2"[^>]*data-drop-target=""/.exec(html)
+      expect(Number(grown![1])).toBeCloseTo(SEAT_RADIUS_CM * 1.3, 6)
+      expect(html.match(/data-drop-target=""/g)).toHaveLength(1)
+      expect(html.match(/data-seat-pulse=""/g)).toHaveLength(1)
+      const pulseAt = seatLocalLayout(t3)[5]
+      expect(html).toMatch(new RegExp(`<circle cx="${pulseAt.x}" cy="${pulseAt.y}"[^>]*data-seat-pulse=""`))
+    })
+
+    it('fades each label set in, and shows the + only in Edit mode at middle and close level, through globals.css', () => {
+      const css = readFileSync(path.resolve(import.meta.dirname, '../../../app/globals.css'), 'utf8').replace(/\s+/g, ' ')
+      expect(css).toContain('[data-editor-viewport] [data-labels] { animation: labels-in 120ms ease-out; }')
+      expect(css).toContain('[data-editor-root][data-mode="edit"]:not([data-guest-drag]) svg[data-detail="middle"]')
+      expect(css).toContain('animation: seat-pulse 1000ms ease-out 2 forwards;')
+    })
   })
 
   it('draws the venue layer first, under the furniture', () => {

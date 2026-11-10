@@ -8,6 +8,11 @@
  * Every document change goes through the guard (state/editor-doc.ts), so in
  * View mode they are all refused in one place. Drags are gestures: one undo
  * step and one save each.
+ *
+ * Seating (milestone 5) lives in ../seating/controller.ts. This controller
+ * hands it a seated guest's drag, taps while a name waits for a seat (the
+ * phone's tap-then-tap) or on an empty seat's +, View mode taps on seats
+ * (cards), the hover and Esc, and its actions join these.
  */
 import type { Canvas, Item, Table } from '@/domain/canvas-schema'
 import {
@@ -32,6 +37,7 @@ import { classifyWheel, rememberWheel, wheelPanDelta, wheelZoomFactor, type Whee
 import type { CameraController } from '../camera/camera-controller'
 import type { EditorClipboard } from '../clipboard'
 import * as cmd from '../commands'
+import type { SeatingActions, SeatingController } from '../seating/controller'
 import type { DocGesture, EditorDoc } from '../state/editor-doc'
 import type { ViewStore } from '../state/device-view'
 import { NO_GUIDES, SELECT_TOOL, type EditorMode, type GapReadout, type InteractionStore, type SeatRef, type UiStore } from '../state/ui-store'
@@ -69,8 +75,12 @@ export type SeatRequest =
   | { status: 'unchanged' }
   /** View mode, or the page cannot edit right now. */
   | { status: 'refused' }
-  /** The change would unseat these guests (highest seat numbers first). Ask, then call confirm(). */
-  | { status: 'confirm'; unseated: string[]; confirm(): boolean }
+  /**
+   * The change would unseat these guests (highest seat numbers first), with
+   * their names in the same order ("Guest" for one not in the guest list).
+   * Ask, then call confirm().
+   */
+  | { status: 'confirm'; unseated: string[]; names: string[]; confirm(): boolean }
 
 export type ContextMenuRequest = { at: Point; target: Target; pointer: PointerKind }
 
@@ -88,12 +98,18 @@ export type GuestDragEvent = {
 export type EditorEvents = {
   /** Right click, or a touch held 450 ms and lifted. The selection already includes the target. */
   onContextMenu?(request: ContextMenuRequest): void
-  /** A click or tap finished (after its selection change): View mode cards, table guest lists. */
+  /**
+   * A click or tap finished (after its selection change): table guest lists.
+   * Taps seating takes are not heard here: a seat tap while a name waits for
+   * a seat, an empty seat's +, and a View mode tap on a taken seat (its card).
+   */
   onTap?(tap: { target: Target; at: Point; pointer: PointerKind }): void
-  /** A seated guest is being dragged (milestone 5's seating controller). */
+  /** A seated guest is being dragged on the canvas (the seating controller has already taken it). */
   onGuestDrag?(event: GuestDragEvent): void
   /** A change was refused: View mode, or the page cannot edit right now. */
   onRefused?(): void
+  /** A short message to show for a few seconds: "Table 4 is full". */
+  onNotice?(text: string): void
 }
 
 export type ControllerDeps = {
@@ -113,6 +129,8 @@ export type ControllerDeps = {
   setTimer?: (callback: () => void, ms: number) => unknown
   /** The venue template's fixed items, for fit to content while the venue layer shows. */
   venueItems?: () => readonly FixedItem[]
+  /** Seating guests (../seating/controller.ts). */
+  seating: SeatingController
 }
 
 export type WheelInput = WheelLike & { at: Point }
@@ -122,7 +140,16 @@ export type PresetOptions = {
   free?: boolean
 }
 
-export type EditorActions = {
+/**
+ * Every button, menu and panel action. The seating ones (SeatingActions in
+ * ../seating/controller.ts): seatGuest, seatAtTable (returns 'full'),
+ * moveGuest, swapGuests, unseatGuest, unseatGuests, unseatSelectedGuests,
+ * reorderSeat, panToGuest, openSeatPicker, closeSeatPicker, chooseForSeat,
+ * startPick, cancelPick.
+ */
+export type EditorActions = BaseActions & SeatingActions
+
+type BaseActions = {
   /** Adds a preset at a world point (snapped to the grid unless free), or at the viewport's center. Selects it; returns its id. */
   addPreset(presetId: PresetId, at?: Point | null, options?: PresetOptions): string | null
   /** A preset dropped from the shape panel at a pointer's clientX and clientY ({ free: true } with Alt held). */
@@ -173,7 +200,7 @@ export type EditorController = {
   pointer(input: PointerInput): void
   /** What is under a screen point (items and seats; handles come from the DOM). */
   targetAt(screen: Point): Target
-  /** Mouse moving with no button down: hover highlight. Null when it leaves the canvas. */
+  /** Mouse moving with no button down: hover highlight and, after 150 ms on a taken seat, its card. Null when it leaves the canvas. */
   hover(screen: Point | null): void
   /** Right click (the browser's contextmenu event), at a screen point. */
   contextMenu(screen: Point, target: Target, pointer: PointerKind): void
@@ -219,14 +246,14 @@ type ActiveDrag =
   | { kind: 'centerResize'; gesture: DocGesture; id: string; startWorld: Point; tables: Table[] }
   /** base: the selection a Shift box adds to; before: the selection and guest seats to put back on Esc. */
   | { kind: 'marquee'; startWorld: Point; base: readonly string[]; before: { selection: readonly string[]; guestSeats: readonly SeatRef[] } }
-  | { kind: 'guest'; itemId: string; seatIndex: number; guestId: string | null }
+  | { kind: 'guest'; itemId: string; seatIndex: number; guestId: string | null; pointer: PointerKind }
 
 function defaultNow(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now()
 }
 
 export function createEditorController(deps: ControllerDeps): EditorController {
-  const { doc, ui, interaction, view, camera, clipboard } = deps
+  const { doc, ui, interaction, view, camera, clipboard, seating } = deps
   const events = deps.events ?? {}
   const now = deps.now ?? defaultNow
   const setTimer = deps.setTimer ?? ((cb: () => void, ms: number) => setTimeout(cb, ms))
@@ -251,7 +278,7 @@ export function createEditorController(deps: ControllerDeps): EditorController {
   function machineContext(): MachineContext {
     const s = ui.getState()
     const selected = new Set(s.selection)
-    return { mode: s.mode, tool: s.tool.kind, phoneSelect: s.phoneSelect, spaceHeld, isSelected: (id) => selected.has(id) }
+    return { mode: s.mode, tool: s.tool.kind, phoneSelect: s.phoneSelect, spaceHeld, isSelected: (id) => selected.has(id), picking: seating.isPicking() }
   }
 
   function tablesExcept(canvas: Canvas, ids: ReadonlySet<string>): Table[] {
@@ -322,8 +349,9 @@ export function createEditorController(deps: ControllerDeps): EditorController {
       }
       case 'guest': {
         if (t.kind !== 'seat') return
-        active = { kind: 'guest', itemId: t.itemId, seatIndex: t.seatIndex, guestId: t.guestId }
+        active = { kind: 'guest', itemId: t.itemId, seatIndex: t.seatIndex, guestId: t.guestId, pointer: info.pointer }
         interaction.setState({ gesture: 'guest' })
+        seating.canvasDrag({ phase: 'start', itemId: t.itemId, seatIndex: t.seatIndex, guestId: t.guestId, at: info.at, pointer: info.pointer })
         events.onGuestDrag?.({ phase: 'start', itemId: t.itemId, seatIndex: t.seatIndex, guestId: t.guestId, at: info.at, world: toWorld(info.at) })
         return
       }
@@ -387,6 +415,7 @@ export function createEditorController(deps: ControllerDeps): EditorController {
         return
       }
       case 'guest':
+        seating.canvasDrag({ phase: 'move', itemId: a.itemId, seatIndex: a.seatIndex, guestId: a.guestId, at: info.at, pointer: a.pointer })
         events.onGuestDrag?.({ phase: 'move', itemId: a.itemId, seatIndex: a.seatIndex, guestId: a.guestId, at: info.at, world })
         return
     }
@@ -404,7 +433,9 @@ export function createEditorController(deps: ControllerDeps): EditorController {
     if (!a) return
     if (a.kind === 'guest') {
       const at = info?.at ?? { x: 0, y: 0 }
-      events.onGuestDrag?.({ phase: how === 'commit' ? 'end' : 'cancel', itemId: a.itemId, seatIndex: a.seatIndex, guestId: a.guestId, at, world: toWorld(at) })
+      const phase = how === 'commit' ? 'end' : 'cancel'
+      seating.canvasDrag({ phase, itemId: a.itemId, seatIndex: a.seatIndex, guestId: a.guestId, at, pointer: a.pointer })
+      events.onGuestDrag?.({ phase, itemId: a.itemId, seatIndex: a.seatIndex, guestId: a.guestId, at, world: toWorld(at) })
     } else if (a.kind === 'marquee') {
       if (how === 'cancel') ui.setState({ selection: a.before.selection, guestSeats: a.before.guestSeats })
     } else if (how === 'commit') {
@@ -439,6 +470,8 @@ export function createEditorController(deps: ControllerDeps): EditorController {
         return
       }
       case 'tap':
+        // Tap-then-tap and the + on empty seats take the tap; View mode taps on seats show cards.
+        if (seating.canvasTap(intent.target, intent.at, intent.pointer)) return
         events.onTap?.({ target: intent.target, at: intent.at, pointer: intent.pointer })
         return
       case 'dragStart':
@@ -490,6 +523,7 @@ export function createEditorController(deps: ControllerDeps): EditorController {
   }
 
   function feed(input: PointerInput) {
+    if (input.type === 'down') seating.canvasPress()
     const step = stepPointer(machine, input, machineContext())
     machine = step.state
     for (const intent of step.intents) apply(intent)
@@ -538,6 +572,7 @@ export function createEditorController(deps: ControllerDeps): EditorController {
       return {
         status: 'confirm',
         unseated: dry.unseated,
+        names: seating.guestNames(dry.unseated),
         confirm: () => edit(label, (c) => run(c, true).canvas) !== null,
       }
     }
@@ -552,6 +587,7 @@ export function createEditorController(deps: ControllerDeps): EditorController {
   }
 
   const actions: EditorActions = {
+    ...seating.actions,
     addPreset(presetId, at, options) {
       const base = at ?? viewportCenterWorld()
       const p = ui.getState().snap && !options?.free ? cmd.snapPoint(base, gridStep()) : base
@@ -700,6 +736,8 @@ export function createEditorController(deps: ControllerDeps): EditorController {
           feed({ type: 'escape' })
           return true
         }
+        // A list drag, the + picker, tap-then-tap or a card go first.
+        if (seating.escape()) return true
         const s = ui.getState()
         if (s.tool.kind !== 'select') {
           ui.setTool(SELECT_TOOL)
@@ -766,9 +804,24 @@ export function createEditorController(deps: ControllerDeps): EditorController {
     return false
   }
 
+  /**
+   * What is under a screen point. A taken seat right under the pointer wins;
+   * otherwise an empty seat's + within 22 px (a 44 px target) is that seat,
+   * marked plus, as long as the pointer is not on another item (a
+   * neighbouring fixture or table keeps its presses); otherwise the item or
+   * seat hit.
+   */
   function targetAt(screen: Point): Target {
     const zoom = camera.get().zoom
-    return hitTest(doc.canvas(), toWorld(screen), { tolerance: HIT_TOLERANCE_PX / zoom, layers: layers() })
+    const hit = hitTest(doc.canvas(), toWorld(screen), { tolerance: HIT_TOLERANCE_PX / zoom, layers: layers() })
+    if (hit.kind === 'seat' && hit.guestId !== null) return hit
+    const plus = seating.plusAt(screen)
+    if (!plus) return hit
+    if ((hit.kind === 'item' || hit.kind === 'seat') && hit.itemId !== plus.itemId) return hit
+    const item = doc.canvas().items.find((i) => i.id === plus.itemId)
+    if (!item || (item.kind !== 'table' && item.kind !== 'chairRow')) return hit
+    const target: Target = { kind: 'seat', itemId: plus.itemId, seatIndex: plus.seatIndex, guestId: null, locked: item.locked, plus: true }
+    return item.kind === 'chairRow' ? { ...target, itemKind: 'chairRow' } : target
   }
 
   return {
@@ -778,12 +831,14 @@ export function createEditorController(deps: ControllerDeps): EditorController {
       if (isBusy(machine)) return
       if (!screen) {
         ui.setHover(null)
+        seating.hover(null)
         return
       }
       const t = targetAt(screen)
       if (t.kind === 'item') ui.setHover({ kind: 'item', itemId: t.itemId })
       else if (t.kind === 'seat') ui.setHover({ kind: 'seat', itemId: t.itemId, seatIndex: t.seatIndex })
       else ui.setHover(null)
+      seating.hover(t)
     },
     contextMenu(screen, target, pointer) {
       if (isBusy(machine)) {

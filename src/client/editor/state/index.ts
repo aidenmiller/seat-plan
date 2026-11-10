@@ -14,7 +14,7 @@
  *     onCommit: (canvas) => sessionRef.current?.noteEdit(canvas),
  *     settings: () => ({ unit: wedding.unit, minGapCm: wedding.minGapCm }),
  *     venueItems: () => template?.fixedItems ?? [],  // fit to content takes the venue in
- *     events: { onContextMenu, onTap, onRefused },  // all optional
+ *     events: { onContextMenu, onTap, onRefused, onNotice },  // all optional
  *   }))
  *   useEffect(() => () => editor.destroy(), [editor])
  *
@@ -86,6 +86,36 @@
  *    camera={editor.camera} /> shows the zoom without re-rendering.
  *  - clipboard (../clipboard.ts) and controller (../input/controller.ts).
  *
+ * ## Seating (milestone 5, ../seating/)
+ *
+ *  - editor.setPeople({ guests, groups, rules }) whenever the page loads the
+ *    guest list (EditorShell: from useEditorGuestList; rules arrive in
+ *    milestone 6). The ghost, the "Tap a seat for Jane D." prompt, the
+ *    unseat question's names and the drag tints read from it. Pass
+ *    layoutKind in the options for ceremony layouts.
+ *  - editor.actions: seatGuest, seatAtTable ('full' comes with "Table 4 is
+ *    full", which also goes to events.onNotice), moveGuest, swapGuests,
+ *    unseatGuest, unseatGuests, unseatSelectedGuests, reorderSeat,
+ *    panToGuest (Edit and View), openSeatPicker, closeSeatPicker,
+ *    chooseForSeat, startPick, cancelPick. Each change is one undo step and
+ *    one save; View mode refuses them (events.onRefused).
+ *  - editor.seating: the store (drag, pick, card, picker, pulse, people) and
+ *    what the side list needs: listPointerDown(event, guestId) on each
+ *    row's onPointerDown (rows: touch-action pan-y, no text selection),
+ *    rowActivate(guestId) for the keyboard, registerListZone(element) for
+ *    where a seated guest is dropped to unseat them (or mark it
+ *    data-guest-list-zone), bindGhost(element) for the ghost that follows
+ *    the pointer, guestName(id) and guestNames(ids).
+ *  - editor.labels: guest names at close level for the world SVG's names
+ *    layer, worked out when the camera settles (useSeatLabels(tableId)).
+ *  - Hooks in ../seating/react.ts: useGuestDrag(), useDragTint(itemId),
+ *    useDropTargetSeat(itemId), useDragOrigin(itemId), useSeatPulse(itemId),
+ *    useGuestPick(), useSeatCard(), useSeatPicker(), useGuestRowProps(guestId),
+ *    useListZone(). The + on empty seats is drawn in TableView and found by
+ *    seating.plusAt(screen).
+ *  - SeatRequest's 'confirm' (a seat count that unseats people) carries
+ *    `names` beside `unseated`.
+ *
  * ## Hooks (react.ts)
  *
  * useEditorState(), useUi(selector), useInteraction(selector),
@@ -97,9 +127,11 @@
  * ## Events (EditorEvents in ../input/controller.ts)
  *
  * onContextMenu({ at, target, pointer }): right click, or a touch held 450
- * ms and lifted; the selection already includes the target. onTap: a
- * finished click or tap (View mode cards). onGuestDrag: a seated guest
- * dragged (milestone 5). onRefused: a change refused in View mode.
+ * ms and lifted; the selection already includes the target (a seat target
+ * with a guest: build the guest menu with ../seating/guest-menu.ts). onTap:
+ * a finished click or tap that seating did not take. onGuestDrag: a seated
+ * guest dragged (seating handles the drop). onRefused: a change refused in
+ * View mode. onNotice(text): a short message such as "Table 4 is full".
  */
 import type { Canvas } from '@/domain/canvas-schema'
 import { randomId } from '@/client/sync/random-id'
@@ -111,6 +143,11 @@ import type { DocStore } from '../doc-store'
 import { createEditorController, type EditorActions, type EditorController, type EditorEvents, type EditorSettings } from '../input/controller'
 import { attachInput } from '../input/dom-adapter'
 import { browserStorage, createViewStore, writeMode, type StorageLike, type ViewStore } from './device-view'
+import type { LayoutKind } from '@/domain/rules'
+import { createSeatingController, type ListWindow, type SeatingController } from '../seating/controller'
+import { createNameLabels, type NameLabels } from '../seating/name-labels'
+import type { MeasureText } from '@/domain/labels'
+import type { People } from '../seating/people'
 import { createEditorDoc, type EditorDoc } from './editor-doc'
 import { initialMode, readDeviceTraits, type DeviceTraits } from './mode'
 import { createInteractionStore, createUiStore, type EditorMode, type InteractionStore, type UiStore } from './ui-store'
@@ -127,6 +164,8 @@ export type EditorStateOptions = {
   /** The venue template's fixed items, so fit to content takes them in while the venue layer shows. */
   venueItems?: () => readonly FixedItem[]
   events?: EditorEvents
+  /** Reception (default) or ceremony: the rules the drag tint checks. */
+  layoutKind?: LayoutKind
   /** Tests and special cases; the defaults use the browser. */
   storage?: StorageLike | null
   newId?: () => string
@@ -135,6 +174,12 @@ export type EditorStateOptions = {
   clipboard?: EditorClipboard
   now?: () => number
   setTimer?: (callback: () => void, ms: number) => unknown
+  /** Less motion: pan to a seat jumps instead of gliding. Default: the browser's prefers-reduced-motion. */
+  reducedMotion?: () => boolean
+  /** Where side list drags listen for the pointer (the window by default; null for none). */
+  listWindow?: ListWindow | null
+  /** Text widths for the names at close level (the browser's canvas by default). */
+  measureText?: MeasureText
 }
 
 export type MountTargets = {
@@ -156,6 +201,12 @@ export type EditorState = {
   clipboard: EditorClipboard
   controller: EditorController
   actions: EditorActions
+  /** Seating guests: drags, tap-then-tap, the + picker, cards, pan to a seat (../seating/controller.ts). */
+  seating: SeatingController
+  /** Guest names at close level, worked out when the camera settles (../seating/name-labels.ts). */
+  labels: NameLabels
+  /** The wedding's guests, groups and rules, whenever the page loads them. */
+  setPeople(people: Partial<People>): void
   /** Reads this device's mode, layers and camera, once. mount() calls it; tests may call it alone. */
   loadDevice(): void
   /** Attaches the camera and input to the canvas elements. Returns the cleanup. */
@@ -175,6 +226,7 @@ export function createEditorState(options: EditorStateOptions): EditorState {
     scheduler: options.scheduler,
     gridUnit: options.settings().unit,
     onSettle: (c) => view.saveCamera(c),
+    now: options.now,
   })
   const clipboard = options.clipboard ?? createClipboard({ storage })
   const doc = createEditorDoc({
@@ -188,6 +240,23 @@ export function createEditorState(options: EditorStateOptions): EditorState {
     ui.setMode(mode)
     writeMode(storage, mode)
   }
+
+  const seating = createSeatingController({
+    doc,
+    ui,
+    view,
+    camera,
+    layoutKind: () => options.layoutKind ?? 'reception',
+    events: {
+      onRefused: () => options.events?.onRefused?.(),
+      onNotice: (text) => options.events?.onNotice?.(text),
+    },
+    scheduler: options.scheduler,
+    now: options.now,
+    setTimer: options.setTimer,
+    reducedMotion: options.reducedMotion,
+    listWindow: options.listWindow,
+  })
 
   let mountedVenue: readonly FixedItem[] | null = null
   const controller = createEditorController({
@@ -204,6 +273,15 @@ export function createEditorState(options: EditorStateOptions): EditorState {
     now: options.now,
     setTimer: options.setTimer,
     venueItems: () => mountedVenue ?? options.venueItems?.() ?? [],
+    seating,
+  })
+
+  const labels = createNameLabels({
+    doc,
+    camera,
+    seating: seating.store,
+    venueItems: () => mountedVenue ?? options.venueItems?.() ?? [],
+    measure: options.measureText,
   })
 
   // Selected items and seats that undo, a delete or a reload took away leave the selection.
@@ -237,6 +315,9 @@ export function createEditorState(options: EditorStateOptions): EditorState {
     clipboard,
     controller,
     actions: controller.actions,
+    seating,
+    labels,
+    setPeople: (people) => seating.setPeople(people),
     loadDevice,
     mount(targets) {
       loadDevice()
@@ -258,6 +339,8 @@ export function createEditorState(options: EditorStateOptions): EditorState {
       unsubscribe()
       unroute()
       controller.destroy()
+      labels.destroy()
+      seating.destroy()
       camera.flush()
       camera.destroy()
     },
@@ -268,6 +351,11 @@ export type { EditorActions, EditorController, EditorEvents, EditorSettings } fr
 export type { ContextMenuRequest, GuestDragEvent, SeatRequest } from '../input/controller'
 export type { Target } from '../input/hit-test'
 export type { CameraController } from '../camera/camera-controller'
+export type { CanvasGuestDrag, PanResult, SeatingActions, SeatingController, SeatingResult } from '../seating/controller'
+export type { People, PeopleGuest } from '../seating/people'
+export type { GuestDrag, GuestPick, SeatCard, SeatingState, SeatPicker, SeatPulse } from '../seating/store'
+export type { DragTarget } from '../seating/drop'
+export type { PlusSeat } from '../seating/plus'
 export type { EditorClipboard } from '../clipboard'
 export type { EditorDoc, DocGesture } from './editor-doc'
 export type { DeviceTraits } from './mode'
@@ -290,3 +378,20 @@ export {
   useZoomText,
 } from './react'
 export { shallowEqual } from './store'
+export {
+  GUEST_ROW_STYLE,
+  useDragOrigin,
+  useDragTint,
+  useDropTargetSeat,
+  useGuestDrag,
+  useGuestPick,
+  useGuestRowProps,
+  useListZone,
+  useSeatCard,
+  useSeating,
+  useSeatPicker,
+  useSeatPulse,
+} from '../seating/react'
+export { guestIdsAtSeats, guestMenu, type GuestMenu, type GuestMenuExtension, type GuestMenuItem } from '../seating/guest-menu'
+export { seatPickerGuests, PICKER_LIMIT } from '../seating/people'
+export { LIST_ZONE_ATTR } from '../seating/controller'

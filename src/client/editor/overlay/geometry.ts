@@ -16,12 +16,17 @@
  * selection. So a table under the phone's sheet, or panned off screen,
  * keeps its buttons in reach at the nearest edge. Whether the buttons show
  * never depends on the camera: camera frames move them without React.
+ *
+ * Seating (milestone 5): a ring round each selected guest's seat and, in
+ * Edit mode, a More button beside them (the guest menu). The + on empty
+ * seats is drawn in the world SVG (TableView), not here.
  */
 import type { Item } from '@/domain/canvas-schema'
 import { footprintBox, itemCorners, itemSize, localToWorld, unionBoxes, type Box, type Point } from '@/domain/geometry'
 import { worldToScreen, type Camera, type Viewport } from '@/domain/camera'
 import { handlePoint, HANDLES, isResizable, ROTATE_HANDLE_OFFSET_PX, type Handle } from '@/domain/resize'
-import { maxSeats } from '@/domain/seats'
+import { maxSeats, SEAT_RADIUS_CM } from '@/domain/seats'
+import type { SeatRef } from '@/domain/seating'
 import type { Guide } from '@/domain/snapping'
 import type { EditorMode, GapReadout } from '../state/ui-store'
 
@@ -52,6 +57,9 @@ export type ProjectOptions = {
   coarse?: boolean
 }
 
+/** A selected guest's seat: where it is, for its ring. */
+export type GuestSeatSpot = SeatRef & { world: Point }
+
 export type OverlayInput = {
   /** Selected items, in selection order. */
   selected: readonly Item[]
@@ -59,7 +67,12 @@ export type OverlayInput = {
   marquee: Box | null
   guides: readonly Guide[]
   gap: GapReadout | null
+  /** Selected guests' seats. */
+  guestSeats?: readonly GuestSeatSpot[]
 }
+
+/** The ring round a selected guest's seat sits this far outside the seat circle. */
+export const GUEST_RING_GAP_PX = 3
 
 export type ScreenOutline = { id: string; kind: 'circle'; cx: number; cy: number; r: number } | { id: string; kind: 'polygon'; points: Point[] }
 export type ScreenHandle = { handle: Handle; x: number; y: number; cursor: string }
@@ -79,6 +92,15 @@ export type ScreenOverlay = {
   marquee: { x: number; y: number; width: number; height: number } | null
   guides: ScreenLine[]
   gap: (ScreenLine & { x: number; y: number; text: string; warn: boolean }) | null
+  /** Rings round the selected guests' seats. */
+  guestRings: (SeatRef & { key: string; cx: number; cy: number; r: number })[]
+  /** Beside selected guests in Edit mode: the More button for the guest menu, for `seat` (the first selected). */
+  guestMenuButton: { seat: SeatRef; at: Point } | null
+}
+
+/** "t1#3": a seat's key for React and the overlay's element registry. */
+export function seatSpotKey(s: SeatRef): string {
+  return `${s.itemId}#${s.seatIndex}`
 }
 
 const HANDLE_ANGLE: Record<Handle, number> = { e: 0, se: 45, s: 90, sw: 135, w: 180, nw: 225, n: 270, ne: 315 }
@@ -211,7 +233,24 @@ export function projectOverlay(input: OverlayInput, camera: Camera, viewport: Vi
     gap = { x1: a.x, y1: a.y, x2: b.x, y2: b.y, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, text: input.gap.text, warn: input.gap.warn }
   }
 
+  const guestRings = (input.guestSeats ?? []).map((g) => {
+    const c = worldToScreen(camera, g.world)
+    return { itemId: g.itemId, seatIndex: g.seatIndex, key: seatSpotKey(g), cx: c.x, cy: c.y, r: SEAT_RADIUS_CM * camera.zoom + GUEST_RING_GAP_PX }
+  })
+  let guestMenuButton: ScreenOverlay['guestMenuButton'] = null
+  if (edit && guestRings.length > 0 && input.selected.length === 0) {
+    const box = {
+      minX: Math.min(...guestRings.map((r) => r.cx - r.r)),
+      minY: Math.min(...guestRings.map((r) => r.cy - r.r)),
+      maxX: Math.max(...guestRings.map((r) => r.cx + r.r)),
+      maxY: Math.max(...guestRings.map((r) => r.cy + r.r)),
+    }
+    const [at] = placeButtonColumn(box, 1, viewport, insets, coarse ? COARSE_BUTTON_GAP_PX : SEAT_BUTTON_GAP_PX)
+    guestMenuButton = { seat: { itemId: guestRings[0].itemId, seatIndex: guestRings[0].seatIndex }, at }
+  }
   return {
+    guestRings,
+    guestMenuButton,
     outlines: input.selected.map((item) => outline(item, camera)),
     handleItemId: editable && isResizable(editable) ? editable.id : null,
     handles,

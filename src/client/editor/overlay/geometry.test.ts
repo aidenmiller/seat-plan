@@ -5,6 +5,7 @@ import { footprintBox } from '@/domain/geometry'
 import {
   BUTTON_STEP_PX,
   COARSE_BUTTON_GAP_PX,
+  GUEST_RING_GAP_PX,
   handleCursor,
   placeButtonColumn,
   projectOverlay,
@@ -228,5 +229,27 @@ describe('the overlay', () => {
     expect(handleCursor('n', 0)).toBe('ns-resize')
     expect(handleCursor('e', 90)).toBe('ns-resize')
     expect(handleCursor('e', 45)).toBe('nwse-resize')
+  })
+})
+
+describe('seating in the overlay', () => {
+  const camera = { zoom: 0.5, x: 500, y: 400 }
+  const guestSeats = [
+    { itemId: 'o', seatIndex: 0, world: { x: 0, y: -100 } },
+    { itemId: 'o', seatIndex: 1, world: { x: 100, y: 0 } },
+  ]
+
+  it('rings each selected guest seat at screen size, with a More button beside them in Edit mode', () => {
+    const s = projectOverlay(input([], { guestSeats }), camera, viewport)
+    expect(s.guestRings).toEqual([
+      { itemId: 'o', seatIndex: 0, key: 'o#0', cx: 500, cy: 350, r: 22.5 * 0.5 + GUEST_RING_GAP_PX },
+      { itemId: 'o', seatIndex: 1, key: 'o#1', cx: 550, cy: 400, r: 22.5 * 0.5 + GUEST_RING_GAP_PX },
+    ])
+    expect(s.guestMenuButton?.seat).toEqual({ itemId: 'o', seatIndex: 0 })
+    expect(s.guestMenuButton!.at.x).toBeGreaterThan(550 + 11.25)
+    expect(s.menuButton).toBeNull()
+    const view = projectOverlay(input([], { guestSeats, mode: 'view' }), camera, viewport)
+    expect(view.guestRings).toHaveLength(2)
+    expect(view.guestMenuButton).toBeNull()
   })
 })

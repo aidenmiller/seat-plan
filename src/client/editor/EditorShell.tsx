@@ -19,6 +19,14 @@
  *
  * Once "Keep mine as a new copy" or "Save as a copy" has made the copy,
  * editing stays off until the page has opened the copy.
+ *
+ * Seating (milestone 5): the shell hands the guest list to the editor
+ * (setPeople), marks the right panel (or the phone's sheet) as the side list
+ * a seated guest is dragged back to, and shows the drag ghost, the "Tap a
+ * seat for" strip, the + picker, the seat card, the guest menu and notices
+ * such as "Table 4 is full". On phones it lowers the sheet to its strip when
+ * a name is tapped or dragged, or the view pans to a seat, so the seats
+ * stay in sight.
  */
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -54,6 +62,9 @@ import { ShapePanel } from './panels/ShapePanel'
 import { UnseatDialog, type UnseatAsk } from './panels/UnseatDialog'
 import { ZOOM_CONTROLS_PX, ZoomControls } from './panels/ZoomControls'
 import { CanvasViewport } from './render/CanvasViewport'
+import { LIST_ZONE_ATTR } from './seating/controller'
+import { guestIdsAtSeats, guestMenu } from './seating/guest-menu'
+import { GuestGhost, PickStrip, SeatCard, SeatPicker } from './panels/SeatingOverlays'
 import { NotStoredBanner, SaveFailedBanner, SaveStatusSlot } from './SaveBanners'
 import { notStoredAlert } from './save-status'
 import { createEditorState, EditorStateProvider, type EditorEvents } from './state'
@@ -169,13 +180,20 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
         return { unit: w.unit, minGapCm: w.minGapCm }
       },
       venueItems: () => (initial.template && !initial.template.deleted ? initial.template.fixedItems : []),
+      layoutKind: initial.kind,
       events: {
         onContextMenu: (request) => bridge.get().events.onContextMenu?.(request),
         onTap: (tap) => bridge.get().events.onTap?.(tap),
         onRefused: () => bridge.get().events.onRefused?.(),
+        onNotice: (text) => bridge.get().events.onNotice?.(text),
       },
     }),
   )
+
+  // The seating tools read names, partners and groups from the guest list.
+  useEffect(() => {
+    editor.setPeople({ guests: guestList.guests, groups: guestList.groups })
+  }, [editor, guestList.guests, guestList.groups])
 
   // Strict Mode runs effects twice in development, so the editor is torn down
   // only once nothing has mounted it again.
@@ -271,8 +289,36 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   const drawerOpen = shapesOpen && mode === 'edit'
 
   const onSeatRequest = useCallback((tableId: string, request: SeatRequest) => {
-    if (request.status === 'confirm') setUnseat({ tableId, unseated: request.unseated, confirm: request.confirm })
+    if (request.status === 'confirm') setUnseat({ tableId, unseated: request.unseated, names: request.names, confirm: request.confirm })
   }, [])
+
+  // While a guest is dragged the + on empty seats stands aside (globals.css reads data-guest-drag).
+  const rootRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const write = () => {
+      const drag = editor.seating.store.getState().drag
+      const root = rootRef.current
+      if (!root) return
+      if (drag) root.setAttribute('data-guest-drag', drag.source)
+      else root.removeAttribute('data-guest-drag')
+    }
+    write()
+    return editor.seating.store.subscribe(write)
+  }, [editor])
+
+  // Phones: tapping a name, picking one up from the list, or panning to a seat lowers the sheet to its strip.
+  useEffect(() => {
+    if (!phone) return
+    let last = editor.seating.store.getState()
+    return editor.seating.store.subscribe(() => {
+      const s = editor.seating.store.getState()
+      const pulsed = s.pulse !== null && s.pulse.id !== last.pulse?.id
+      const picked = s.pick !== null && last.pick === null
+      const dragged = s.drag !== null && s.drag.source === 'list' && s.drag.id !== last.drag?.id
+      last = s
+      if (pulsed || picked || dragged) setSheet('strip')
+    })
+  }, [editor, phone])
 
   const onConfirmUnseat = useCallback((request: UnseatConfirm) => setUnseat(request), [])
 
@@ -286,6 +332,18 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
       events: {
         onContextMenu(request: ContextMenuRequest) {
           const ui = editor.ui.getState()
+          // Screen points are from the viewport's top left; the menu wants the window's.
+          const origin = editor.camera.clientToScreen(0, 0)
+          const at = { x: request.at.x - origin.x, y: request.at.y - origin.y }
+          if (request.target.kind === 'seat' && request.target.guestId !== null) {
+            const forGuests = guestMenu({
+              guestIds: guestIdsAtSeats(editor.store.getState().canvas, ui.guestSeats),
+              mode: ui.mode,
+              unseat: (ids) => void editor.actions.unseatGuests(ids),
+            })
+            if (forGuests) setMenu({ at, menu: forGuests })
+            return
+          }
           const selected = new Set(ui.selection)
           const selection = editor.store.getState().canvas.items.filter((i: Item) => selected.has(i.id))
           const built = canvasMenu({
@@ -301,9 +359,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
             onDetails: showDetails,
           })
           if (!built) return
-          // Screen points are from the viewport's top left; the menu wants the window's.
-          const origin = editor.camera.clientToScreen(0, 0)
-          setMenu({ at: { x: request.at.x - origin.x, y: request.at.y - origin.y }, menu: built })
+          setMenu({ at, menu: built })
         },
         onTap({ target }) {
           if (editor.ui.getState().mode === 'view' && isTableTarget(target)) showDetails()
@@ -311,6 +367,9 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
         onRefused() {
           if (editor.ui.getState().mode === 'view') setNotice('Switch to Edit to change the plan.')
           else if (getAuthor() === null) setNotice('Pick Noa or Aiden at the top first.')
+        },
+        onNotice(text: string) {
+          setNotice(text)
         },
       },
     })
@@ -389,7 +448,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
     <EditorStateProvider state={editor}>
       <EditorUiProvider value={editorUi}>
         <EditorGuestsProvider value={guestList}>
-          <div className="flex min-h-0 flex-1 flex-col" data-editor-root="" data-mode={deviceKnown ? mode : undefined} data-phone={phone ? 'true' : undefined}>
+          <div ref={rootRef} className="flex min-h-0 flex-1 flex-col" data-editor-root="" data-mode={deviceKnown ? mode : undefined} data-phone={phone ? 'true' : undefined}>
             <header className="flex items-center gap-1 border-b border-stone-200 bg-white px-2 py-1 sm:gap-2 sm:px-3">
               <Link
                 href={backHref}
@@ -441,6 +500,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
               <div ref={canvasAreaRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
                 <CanvasViewport venue={venue} onConfirmUnseat={onConfirmUnseat} insets={phone ? PHONE_CANVAS_INSETS : DESKTOP_CANVAS_INSETS} />
                 <CanvasToolbar phone={phone} canEdit={canEdit} onOpenShapes={() => setShapesOpen(true)} hint={hint} />
+                <PickStrip top={PHONE_TOOLBAR_BOTTOM_PX + 8} />
                 <div className="absolute right-2 z-10" style={{ bottom: zoomControlsBottom(phone) }}>
                   <ZoomControls />
                 </div>
@@ -465,6 +525,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
                   label="Details"
                   stripPx={SHEET_STRIP_PX}
                   testId="bottom-sheet"
+                  attributes={{ [LIST_ZONE_ATTR]: '' }}
                   header={
                     <PanelTabs
                       tab={tab}
@@ -487,6 +548,9 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
             <ConflictDialog conflict={conflict} me={author} onLoadTheirs={loadTheirs} onKeepMine={keepMine} />
             <UnseatDialog ask={unseat} canvas={store.getState().canvas} onClose={() => setUnseat(null)} />
             <ContextMenu at={menu?.at ?? null} items={menu?.menu.items ?? []} label={menu?.menu.label ?? 'Menu'} onClose={() => setMenu(null)} testId="canvas-menu" />
+            <SeatPicker />
+            <SeatCard layoutKind={initial.kind} />
+            <GuestGhost />
           </div>
         </EditorGuestsProvider>
       </EditorUiProvider>
