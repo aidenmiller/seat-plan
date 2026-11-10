@@ -12,7 +12,7 @@ import type { Point } from '@/domain/geometry'
 import type { FixedItem } from '@/domain/venue-schema'
 import { VENUE } from './style'
 import { CenteredText, DoorSymbol, pointsAttr, WindowSymbol } from './symbols'
-import { fitText } from './text-fit'
+import { fitText } from '@/domain/text-fit'
 
 const OUTLINE_CM = 3
 const ROOM_NAME_MAX_CM = 60

@@ -112,7 +112,15 @@ test('right click on a table opens its menu: Fit seats, Lock, Copy, Duplicate, D
   const empty = { x: view.x + 80, y: view.y + view.height - 120 }
   await page.mouse.click(empty.x, empty.y, { button: 'right' })
   await expect(menu(page)).toHaveAttribute('aria-label', 'Canvas menu')
-  expect(await menuLabels(page)).toEqual(['Paste', 'Select all', 'Fit to content'])
+  expect(await menuLabels(page)).toEqual(['Paste', 'Select all', 'Fit to content', 'Export'])
+  // Export opens the Export dialog with the plan ready to print (the phone's way to it too).
+  await menu(page).getByRole('menuitem', { name: 'Export' }).click()
+  const exportDialog = page.getByRole('dialog', { name: 'Export' })
+  await expect(exportDialog.getByTestId('export-form')).toHaveAttribute('data-ready', 'true', { timeout: 15_000 })
+  await exportDialog.getByRole('button', { name: 'Close' }).click()
+  await expect(exportDialog).toBeHidden()
+  await page.mouse.click(empty.x, empty.y, { button: 'right' })
+  await expect(menu(page)).toHaveAttribute('aria-label', 'Canvas menu')
   await menu(page).getByRole('menuitem', { name: 'Paste' }).click()
   await expect(canvasTables(page)).toHaveCount(3)
   const pasted = (await tableIds(page)).find((t) => t !== id && t !== copy)!

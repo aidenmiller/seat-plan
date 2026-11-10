@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { deleteLayout, duplicateLayout, errorMessage, layoutDeleteSummary, updateLayout } from '@/client/api'
 import { useAuthor } from '@/client/author'
+import { LayoutExportButton } from '@/client/export/ExportButton'
 import { randomId } from '@/client/sync/random-id'
 import { InlineName } from '@/client/ui/InlineName'
 import { EditedLine } from '@/client/ui/RelativeTime'
@@ -111,6 +112,7 @@ function LayoutCard({ weddingId, layout }: { weddingId: string; layout: LayoutSu
         <Link href={href} aria-label={`Open ${layout.name}`} className={`${secondaryButton} flex-1`}>
           Open
         </Link>
+        <LayoutExportButton weddingId={weddingId} layout={layout} className={`${secondaryButton} flex-1`} />
         <button
           type="button"
           onClick={duplicate}

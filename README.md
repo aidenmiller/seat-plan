@@ -4,6 +4,21 @@ Guest list and seating planner for Noa and Aiden's wedding: an overhead floor pl
 
 Next.js 16 (App Router, TypeScript), Postgres with Drizzle, Tailwind, Vitest and Playwright. Hosted on Vercel with Neon.
 
+## What it does
+
+- **One shared password** for the whole site, a 30 day cookie, and Log out. Search engines are told to skip it.
+- **Weddings and layouts.** Each wedding holds its guests, groups and rules, and any number of reception or ceremony layouts. Rename in place, duplicate, and delete after typing `delete`.
+- **The plan editor.** Pan and zoom from 10% to 800%, a grid in feet or meters, tables and fixtures from the shape panel, handles to move, resize and turn them, align and distribute, undo and redo. Edit mode on laptops, View mode on phones, and a bottom sheet on phones.
+- **Seating.** Drag a name onto a seat or table, or tap the + on an empty seat. Names, initials or circles only, depending on the zoom. Search pans to a guest's seat.
+- **Guests.** CSV import with column matching and a re-import summary, paste a list of names, edit in place, export as CSV.
+- **Rules and groups.** Together and apart rules, couple rules from partner links, red badges and a Problems list. Group highlights and closeness scores.
+- **Space check.** The gap to the nearest table while dragging, a warning under 5 ft, and a Room panel with seats against guests.
+- **Venues.** A template editor for walls, rooms, doors and windows, and a floor plan import that turns a PDF or picture into walls (see below).
+- **Ceremony layouts.** The seating block tool, chair rows, reserved rows and ceremony fixtures.
+- **Notes.** Sticky notes, text, arrows, lines, boxes and circles, each with its author, on their own layer, with a Notes tab.
+- **Saving.** Every change saves on its own, kept on the device until the server has it, and a save over someone else's newer version asks first.
+- **Exports, backup and share links** (see below).
+
 ## Run it on your laptop
 
 You need Node 22 and a Postgres 16 server.
@@ -33,7 +48,7 @@ You need Node 22 and a Postgres 16 server.
 | `npm run e2e` | Playwright on a production build, at 1440 px and 390 px with touch (needs `seating_e2e`). `E2E_SKIP_BUILD=1` reuses the last build. The speed test (`e2e/perf.spec.ts`) runs in the 1440 px project only. The floor plan import tests talk to a stand-in for the Anthropic API that the run starts on port 4210 (`e2e/stand-in-anthropic.ts`; `E2E_STAND_IN_PORT` picks another), so they need no key and never reach the real API. |
 | `npm run db:generate` | Make a migration from changes to `src/server/db/schema.ts` |
 | `npm run db:migrate` | Apply migrations to `DATABASE_URL_UNPOOLED`, else `DATABASE_URL` (the seed uses the same order) |
-| `npm run seed` | Demo data: "Demo wedding" with three reception layouts, "Reception plan A" (blank canvas, five round tables), "Canvas tour" (blank canvas, one of every table preset and fixture) and "Beach Club reception" (Toronto Beach Club). Its guest list (`scripts/demo-guests.ts`, made up from a fixed random seed): 120 guests in households, a few with accents, on Noa's side, Aiden's or both, mostly RSVP yes with some pending and a few no, 10 children, some meals and notes; 8 groups with their members; 20 couples linked as partners; 5 rules (shown from milestone 6). About 80 of them sit at the tables of "Reception plan A" and "Canvas tour" (the sweetheart table stays free). "Canvas tour" also gets a few notes by Noa and Aiden (`scripts/demo-notes.ts`), one marked done, and an arrow attached to the bar and table 3. Safe to run twice: guests match by name, and groups, couples, rules, seats and notes are only added where none are yet. It runs tsx with the `react-server` condition, so it writes through the app's own server code. |
+| `npm run seed` | Demo data: "Demo wedding" with three reception layouts, "Reception plan A" (blank canvas, five round tables), "Canvas tour" (blank canvas, one of every table preset and fixture) and "Beach Club reception" (Toronto Beach Club). Its guest list (`scripts/demo-guests.ts`, made up from a fixed random seed): 120 guests in households, a few with accents, on Noa's side, Aiden's or both, mostly RSVP yes with some pending and a few no, 10 children, some meals and notes; 8 groups with their members; 20 couples linked as partners; 5 rules (shown from milestone 6). About 80 of them sit at the tables of "Reception plan A" and "Canvas tour" (the sweetheart table stays free). "Canvas tour" also gets a few notes by Noa and Aiden (`scripts/demo-notes.ts`), one marked done, and an arrow attached to the bar and table 3. A fourth layout, "Ceremony", is a ceremony layout on a blank canvas: the seating block tool's 8 rows of 6 each side of the aisle, the chuppah, officiant and musicians in front, row 1 on Noa's side reserved as "Family, row 1", and a few of Aiden's family seated by name on row 1 of his side. "Canvas tour" also gets a share link labelled "Caterer", with names and notes on; its password is made up at random and not shown, so set one with Change password in the wedding's Links tab before you try it. Safe to run twice: guests match by name, and groups, couples, rules, seats, notes and the share link are only added where none are yet. It runs tsx with the `react-server` condition, so it writes through the app's own server code. |
 | `npm run seed:perf` | The speed test's layout, for trying pan and zoom by hand on a phone or laptop: a "Speed test" wedding with 400 made-up guests and one layout, "40 tables" (40 round tables of 10 seats, every seat taken, and 100 shapes). Safe to run twice. |
 | `npm run check:secrets` | Fails if the site password is in the built browser files or in git history |
 
@@ -58,11 +73,20 @@ pdf.js decodes black and white scans (JBIG2, CCITT fax) and JPEG 2000 with WebAs
 
 **Toronto Beach Club.** The template exists but is empty: its floor plan and room sizes have not been sent yet, and the layout is not guessed. Once the file is here and `ANTHROPIC_API_KEY` is set on the live site, open the template, import the plan, check the draft against the original and the room sizes, and Accept.
 
-## Backup and share links
+## Exports, backup and share links
+
+Export opens from the editor's top bar on a laptop, from the canvas menu (right click, or a long press on an empty part of the plan) on a phone or a laptop, and from each card on the Layouts tab. From the editor it prints the plan as it is on screen, saved or not; from the Layouts tab it prints the last saved version. Files are made in the browser.
+
+- Floor plan as PDF or SVG: full names, initials or tables only, notes in or out, Letter or Tabloid, landscape. Names never print under 6 pt; when Letter would shorten them, the dialog suggests Tabloid or initials. The PDF embeds Noto Sans (`public/fonts`, with its license), so accented names print as typed.
+- Table list for the venue, each table with its guests and their meals, as PDF and CSV. Guest notes are left out.
+- Escort cards: every seated guest by last name with their table, as PDF and CSV (row and chair in a ceremony layout).
+- Ceremony list: reserved rows and named seats, as PDF.
+
+CSV files start with a byte order mark so Excel reads accents, and a cell starting with `=`, `+`, `-` or `@` is guarded so a spreadsheet never runs it.
 
 Wedding settings has Download backup: one JSON file with the guests, groups, rules, layouts and the venues they use, floor plan images included. Restore from file on the home screen checks the file and makes a new wedding, "Name (restored)", in steps (rows, then each venue and its image, then each layout), showing each step; if one fails, Try again picks up where it stopped. A venue that still has the same walls is reused, otherwise it comes back as "Name (restored)". Share links are not in the backup.
 
-Share in the layout editor makes a view-only link for the venue, with its own password and switches for guest names and notes. The wedding's Links tab lists the links that are on, when each was last opened, and lets you change a link's password, switch names or notes, or turn it off; a new password or turning it off signs out anyone using it. The link's page asks for its password; the site password opens every link too. For now the page after the password shows the layout's name; the plan view comes later.
+Share in the layout editor makes a view-only link for the venue, with its own password and switches for guest names and notes. The wedding's Links tab lists the links that are on, when each was last opened, and lets you change a link's password, switch names or notes, or turn it off; a new password or turning it off signs out anyone using it. The link's page asks for its password; the site password opens every link too. After the password the venue sees that one layout in View mode, with the wedding's and the layout's names: pan, zoom, search a guest, and tap a seat for the guest's name, meal and Child flag (never their notes). With names off, seats show no names or initials and the search goes. Nothing else of the wedding is reachable. The open page checks the link every 60 seconds and whenever it regains focus, so a new password or turning the link off signs the viewer out within a minute.
 
 ## Deploy
 

@@ -13,14 +13,20 @@
  * them at the tables of "Reception plan A" and "Canvas tour" (the sweetheart
  * table stays free for Noa and Aiden). Milestone 9 adds a few notes to
  * "Canvas tour" (scripts/demo-notes.ts), among them an arrow attached to the
- * bar and table 3. Ceremony rows come with milestone 8. The Toronto Beach Club
- * template itself comes from a migration, so production has it too.
+ * bar and table 3. Milestone 8 adds "Ceremony", a ceremony layout on a blank
+ * canvas made with the seating block tool's defaults, one front row reserved
+ * for family and a few of Aiden's family seated by name. Milestone 10 adds a
+ * share link to "Canvas tour" with names and notes on; its password is made
+ * up at random and never shown, so set one with Change password in the
+ * wedding's Links tab to try it. The Toronto Beach Club template itself comes
+ * from a migration, so production has it too.
  *
  * On a second run: guests are matched by name (ignoring case and accents)
  * and only missing ones are added; a group that exists keeps its members; a
  * couple is linked only while neither has a partner; a rule is added only
  * when no rule has its note; a layout that already seats anyone is left as
- * it is, and so is one that already holds notes.
+ * it is, and so is one that already holds notes; a layout that already has a
+ * share link that is on gets no other.
  *
  * Run it with `npm run seed`, which starts tsx with the react-server
  * condition. That is how a server build resolves `import 'server-only'` (to
@@ -29,17 +35,17 @@
  * section 5). Plain `tsx scripts/seed.ts` stops at the first server module;
  * main() says how to run it instead.
  */
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { loadEnvConfig } from '@next/env'
 import { and, eq, isNull } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { emptyCanvas, type Author, type Canvas, type Item } from '../src/domain/canvas-schema'
 import { nameKey } from '../src/domain/names'
-import { makeItem, type PresetId } from '../src/domain/presets'
-import { addRoundTable } from '../src/domain/round-table'
 import { createPool, requireDatabaseUrl } from '../src/server/db/connection'
 import * as schema from '../src/server/db/schema'
-import { demoPlan, PLAN_A_TABLES, type DemoPlan } from './demo-guests'
+import type { LayoutKind } from '../src/shared/api'
+import { demoPlan, type DemoPlan } from './demo-guests'
+import { canvasTour, ceremonyPlan, receptionPlanA } from './demo-layouts'
 import { addDemoNotes } from './demo-notes'
 
 export const DEMO_WEDDING_NAME = 'Demo wedding'
@@ -47,61 +53,42 @@ export const BLANK_LAYOUT_NAME = 'Reception plan A'
 export const TOUR_LAYOUT_NAME = 'Canvas tour'
 export const BEACH_LAYOUT_NAME = 'Beach Club reception'
 export const BEACH_TEMPLATE_NAME = 'Toronto Beach Club'
-
-/** Five Round preset tables (60 in, 8 seats), numbered 1 to 5 and set side by side, every seat empty. */
-export function receptionPlanA(): Canvas {
-  let canvas = emptyCanvas()
-  for (let i = 0; i < PLAN_A_TABLES.length; i++) canvas = addRoundTable(canvas, randomUUID())
-  return canvas
-}
-
-/**
- * One of every table preset and fixture, set out like a small reception (cm,
- * centers): the head table seated along its back edge facing the dance
- * floor, the sweetheart table beside it, round, square and rectangle tables
- * around the floor, and the fixtures at the edges. Tables are numbered in the
- * order they are placed, every seat empty.
- */
-export function canvasTour(): Canvas {
-  const placed: [PresetId, number, number, number?][] = [
-    ['stage', 0, -820],
-    ['dj', 520, -820],
-    ['head', 0, -470],
-    ['sweetheart', -560, -470],
-    ['danceFloor', 0, 0],
-    ['round', -620, 0],
-    ['round', 620, 0],
-    ['square', -620, 480],
-    ['rect', 620, 480],
-    ['bar', -1060, 0, 90],
-    ['food', 1060, 0, 90],
-    ['cake', -300, 520],
-    ['gifts', 0, 700],
-    ['photoBooth', 1060, 560],
-    ['text', 0, 1000],
-  ]
-  let canvas = emptyCanvas()
-  for (const [preset, x, y, rotation = 0] of placed) {
-    let item: Item = { ...makeItem(preset, { x, y }, randomUUID(), canvas), rotation }
-    if (item.kind === 'shape' && item.type === 'text') item = { ...item, text: 'Entrance', width: 240 }
-    canvas = { ...canvas, items: [...canvas.items, item] }
-  }
-  return canvas
-}
+export const CEREMONY_LAYOUT_NAME = 'Ceremony'
+export const SHARE_LABEL = 'Caterer'
 
 /** The server modules, loaded after the condition check so a wrong start gets a plain hint. */
 async function loadServerModules() {
   try {
-    const [{ writeCanvas }, { getLayoutDetail, listLayouts }, { listVenues }, { createWedding }, { addGuestsBulk, updateGuest }, { createGroup, listGroups }] =
-      await Promise.all([
-        import('../src/server/canvas-write'),
-        import('../src/server/repo/layouts'),
-        import('../src/server/repo/venues'),
-        import('../src/server/repo/weddings'),
-        import('../src/server/repo/guests'),
-        import('../src/server/repo/groups'),
-      ])
-    return { writeCanvas, getLayoutDetail, listLayouts, listVenues, createWedding, addGuestsBulk, updateGuest, createGroup, listGroups }
+    const [
+      { writeCanvas },
+      { getLayoutDetail, listLayouts },
+      { listVenues },
+      { createWedding },
+      { addGuestsBulk, updateGuest },
+      { createGroup, listGroups },
+      { createShareLink, listLayoutShareLinks },
+    ] = await Promise.all([
+      import('../src/server/canvas-write'),
+      import('../src/server/repo/layouts'),
+      import('../src/server/repo/venues'),
+      import('../src/server/repo/weddings'),
+      import('../src/server/repo/guests'),
+      import('../src/server/repo/groups'),
+      import('../src/server/repo/share-links'),
+    ])
+    return {
+      writeCanvas,
+      getLayoutDetail,
+      listLayouts,
+      listVenues,
+      createWedding,
+      addGuestsBulk,
+      updateGuest,
+      createGroup,
+      listGroups,
+      createShareLink,
+      listLayoutShareLinks,
+    }
   } catch (err) {
     if (err instanceof Error && err.message.includes('Server Component')) {
       throw new Error('Run the seed with `npm run seed`: it needs tsx --conditions=react-server to load the server modules.')
@@ -139,6 +126,7 @@ async function main() {
       canvas: Canvas
       venueTemplateId: string | null
       editedBy: Author
+      kind?: LayoutKind
     }) => {
       if (names.has(layout.name)) {
         console.log(`"${layout.name}" already exists.`)
@@ -166,10 +154,17 @@ async function main() {
     }
 
     // The guest list (milestone 4).
-    await seedGuestList(db, server, weddingId, demoPlan({ tour: TOUR_LAYOUT_NAME, planA: BLANK_LAYOUT_NAME }))
+    const plan = demoPlan({ tour: TOUR_LAYOUT_NAME, planA: BLANK_LAYOUT_NAME })
+    const ids = await seedGuestList(db, server, weddingId, plan)
 
     // Notes (milestone 9).
     await seedNotes(db, server, weddingId, TOUR_LAYOUT_NAME)
+
+    // The ceremony (milestone 8): a few of Aiden's family by name, couples side by side.
+    await addLayout({ name: CEREMONY_LAYOUT_NAME, canvas: ceremonyPlan(ceremonyGuests(plan, ids)), venueTemplateId: null, editedBy: 'Aiden', kind: 'ceremony' })
+
+    // A share link (milestone 10).
+    await seedShareLink(server, db, weddingId, TOUR_LAYOUT_NAME)
   } finally {
     await pool.end()
   }
@@ -178,8 +173,44 @@ async function main() {
 type Db = NodePgDatabase<typeof schema>
 type Server = Awaited<ReturnType<typeof loadServerModules>>
 
-/** Guests, groups, couples, rules and seats, each step skipping what is already there. */
-async function seedGuestList(db: Db, server: Server, weddingId: string, plan: DemoPlan) {
+/**
+ * Up to six of Aiden's family who said yes, as guest ids: whole couples side
+ * by side, so the couple rules hold in the ceremony too.
+ */
+function ceremonyGuests(plan: DemoPlan, ids: string[]): string[] {
+  const going = (i: number) => plan.guests[i]!.groups.includes('Aiden Family') && plan.guests[i]!.rsvp === 'yes'
+  const out: string[] = []
+  for (const [a, b] of plan.couples) {
+    if (out.length + 2 > 6) break
+    if (going(a) && going(b)) out.push(ids[a]!, ids[b]!)
+  }
+  return out
+}
+
+/** One share link on the layout, unless it has one that is on; its password is random and never shown. */
+async function seedShareLink(server: Server, db: Db, weddingId: string, layoutName: string) {
+  const summary = ((await server.listLayouts(db, weddingId)) ?? []).find((l) => l.name === layoutName)
+  if (!summary) {
+    console.log(`No "${layoutName}", so no share link.`)
+    return
+  }
+  const links = (await server.listLayoutShareLinks(db, summary.id)) ?? []
+  if (links.length > 0) {
+    console.log(`"${layoutName}" already has a share link.`)
+    return
+  }
+  const made = await server.createShareLink(db, summary.id, {
+    label: SHARE_LABEL,
+    password: randomBytes(18).toString('base64url'),
+    showNames: true,
+    showNotes: true,
+  })
+  if (made.status !== 'created') throw new Error(`Could not make a share link for "${layoutName}": ${made.status}`)
+  console.log(`Made a share link for "${layoutName}" at ${made.link.path}. Set its password with Change password in the Links tab to open it.`)
+}
+
+/** Guests, groups, couples, rules and seats, each step skipping what is already there. Returns the guest ids in plan order. */
+async function seedGuestList(db: Db, server: Server, weddingId: string, plan: DemoPlan): Promise<string[]> {
   // Guests, matched by name; the missing ones are added in one transaction.
   const live = async () =>
     db
@@ -308,6 +339,7 @@ async function seedGuestList(db: Db, server: Server, weddingId: string, plan: De
     }
     console.log(`Seated ${count - result.dropped.length} guests in "${layoutName}".`)
   }
+  return ids
 }
 
 /** The demo notes, through writeCanvas(), in a layout that has no notes yet. */

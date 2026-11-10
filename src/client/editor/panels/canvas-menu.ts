@@ -9,8 +9,10 @@
  *    one), Mark done or Mark not done, then as other items.
  *  - Other items: Lock, Copy, Duplicate, To front, To back, Delete.
  *  - Several items: Lock all, Copy, Duplicate, Delete.
- *  - Empty canvas: Paste (at the pressed point), Select all, Fit to content.
- *  - View mode: Show seats for a table, Fit to content.
+ *  - Empty canvas: Paste (at the pressed point), Select all, Fit to content,
+ *    Export.
+ *  - View mode: Show seats for a table, Fit to content, Export (on the
+ *    empty canvas).
  *
  * Phones also get Details, which opens the Properties sheet. A seated guest
  * gets the guest menu instead (../seating/guest-menu.ts, built by the
@@ -54,6 +56,8 @@ export type CanvasMenuInput = {
   onDetails(): void
   /** Typing into a note began from the menu (phones lower the sheet so the plan shows). */
   onEditNote?(): void
+  /** Opens the Export dialog: the phone's way to it, since its top bar has no room. */
+  onExport?(): void
 }
 
 export type CanvasMenu = { label: string; items: ContextMenuItem[] }
@@ -62,6 +66,8 @@ export function canvasMenu(input: CanvasMenuInput): CanvasMenu | null {
   const { target, selection, mode, phone, actions } = input
   const fit: ContextMenuItem = { id: 'fit', label: 'Fit to content', onSelect: () => actions.zoomFit() }
   const details: ContextMenuItem[] = phone ? [{ id: 'details', label: 'Details', onSelect: input.onDetails }] : []
+  const onExport = input.onExport
+  const exportItem: ContextMenuItem[] = onExport ? [{ id: 'export', label: 'Export', onSelect: () => onExport() }] : []
 
   if (target.kind === 'seat' && input.guestCount > 0) return null
 
@@ -69,7 +75,7 @@ export function canvasMenu(input: CanvasMenuInput): CanvasMenu | null {
     if (selection.length === 1 && selection[0].kind === 'table') {
       return { label: 'Table menu', items: [{ id: 'seats', label: 'Show seats', onSelect: input.onDetails }, fit] }
     }
-    return { label: 'Canvas menu', items: [fit] }
+    return { label: 'Canvas menu', items: [fit, ...exportItem] }
   }
 
   if (target.kind === 'empty' || selection.length === 0) {
@@ -79,6 +85,7 @@ export function canvasMenu(input: CanvasMenuInput): CanvasMenu | null {
         { id: 'paste', label: 'Paste', disabled: !input.canPaste, onSelect: () => void actions.paste(input.pasteAt ?? null) },
         { id: 'selectAll', label: 'Select all', onSelect: () => actions.selectAll() },
         fit,
+        ...exportItem,
       ],
     }
   }

@@ -11,7 +11,7 @@ import type { Shape } from '@/domain/canvas-schema'
 import type { Point } from '@/domain/geometry'
 import { INK_SOFT } from './style'
 import { CenteredText, DoorSymbol, pointsAttr, WindowSymbol } from './symbols'
-import { fitText, labelRotation, runsAcross } from './text-fit'
+import { fitText, labelRotation, runsAcross } from '@/domain/text-fit'
 import { itemTransform } from './TableView'
 
 /** A door or window shape sits on a wall this thick, which its white band hides. */

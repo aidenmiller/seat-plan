@@ -89,6 +89,8 @@ export type LabelInput = {
   measure: MeasureText
   /** Names by guest id. Seats whose guest is missing get no label. */
   names: ReadonlyMap<string, LabelName>
+  /** The largest name font in cm; MAX_LABEL_FONT_CM unless given. Print raises it to its smallest font when that is larger. */
+  maxFont?: number
 }
 
 /** Math.hypot, without its slow paths for huge numbers (none here). */
@@ -387,6 +389,7 @@ function laneWidths(sides: readonly string[], xs: readonly number[], ys: readonl
 export function layoutLabels(input: LabelInput): Map<string, SeatLabel[]> {
   const { tables, zoom, measure, names } = input
   const minFont = MIN_NAME_PX / (zoom > 0 ? zoom : 1e-9)
+  const fontCap = input.maxFont !== undefined && input.maxFont > 0 ? input.maxFont : MAX_LABEL_FONT_CM
   const obstacles: Obstacle[] = tables.map((t, i) => footprintObstacle(itemFootprint(t), i))
   for (const s of input.walls ?? []) obstacles.push(segmentObstacle(s))
 
@@ -405,7 +408,7 @@ export function layoutLabels(input: LabelInput): Map<string, SeatLabel[]> {
     // Only obstacles a label could reach: a box ends halfway to what it meets, and is at most MAX_LABEL_ROOM_CM long.
     const own = obstacles[ti]
     const ownReach = own.kind === 'circle' ? own.r : own.reach
-    const range = ownReach + 2 * (START_CM + MAX_LABEL_ROOM_CM) + MAX_LABEL_FONT_CM * LINE_HEIGHT_EM
+    const range = ownReach + 2 * (START_CM + MAX_LABEL_ROOM_CM) + fontCap * LINE_HEIGHT_EM
     const near: Obstacle[] = []
     for (const o of obstacles) {
       if (o.owner === ti) continue
@@ -430,7 +433,7 @@ export function layoutLabels(input: LabelInput): Map<string, SeatLabel[]> {
       const direction = directions[place.index]
       const ux = uxs[place.index]
       const uy = uys[place.index]
-      const maxFont = Math.min(MAX_LABEL_FONT_CM, lanes[place.index] * LANE_SHARE)
+      const maxFont = Math.min(fontCap, lanes[place.index] * LANE_SHARE)
       const half = (maxFont * LINE_HEIGHT_EM) / 2
       const ray: Ray = { ox: place.x, oy: place.y, dx: ux, dy: uy }
       let hit = Infinity

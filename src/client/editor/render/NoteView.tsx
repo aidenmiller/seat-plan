@@ -33,7 +33,7 @@ import { memo, useMemo, type ReactNode } from 'react'
 import type { Note } from '@/domain/canvas-schema'
 import type { Point } from '@/domain/geometry'
 import { NOTE_COLOR_PRESETS, NOTE_DONE_OPACITY, NOTE_LINE_CM } from '@/domain/notes'
-import { arrowParts, layoutNoteText, lineWidth, NOTE_INITIAL_FONT_CM, plainTextBox, stickyTextBox, type TextBox } from './note-layout'
+import { arrowParts, layoutNoteText, lineWidth, NOTE_INITIAL_FONT_CM, plainTextBox, stickyTextBox, type TextBox } from '@/domain/note-layout'
 import { pointsAttr } from './symbols'
 import { itemTransform } from './TableView'
 

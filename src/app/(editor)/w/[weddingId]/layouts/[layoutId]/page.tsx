@@ -35,7 +35,7 @@ export default async function LayoutEditorPage({ params }: PageProps<'/w/[weddin
     <EditorShell
       key={layout.id}
       layout={layout}
-      wedding={{ unit: wedding.unit, minGapCm: wedding.minGapCm }}
+      wedding={{ unit: wedding.unit, minGapCm: wedding.minGapCm, name: wedding.name, date: wedding.date }}
       guests={guests}
       groups={groups}
       rules={rules}

@@ -285,6 +285,18 @@ describe('canvasMenu', () => {
     expect(m?.items.map((i) => i.label)).toEqual(['Show seats', 'Fit to content'])
   })
 
+  it('offers Export on the empty canvas in both modes when the editor can export', () => {
+    const onExport = vi.fn()
+    const edit = menu({ onExport })
+    expect(edit?.items.map((i) => i.label)).toEqual(['Paste', 'Select all', 'Fit to content', 'Export'])
+    edit?.items.find((i) => i.id === 'export')?.onSelect()
+    expect(onExport).toHaveBeenCalledTimes(1)
+    expect(menu({ mode: 'view', onExport })?.items.map((i) => i.label)).toEqual(['Fit to content', 'Export'])
+    // Not on an item's menu.
+    const t = item('round', 't1')
+    expect(menu({ onExport, target: { kind: 'item', itemId: 't1', itemKind: 'table', locked: false }, selection: [t] })?.items.some((i) => i.id === 'export')).toBe(false)
+  })
+
   it('leaves seated guests to the guest menu', () => {
     expect(menu({ target: { kind: 'seat', itemId: 't1', seatIndex: 0, guestId: GUEST_A, locked: false }, guestCount: 1 })).toBeNull()
   })
