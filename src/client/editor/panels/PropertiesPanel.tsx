@@ -7,6 +7,8 @@
  *    seat count with − and +, seat sides, Fit seats, why it is outlined in
  *    yellow, Lock;
  *  - one fixture or shape: label or text, size, rotation, Lock;
+ *  - one note: its text, color, Done, size or arrow ends, who added it and
+ *    when (NoteProperties.tsx), Lock;
  *  - several items: align and distribute;
  *  - nothing: the Room panel (filled in with the guest list) and the layout.
  *
@@ -25,6 +27,7 @@ import { shallowEqual } from '../state/store'
 import { ButtonRow, CommitField, LengthField, NumberField, Section, Segmented, smallButton, smallDangerButton, Switch } from './controls'
 import { useEditorUi } from './editor-ui'
 import { ALIGN_BUTTONS, DISTRIBUTE_BUTTONS, FIXTURE_NAMES, itemName, SHAPE_NAMES, shapeIsLinear, shapeTakesText, type ItemFields } from './names'
+import { NoteProperties, NoteSummary } from './NoteProperties'
 import { canTakeShape, changeTableShape } from './table-shape'
 
 type FieldsOf<K extends ItemFields['kind']> = Extract<ItemFields, { kind: K }>
@@ -99,6 +102,15 @@ function SingleItem({ item, edit }: { item: ItemFields; edit: boolean }) {
     case 'fixture':
     case 'shape':
       return edit ? <ItemProperties item={item} /> : <ItemSummary item={item} />
+    case 'note':
+      return edit ? (
+        <>
+          <NoteProperties note={item} />
+          <ItemOptions item={item} layering />
+        </>
+      ) : (
+        <NoteSummary note={item} />
+      )
     default:
       return edit ? <OtherProperties item={item} /> : <ItemSummary item={item} />
   }
@@ -283,12 +295,12 @@ function ItemProperties({ item }: { item: FieldsOf<'fixture'> | FieldsOf<'shape'
   )
 }
 
-/** Chair rows and notes get their own tools later; for now rotation and Lock. */
-function OtherProperties({ item }: { item: FieldsOf<'chairRow'> | FieldsOf<'note'> }) {
+/** Chair rows get their own tools later; for now rotation and Lock. */
+function OtherProperties({ item }: { item: FieldsOf<'chairRow'> }) {
   const { actions } = useEditorState()
   return (
     <>
-      <Section title={item.kind === 'chairRow' ? 'Chair row' : 'Note'}>
+      <Section title="Chair row">
         <NumberField label="Rotation" value={item.rotation} suffix="°" disabled={item.locked} onChange={(r) => actions.setItemBox(item.id, { rotation: r })} />
       </Section>
       <ItemOptions item={item} layering />

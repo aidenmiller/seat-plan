@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { emptyCanvas, type Item } from '@/domain/canvas-schema'
+import { makeNote } from '@/domain/notes'
 import { makeItem } from '@/domain/presets'
 import { createDocStore } from '../doc-store'
 import type { ContextMenuRequest } from '../input/controller'
@@ -110,5 +111,45 @@ describe('the More button', () => {
       at: { x: 290, y: 140 },
       target: { kind: 'item', itemId: 't1', itemKind: 'table', locked: true },
     })
+  })
+})
+
+describe('notes in the overlay', () => {
+  const arrow = makeNote('arrow', { x: 0, y: 300 }, 'Noa', 'blue', 0, 'a')
+  const sticky = { ...makeNote('sticky', { x: 0, y: -300 }, 'Noa', 'pink', 0, 's'), text: 'Call the DJ' }
+
+  it('shows end handles for a selected arrow, 44 px on touch, and no resize handles', () => {
+    const html = render([table, arrow], (e) => e.ui.select(['a']))
+    expect(html).toContain('data-vertex="0"')
+    expect(html).toContain('data-vertex="1"')
+    expect(html).toContain('pointer-coarse:[r:22px]')
+    expect(html).not.toContain('data-handle=')
+    expect(html).not.toContain('data-rotate-handle')
+  })
+
+  it('outlines the table an end would attach to', () => {
+    const html = render([table, arrow], (e) => e.interaction.setState({ attachTarget: 't1' }))
+    expect(html).toContain('data-testid="attach-target"')
+  })
+
+  it('shows a text box with the draft over a note being typed into, left to its own handlers', () => {
+    const html = render([table, sticky], (e) => {
+      e.ui.select(['s'])
+      e.actions.startNoteEdit('s')
+      e.ui.setNoteDraft('Call the DJ at 9')
+    })
+    expect(html).toMatch(/<div data-overlay-control=""><textarea[^>]*data-note-editor=""/)
+    expect(html).toContain('aria-label="Sticky note text"')
+    expect(html).toContain('Call the DJ at 9</textarea>')
+    // 18 cm text at 100%.
+    expect(html).toContain('font-size:18px')
+  })
+
+  it('shows no text box in View mode', () => {
+    const html = render([sticky], (e) => {
+      e.actions.startNoteEdit('s')
+      e.ui.setMode('view')
+    })
+    expect(html).not.toContain('data-note-editor')
   })
 })

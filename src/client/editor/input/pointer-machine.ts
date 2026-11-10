@@ -14,7 +14,10 @@
  *    a seated guest starts a guest drag (milestone 5). Drag on empty canvas
  *    or a locked item draws a selection box.
  *  - Middle button, Space+drag and the hand tool pan.
- *  - A vertex (a wall's point, in the template editor) drags like a handle.
+ *  - A vertex (a wall's point in the template editor, an arrow's end in a
+ *    layout) drags like a handle.
+ *  - With a note tool, a click places the note and a drag anywhere draws it
+ *    (an arrow from start to end, or a note's box), on touch too.
  *
  * Touch (PLAN change 12):
  *  - Taps work as clicks; with the phone Select switch on, taps toggle.
@@ -52,13 +55,14 @@ export type PointerInput =
 
 export type MachineContext = {
   mode: 'edit' | 'view'
-  tool: 'select' | 'hand' | 'place'
+  tool: 'select' | 'hand' | 'place' | 'note'
   phoneSelect: boolean
   spaceHeld: boolean
   isSelected(itemId: string): boolean
 }
 
-export type DragKind = 'move' | 'resize' | 'rotate' | 'centerResize' | 'marquee' | 'guest'
+/** draw: a note tool drag. */
+export type DragKind = 'move' | 'resize' | 'rotate' | 'centerResize' | 'marquee' | 'guest' | 'draw'
 
 export type DragInfo = {
   drag: DragKind
@@ -79,8 +83,8 @@ export type Intent =
   | { type: 'toggleSelect'; id: string }
   | { type: 'clearSelection' }
   | { type: 'selectGuest'; itemId: string; seatIndex: number; toggle: boolean }
-  /** The place tool: add its preset here. */
-  | { type: 'place'; at: Point }
+  /** The place or note tool: add its preset or note here (alt: Alt was held, place it off the grid). */
+  | { type: 'place'; at: Point; alt: boolean }
   /** A finished click or tap, after its selection change (hover cards, View mode taps). */
   | { type: 'tap'; target: Target; at: Point; pointer: PointerKind }
   | ({ type: 'dragStart' } & DragInfo)
@@ -195,6 +199,7 @@ export function chooseDrag(press: Press, ctx: MachineContext): DragKind | 'pan' 
   if (ctx.mode !== 'edit' || ctx.tool === 'hand') return 'pan'
   if (t.kind === 'handle' || t.kind === 'vertex') return 'resize'
   if (t.kind === 'rotate') return 'rotate'
+  if (ctx.tool === 'note') return 'draw'
   const touch = press.pointer === 'touch'
   if ((t.kind === 'item' || t.kind === 'seat') && !t.locked) {
     if (t.kind === 'seat' && t.guestId !== null && (!touch || press.longPressed)) return 'guest'
@@ -212,7 +217,7 @@ function clickIntents(press: Press, ctx: MachineContext): Intent[] {
   const edit = ctx.mode === 'edit'
   const tap: Intent = { type: 'tap', target: t, at: press.start, pointer: press.pointer }
   if (t.kind === 'handle' || t.kind === 'rotate' || t.kind === 'vertex') return []
-  if (edit && ctx.tool === 'place') return [{ type: 'place', at: press.start }]
+  if (edit && (ctx.tool === 'place' || ctx.tool === 'note')) return [{ type: 'place', at: press.start, alt: press.alt }]
   const toggle = press.shift || (press.pointer === 'touch' && ctx.phoneSelect && edit)
   if (t.kind === 'seat' && t.guestId !== null) return [{ type: 'selectGuest', itemId: t.itemId, seatIndex: t.seatIndex, toggle }, tap]
   if (t.kind === 'seat' || t.kind === 'item') return [toggle ? { type: 'toggleSelect', id: t.itemId } : { type: 'select', ids: [t.itemId] }, tap]

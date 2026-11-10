@@ -48,6 +48,30 @@
  * sets and let CSS on [data-detail] fade between them, so a level change
  * re-renders nothing; useDetailLevel() is there for what CSS cannot do.
  *
+ * Notes (milestone 9, spec section 9): actions.setNoteTool(type) arms the
+ * note tool (the next click or tap places that note, a drag draws it: an
+ * arrow or line from start to end, ends attaching to the tables and fixtures
+ * they land on unless Alt is held; false when refused, as in View mode);
+ * actions.addNote(type, at?) adds one at a point or the viewport's center. New notes take the device's author (the
+ * author option, getAuthor() by default) and ui noteColor (actions.
+ * setNoteColor(color) colors the selected notes and remembers the color).
+ * setNoteText, setNoteDone, toggleNoteDone, attachArrowEnd and
+ * detachArrowEnd change a note; focusNote(id) is the Notes tab's click
+ * (select and pan to it). A selected arrow shows two end handles in the
+ * overlay instead of resize and rotate handles. Typing into a sticky or
+ * text note: Enter or a tap on the selected note starts it
+ * (actions.startNoteEdit), the overlay shows a text box over the note
+ * ([data-note-editor]) holding the draft in ui noteEdit, and Esc, a press on
+ * the canvas or leaving Edit mode ends it (actions.finishNoteEdit), saving
+ * the text as one undo step. NoteView can dim the note's own text while
+ * ui noteEdit?.id is its id. Draw arrows with useResolvedItem(id) (or
+ * resolveArrow in src/domain/arrows.ts): attached ends are worked out from
+ * the item they hold, so they follow it with no arrow edit. Nothing on a
+ * hidden or locked notes layer changes (refused with onRefused('notesHidden'
+ * or 'notesLocked')); hidden notes cannot be hit or selected, a click in
+ * Edit mode goes through locked ones, and the Notes tab still selects one
+ * to read.
+ *
  * Shape panel drags end with actions.dropPreset(presetId, clientX, clientY,
  * { free: altKey }) (Alt places it off the grid); a tap on a preset (phones)
  * can call actions.addPreset(presetId) for the viewport's center, or
@@ -70,12 +94,15 @@
  *    setLocked, renameTable, setTableNumber, setItemBox, setLabel, setStyle,
  *    run(label, recipe), zoomIn, zoomOut, zoomReset, zoomFit, setMode.
  *  - ui (ui-store.ts): selection (item ids), guestSeats ({ itemId,
- *    seatIndex }), hover, tool ({ kind: 'select' | 'hand' } or { kind:
- *    'place', presetId }), mode ('edit' | 'view'), deviceKnown,
- *    phoneSelect, snap, keepProportions, with setters. Use
- *    actions.setMode() to switch modes: it also remembers the choice.
+ *    seatIndex }), hover, tool ({ kind: 'select' | 'hand' }, { kind:
+ *    'place', presetId } or { kind: 'note', noteType }), mode ('edit' |
+ *    'view'), deviceKnown, phoneSelect, snap, keepProportions, noteColor,
+ *    noteEdit ({ id, text, original } while typing into a note), with
+ *    setters. Use actions.setMode() to switch modes: it also remembers the
+ *    choice.
  *  - interaction (ui-store.ts): what a drag draws: gesture, marquee,
- *    guides, gap (the live readout, with warn), spacePan, longPress.
+ *    guides, gap (the live readout, with warn), spacePan, longPress,
+ *    attachTarget (the item an arrow end would attach to).
  *  - view (device-view.ts): layers ({ venue, furniture, notes } each
  *    { visible, locked }), showReferenceImage, wheel ('auto' | 'zoom' |
  *    'pan'), with setLayer, setShowReferenceImage, setWheel. Kept per
@@ -90,7 +117,9 @@
  *
  * useEditorState(), useUi(selector), useInteraction(selector),
  * useViewState(selector), useMode(), useCanvas(selector), useItem(id),
- * useItemIds(), useSelectedItems(), useZoomText(), useDetailLevel().
+ * useItemIds(), useSelectedItems(), useZoomText(), useDetailLevel(),
+ * useResolvedItem(id) and useResolvedSelection() (arrows at their drawn
+ * ends), useNotes() (the Notes tab's list), useNoteEdit().
  * Draw each item as a memoized component that reads useItem(id), so a drag
  * re-renders only what moves.
  *
@@ -99,9 +128,12 @@
  * onContextMenu({ at, target, pointer }): right click, or a touch held 450
  * ms and lifted; the selection already includes the target. onTap: a
  * finished click or tap (View mode cards). onGuestDrag: a seated guest
- * dragged (milestone 5). onRefused: a change refused in View mode.
+ * dragged (milestone 5). onRefused(reason?): a change refused in View mode
+ * or while the page cannot edit (no reason), or for a reason: 'notesHidden',
+ * 'notesLocked', 'layerLocked' or 'noAuthor'.
  */
-import type { Canvas } from '@/domain/canvas-schema'
+import type { Author, Canvas } from '@/domain/canvas-schema'
+import { getAuthor } from '@/client/author'
 import { randomId } from '@/client/sync/random-id'
 import type { LengthUnit } from '@/domain/units'
 import type { FixedItem } from '@/domain/venue-schema'
@@ -135,6 +167,10 @@ export type EditorStateOptions = {
   clipboard?: EditorClipboard
   now?: () => number
   setTimer?: (callback: () => void, ms: number) => unknown
+  /** Who is using this device, for new notes. Default: the Noa / Aiden switch (getAuthor). */
+  author?: () => Author | null
+  /** The wall clock in ms, for a new note's createdAt. Default: Date.now. */
+  wallClock?: () => number
 }
 
 export type MountTargets = {
@@ -204,6 +240,8 @@ export function createEditorState(options: EditorStateOptions): EditorState {
     now: options.now,
     setTimer: options.setTimer,
     venueItems: () => mountedVenue ?? options.venueItems?.() ?? [],
+    author: options.author ?? getAuthor,
+    wallClock: options.wallClock,
   })
 
   // Selected items and seats that undo, a delete or a reload took away leave the selection.
@@ -212,6 +250,21 @@ export function createEditorState(options: EditorStateOptions): EditorState {
   })
   // Seats the server emptied go into a drag under way instead of dropping it.
   const unroute = store.routeServerPatches(doc.patchFromServer)
+
+  // Hiding the notes layer ends typing into a note (saving it) and takes notes out of the selection and hover.
+  let notesVisible = view.getState().layers.notes.visible
+  const unwatchLayers = view.subscribe(() => {
+    const visible = view.getState().layers.notes.visible
+    if (visible === notesVisible) return
+    notesVisible = visible
+    if (visible) return
+    controller.actions.finishNoteEdit()
+    const s = ui.getState()
+    const index = new Map(store.getState().canvas.items.map((i) => [i.id, i]))
+    const selection = s.selection.filter((id) => index.get(id)?.kind !== 'note')
+    if (selection.length !== s.selection.length) ui.setState({ selection })
+    if (s.hover && index.get(s.hover.itemId)?.kind === 'note') ui.setHover(null)
+  })
 
   let loaded = false
   let savedCamera = false
@@ -257,6 +310,7 @@ export function createEditorState(options: EditorStateOptions): EditorState {
     destroy() {
       unsubscribe()
       unroute()
+      unwatchLayers()
       controller.destroy()
       camera.flush()
       camera.destroy()
@@ -264,7 +318,7 @@ export function createEditorState(options: EditorStateOptions): EditorState {
   }
 }
 
-export type { EditorActions, EditorController, EditorEvents, EditorSettings } from '../input/controller'
+export type { EditorActions, EditorController, EditorEvents, EditorSettings, NoteOptions, RefusalReason } from '../input/controller'
 export type { ContextMenuRequest, GuestDragEvent, SeatRequest } from '../input/controller'
 export type { Target } from '../input/hit-test'
 export type { CameraController } from '../camera/camera-controller'
@@ -273,7 +327,7 @@ export type { EditorDoc, DocGesture } from './editor-doc'
 export type { DeviceTraits } from './mode'
 export { isPhoneLike, readDeviceTraits } from './mode'
 export type { Layers, LayerName, LayerSwitch, ViewState, ViewStore } from './device-view'
-export type { EditorMode, GapReadout, Hover, InteractionState, InteractionStore, SeatRef, Tool, UiState, UiStore } from './ui-store'
+export type { EditorMode, GapReadout, Hover, InteractionState, InteractionStore, NoteEdit, SeatRef, Tool, UiState, UiStore } from './ui-store'
 export {
   EditorStateProvider,
   itemIndex,
@@ -284,6 +338,10 @@ export {
   useItem,
   useItemIds,
   useMode,
+  useNoteEdit,
+  useNotes,
+  useResolvedItem,
+  useResolvedSelection,
   useSelectedItems,
   useUi,
   useViewState,

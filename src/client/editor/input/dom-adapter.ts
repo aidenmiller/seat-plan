@@ -16,8 +16,9 @@
  *  - contextmenu (right click) from a mouse; a touch's long press is the
  *    pointer machine's;
  *  - keydown and keyup on the window, skipped while a text field has focus
- *    or a dialog is open, with preventDefault on every key the editor
- *    handled;
+ *    (except Esc and Cmd/Ctrl+Enter in a note's text box, data-note-editor,
+ *    which end editing) or a dialog is open, with preventDefault on every
+ *    key the editor handled;
  *  - window blur: cancel every press (their releases may never come), let go
  *    of Space and drop a drag.
  *
@@ -29,7 +30,7 @@ import type { CameraController } from '../camera/camera-controller'
 import type { Handle } from '@/domain/resize'
 import type { EditorController } from './controller'
 import type { Target } from './hit-test'
-import { isTextEntry } from './keyboard'
+import { isNoteEditorKey, isTextEntry } from './keyboard'
 import type { PointerKind } from './pointer-machine'
 
 const HANDLES = new Set(['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'])
@@ -156,7 +157,7 @@ export function attachInput({ viewport, controller, camera }: AttachInputOptions
     if (active && active !== viewport && isTextEntry(active)) (active as HTMLElement).blur()
     if (e.pointerType === 'mouse') viewport.focus({ preventScroll: true })
     const at = screenOf(e)
-    const target = overlayTarget(e, viewport) ?? controller.targetAt(at)
+    const target = overlayTarget(e, viewport) ?? controller.targetAt(at, pointerKind(e.pointerType))
     try {
       viewport.setPointerCapture(e.pointerId)
     } catch {
@@ -235,7 +236,8 @@ export function attachInput({ viewport, controller, camera }: AttachInputOptions
   }
 
   function onKeyDown(e: KeyboardEvent) {
-    if (e.defaultPrevented || isTextEntry(e.target) || modalOpen()) return
+    if (e.defaultPrevented || modalOpen()) return
+    if (isTextEntry(e.target) && !isNoteEditorKey(e, e.target)) return
     if (controller.keyDown(e, e.target)) e.preventDefault()
   }
 

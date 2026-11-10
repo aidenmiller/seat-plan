@@ -5,12 +5,14 @@
  */
 import { createContext, createElement, useContext, type ReactNode } from 'react'
 import type { Canvas, Item } from '@/domain/canvas-schema'
+import { resolvedItems } from '@/domain/arrows'
 import type { DetailLevel } from '@/domain/detail-level'
+import { listNotes, type NoteListEntry } from '@/domain/notes'
 import { useDetailLevel as useCameraDetailLevel, useZoomText as useCameraZoomText } from '../camera/hooks'
 import type { ViewState } from './device-view'
 import type { EditorState } from './index'
 import { shallowEqual, useStoreSelector } from './store'
-import type { EditorMode, InteractionState, UiState } from './ui-store'
+import type { EditorMode, InteractionState, NoteEdit, UiState } from './ui-store'
 
 const EditorStateContext = createContext<EditorState | null>(null)
 
@@ -66,6 +68,46 @@ export function useItem(id: string): Item | undefined {
 /** The item ids in drawing order; changes only when items are added, removed or reordered. */
 export function useItemIds(): readonly string[] {
   return useCanvas((canvas) => canvas.items.map((i) => i.id), shallowEqual)
+}
+
+const resolvedIndexes = new WeakMap<readonly Item[], Map<string, Item>>()
+
+/** Items by id with arrows at their drawn ends (src/domain/arrows.ts), built once per document version. */
+export function resolvedIndex(canvas: Canvas): Map<string, Item> {
+  let index = resolvedIndexes.get(canvas.items)
+  if (!index) {
+    index = new Map(resolvedItems(canvas).map((i) => [i.id, i]))
+    resolvedIndexes.set(canvas.items, index)
+  }
+  return index
+}
+
+/**
+ * One item, an arrow with its attached ends where they are drawn: it
+ * re-renders when the table or fixture it holds moves, resizes or turns,
+ * with no change to the arrow itself.
+ */
+export function useResolvedItem(id: string): Item | undefined {
+  return useCanvas((canvas) => resolvedIndex(canvas).get(id))
+}
+
+/** The selected items as drawn (arrows at their ends), in selection order. */
+export function useResolvedSelection(): Item[] {
+  const selection = useUi((s) => s.selection)
+  return useCanvas((canvas) => {
+    const index = resolvedIndex(canvas)
+    return selection.map((id) => index.get(id)).filter((i): i is Item => i !== undefined)
+  }, shallowEqual)
+}
+
+/** Every note for the Notes tab, in drawing order; re-renders only when a note changes. */
+export function useNotes(): NoteListEntry[] {
+  return useCanvas(listNotes, shallowEqual)
+}
+
+/** The note being typed into, with its draft, or null. */
+export function useNoteEdit(): NoteEdit | null {
+  return useUi((s) => s.noteEdit)
 }
 
 /** The selected items, in selection order. */

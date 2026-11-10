@@ -1,13 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import { canvasSchema, emptyCanvas, type Canvas, type Item, type Note, type Shape, type Table } from '@/domain/canvas-schema'
+import { resolveArrow, storedEnds, withEnds } from '@/domain/arrows'
 import { distance, footprintBox } from '@/domain/geometry'
+import { makeNote } from '@/domain/notes'
 import { handlePoint } from '@/domain/resize'
 import { makeItem } from '@/domain/presets'
 import { seatLayout, seatLocalLayout, sideSeatCounts } from '@/domain/seats'
 import {
+  addArrow,
   addItem,
+  addNote,
   addSeat,
   alignItems,
+  attachArrowEnd,
+  detachArrowEnd,
+  moveArrowEnd,
+  setNoteColor,
+  setNoteDone,
+  setNoteText,
+  toggleNoteDone,
   bringToFront,
   deleteItems,
   distributeItems,
@@ -431,5 +442,248 @@ describe('labels and styles', () => {
     const next = setStyle(c, 's', { fill: '#ff0000', strokeWidth: -3 })
     expect((itemIn(next, 's') as Shape).style).toMatchObject({ fill: '#ff0000', strokeWidth: 0 })
     expect(setStyle(c, 's', { strokeWidth: Number.NaN })).toBe(c)
+  })
+})
+
+// ---------------------------------------------------------------- notes
+
+const NOW = Date.UTC(2026, 10, 10, 18, 0, 0)
+/** The chair ring of a 60 in round table with seats: 76.2 + 8 + 45 cm from its center. */
+const RING = 76.2 + 53
+
+function noteIn(canvas: Canvas, id: string): Note {
+  const n = canvas.items.find((i) => i.id === id)
+  if (n?.kind !== 'note') throw new Error(`no note ${id}`)
+  return n
+}
+
+function arrowNote(id: string, start: { x: number; y: number }, end: { x: number; y: number }, attachedTo: Note['attachedTo'] = { start: null, end: null }): Note {
+  return withEnds({ ...makeNote('arrow', { x: 0, y: 0 }, 'Noa', 'blue', NOW, id), attachedTo }, start, end)
+}
+
+function expectAt(p: { x: number; y: number }, x: number, y: number) {
+  expect(p.x).toBeCloseTo(x, 6)
+  expect(p.y).toBeCloseTo(y, 6)
+}
+
+describe('notes', () => {
+  it('adds a note on top, with its author, color and time', () => {
+    const c = canvasOf([tableAt('round', 'a')])
+    const next = addNote(c, { id: 'n', type: 'sticky', at: { x: 10, y: 20 }, author: 'Aiden', color: 'green', now: NOW })
+    expect(next.items.map((i) => i.id)).toEqual(['a', 'n'])
+    expect(noteIn(next, 'n')).toMatchObject({ x: 10, y: 20, width: 120, height: 120, author: 'Aiden', color: 'green', createdAt: '2026-11-10T18:00:00.000Z' })
+    expect(canvasSchema.safeParse(next).success).toBe(true)
+  })
+
+  it('adds a drawn box at least 10 cm a side, and the default size for no box', () => {
+    const drawn = addNote(emptyCanvas(), { id: 'n', type: 'box', at: { x: 0, y: 0 }, author: 'Noa', color: 'blue', now: NOW, size: { width: 300, height: 4 } })
+    expect(noteIn(drawn, 'n')).toMatchObject({ width: 300, height: 10 })
+    const none = addNote(emptyCanvas(), { id: 'n', type: 'circle', at: { x: 0, y: 0 }, author: 'Noa', color: 'blue', now: NOW, size: { width: 0, height: 0 } })
+    expect(noteIn(none, 'n')).toMatchObject({ width: 150, height: 150 })
+    // Arrows keep their length.
+    const arrow = addNote(emptyCanvas(), { id: 'n', type: 'arrow', at: { x: 0, y: 0 }, author: 'Noa', color: 'blue', now: NOW, size: { width: 50, height: 50 } })
+    expect(storedEnds(noteIn(arrow, 'n'))).toEqual({ start: { x: -100, y: 0 }, end: { x: 100, y: 0 } })
+  })
+
+  it('adds a drawn arrow with its ends on the items given', () => {
+    const c = canvasOf([tableAt('round', 'a'), makeItem('bar', { x: 600, y: 0 }, 'bar', emptyCanvas())])
+    const next = addArrow(c, { id: 'n', type: 'arrow', start: { x: 10, y: 0 }, end: { x: 590, y: 5 }, startOn: 'a', endOn: 'bar', author: 'Noa', color: 'blue', now: NOW })
+    const n = noteIn(next, 'n')
+    expect(n.attachedTo).toEqual({ start: 'a', end: 'bar' })
+    const ends = resolveArrow(n, next)
+    expectAt(ends.start, RING, 0)
+    expectAt(ends.end, 600 - 91.44, 0)
+    // The stored ends are where it is drawn.
+    expectAt(storedEnds(n).start, RING, 0)
+    expect(canvasSchema.safeParse(next).success).toBe(true)
+    const free = addArrow(c, { id: 'f', type: 'line', start: { x: 0, y: 300 }, end: { x: 50, y: 400 }, author: 'Noa', color: 'grey', now: NOW })
+    expect(noteIn(free, 'f')).toMatchObject({ type: 'line', attachedTo: { start: null, end: null } })
+    expect(storedEnds(noteIn(free, 'f'))).toEqual({ start: { x: 0, y: 300 }, end: { x: 50, y: 400 } })
+  })
+
+  it('gives a drawn arrow whose free ends meet its default length', () => {
+    const c = canvasOf([tableAt('round', 'a')])
+    const short = addArrow(c, { id: 'n', type: 'line', start: { x: 0, y: 300 }, end: { x: 0.4, y: 300 }, author: 'Noa', color: 'grey', now: NOW })
+    expect(storedEnds(noteIn(short, 'n'))).toEqual({ start: { x: 0, y: 300 }, end: { x: 200, y: 300 } })
+    // Held at the start, it still runs from the table's chairs.
+    const held = addArrow(c, { id: 'n', type: 'arrow', start: { x: 10, y: 0 }, end: { x: 10, y: 0 }, startOn: 'a', author: 'Noa', color: 'grey', now: NOW })
+    const n = noteIn(held, 'n')
+    expect(n.attachedTo).toEqual({ start: 'a', end: null })
+    expectAt(storedEnds(n).end, 210, 0)
+    expectAt(resolveArrow(n, held).start, RING, 0)
+  })
+
+  it('edits text as typed, cleaned and cut at 5,000 characters', () => {
+    const c = canvasOf([makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'n'), tableAt('round', 'a')])
+    const next = setNoteText(c, 'n', 'Keep Bob\r\naway  \u0000')
+    expect(noteIn(next, 'n').text).toBe('Keep Bob\naway  ')
+    expect(setNoteText(next, 'n', 'Keep Bob\naway  ')).toBe(next)
+    expect(noteIn(setNoteText(c, 'n', 'x'.repeat(6000)), 'n').text).toHaveLength(5000)
+    // A cut through an emoji leaves no broken half.
+    const cut = noteIn(setNoteText(c, 'n', 'x'.repeat(4999) + '😀'), 'n').text
+    expect(cut.isWellFormed()).toBe(true)
+    expect(setNoteText(c, 'a', 'Table')).toBe(c)
+    // A locked note still takes text (DECISIONS 56).
+    const locked = canvasOf([{ ...makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'n'), locked: true }])
+    expect(noteIn(setNoteText(locked, 'n', 'Hi'), 'n').text).toBe('Hi')
+  })
+
+  it('changes color and done on notes only', () => {
+    const c = canvasOf([makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'n'), makeNote('box', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'm'), tableAt('round', 'a')])
+    const colored = setNoteColor(c, ['n', 'm', 'a'], 'purple')
+    expect(noteIn(colored, 'n').color).toBe('purple')
+    expect(noteIn(colored, 'm').color).toBe('purple')
+    expect(itemIn(colored, 'a')).toBe(itemIn(c, 'a'))
+    expect(setNoteColor(colored, ['n'], 'purple')).toBe(colored)
+    expect(setNoteColor(c, ['n'], 'orange' as never)).toBe(c)
+    const done = setNoteDone(c, ['n'], true)
+    expect(noteIn(done, 'n').done).toBe(true)
+    expect(setNoteDone(done, ['n'], true)).toBe(done)
+    expect(noteIn(toggleNoteDone(done, 'n'), 'n').done).toBe(false)
+    expect(toggleNoteDone(c, 'a')).toBe(c)
+  })
+
+  it('moves an arrow end onto a table, and off it', () => {
+    const c = canvasOf([tableAt('round', 'a'), arrowNote('n', { x: -400, y: 300 }, { x: 400, y: 300 })])
+    const on = moveArrowEnd(c, 'n', 'end', { x: 20, y: 20 }, 'a')
+    expect(noteIn(on, 'n').attachedTo).toEqual({ start: null, end: 'a' })
+    expect(distance(resolveArrow(noteIn(on, 'n'), on).end, { x: 0, y: 0 })).toBeCloseTo(RING, 6)
+    const off = moveArrowEnd(on, 'n', 'end', { x: 30, y: 600 }, null)
+    expect(noteIn(off, 'n').attachedTo).toEqual({ start: null, end: null })
+    expectAt(storedEnds(noteIn(off, 'n')).end, 30, 600)
+    expect(moveArrowEnd(c, 'n', 'end', { x: Number.NaN, y: 0 }, null)).toBe(c)
+  })
+
+  it('attaches and detaches ends, never both on one item, never on a locked arrow', () => {
+    const c = canvasOf([tableAt('round', 'a'), makeItem('bar', { x: 0, y: 900 }, 'bar', emptyCanvas()), makeItem('box', { x: 900, y: 0 }, 'box', emptyCanvas()), arrowNote('n', { x: 400, y: 300 }, { x: 400, y: 600 })])
+    const one = attachArrowEnd(c, 'n', 'start', 'a')
+    expect(noteIn(one, 'n').attachedTo).toEqual({ start: 'a', end: null })
+    expect(attachArrowEnd(one, 'n', 'end', 'a')).toBe(one)
+    expect(attachArrowEnd(one, 'n', 'start', 'a')).toBe(one)
+    expect(attachArrowEnd(one, 'n', 'end', 'box')).toBe(one)
+    expect(attachArrowEnd(one, 'n', 'end', 'missing')).toBe(one)
+    const both = attachArrowEnd(one, 'n', 'end', 'bar')
+    expect(noteIn(both, 'n').attachedTo).toEqual({ start: 'a', end: 'bar' })
+    // Detached where it is drawn.
+    const drawn = resolveArrow(noteIn(both, 'n'), both)
+    const freed = detachArrowEnd(both, 'n', 'start')
+    expect(noteIn(freed, 'n').attachedTo).toEqual({ start: null, end: 'bar' })
+    expectAt(storedEnds(noteIn(freed, 'n')).start, drawn.start.x, drawn.start.y)
+    expect(detachArrowEnd(freed, 'n', 'start')).toBe(freed)
+    const locked = canvasOf([tableAt('round', 'a'), { ...arrowNote('n', { x: 400, y: 300 }, { x: 400, y: 600 }), locked: true }])
+    expect(attachArrowEnd(locked, 'n', 'start', 'a')).toBe(locked)
+    expect(moveArrowEnd(locked, 'n', 'start', { x: 0, y: 0 }, null)).toBe(locked)
+    // Not an arrow: nothing to attach.
+    const sticky = canvasOf([tableAt('round', 'a'), makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 's')])
+    expect(attachArrowEnd(sticky, 's', 'start', 'a')).toBe(sticky)
+  })
+
+  it('keeps an arrow on a table that moves, resizes or turns, with no change to the arrow', () => {
+    const t = tableAt('rect', 't')
+    const n = arrowNote('n', { x: 0, y: 0 }, { x: 800, y: 0 }, { start: 't', end: null })
+    let c = canvasOf([t, n])
+    expectAt(resolveArrow(n, c).start, 121.92, 0)
+    c = moveItems(c, ['t'], 0, 300)
+    c = rotateItem(c, 't', { x: 1000, y: 300 })
+    c = setItemBox(c, 't', { width: 400 })
+    expect(noteIn(c, 'n')).toBe(n)
+    const table = tableIn(c, 't')
+    expect(table).toMatchObject({ x: 0, y: 300, rotation: 90, width: 400 })
+    // Turned a quarter: its long side, chairs and all, faces the arrow's free end at (800, 0).
+    const start = resolveArrow(n, c).start
+    expect(start.x).toBeGreaterThan(38.1 + 53 - 1e-6)
+    expect(start.x).toBeLessThan(38.1 + 53 + 1e-6)
+    expect((start.y - 300) / start.x).toBeCloseTo(-300 / 800, 6)
+  })
+
+  it('moves a free arrow whole, pivots one held at one end, and leaves one held at both ends', () => {
+    const c = canvasOf([
+      tableAt('round', 'a'),
+      tableAt('round', 'b', 600),
+      arrowNote('free', { x: 0, y: 400 }, { x: 200, y: 400 }),
+      arrowNote('one', { x: 0, y: 0 }, { x: 300, y: 400 }, { start: 'a', end: null }),
+      arrowNote('both', { x: 0, y: 0 }, { x: 600, y: 0 }, { start: 'a', end: 'b' }),
+    ])
+    const moved = moveItems(c, ['free', 'one', 'both'], 50, 0)
+    expect(storedEnds(noteIn(moved, 'free'))).toEqual({ start: { x: 50, y: 400 }, end: { x: 250, y: 400 } })
+    const one = resolveArrow(noteIn(moved, 'one'), moved)
+    expect(distance(one.start, { x: 0, y: 0 })).toBeCloseTo(RING, 6)
+    expectAt(one.end, 350, 400)
+    expect(noteIn(moved, 'both')).toBe(noteIn(c, 'both'))
+    // Moving with its items, it moves along.
+    const all = moveItems(c, ['a', 'b', 'both'], 50, 0)
+    expect(noteIn(all, 'both').x).toBe(noteIn(c, 'both').x + 50)
+  })
+
+  it('stores a moved arrow’s ends where they are drawn', () => {
+    const c = canvasOf([tableAt('round', 'a'), arrowNote('one', { x: 0, y: 0 }, { x: 300, y: 400 }, { start: 'a', end: null })])
+    const moved = moveItems(c, ['one'], 50, 0)
+    const n = noteIn(moved, 'one')
+    const drawn = resolveArrow(n, moved)
+    expectAt(storedEnds(n).start, drawn.start.x, drawn.start.y)
+    expectAt(storedEnds(n).end, 350, 400)
+    expect(n.attachedTo).toEqual({ start: 'a', end: null })
+    expect(canvasSchema.safeParse(moved).success).toBe(true)
+  })
+
+  it('never turns or sizes an arrow by its box: it changes by its ends', () => {
+    const c = canvasOf([arrowNote('n', { x: 0, y: 0 }, { x: 200, y: 0 })])
+    expect(rotateItem(c, 'n', { x: 300, y: 0 })).toBe(c)
+    expect(setItemBox(c, 'n', { rotation: 45 })).toBe(c)
+    expect(setItemBox(c, 'n', { width: 500, height: 80 })).toBe(c)
+    expect(resizeItem(c, 'n', 'e', { x: 400, y: 0 })).toBe(c)
+    expect(resizeItemFromCenter(c, 'n', { x: 100, y: 0 }, { x: 300, y: 0 })).toBe(c)
+    expect(noteIn(setItemBox(c, 'n', { x: 300 }), 'n').x).toBe(300)
+    // Sticky notes turn like shapes.
+    const s = canvasOf([makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 's')])
+    expect(noteIn(rotateItem(s, 's', { x: 300, y: 0 }), 's').rotation).toBe(90)
+  })
+
+  it('leaves the ends of a deleted table where they were drawn, after it moved and turned', () => {
+    const t = tableAt('rect', 't')
+    const n = arrowNote('n', { x: 0, y: 0 }, { x: 800, y: 0 }, { start: 't', end: null })
+    let c = canvasOf([t, n])
+    c = rotateItem(moveItems(c, ['t'], 100, 200), 't', { x: 900, y: 200 })
+    const drawn = resolveArrow(noteIn(c, 'n'), c)
+    const next = deleteItems(c, ['t'])
+    expect(next.items.map((i) => i.id)).toEqual(['n'])
+    const left = noteIn(next, 'n')
+    expect(left.attachedTo).toEqual({ start: null, end: null })
+    expectAt(storedEnds(left).start, drawn.start.x, drawn.start.y)
+    expectAt(storedEnds(left).end, 800, 0)
+    expect(canvasSchema.safeParse(next).success).toBe(true)
+  })
+
+  it('duplicates an arrow with its table attached to the copy, and alone as a free arrow', () => {
+    const t = tableAt('round', 't')
+    const n = arrowNote('n', { x: 0, y: 0 }, { x: 500, y: 0 }, { start: 't', end: null })
+    const c = canvasOf([t, n])
+    const both = duplicateItems(c, ['t', 'n'], counter('c'), FT)
+    const [ct, cn] = both.ids
+    expect(noteIn(both.canvas, cn).attachedTo).toEqual({ start: ct, end: null })
+    expectAt(resolveArrow(noteIn(both.canvas, cn), both.canvas).end, 500 + FT, FT)
+    const alone = duplicateItems(c, ['n'], counter('c'), FT)
+    const copy = noteIn(alone.canvas, alone.ids[0])
+    expect(copy.attachedTo).toEqual({ start: null, end: null })
+    expectAt(storedEnds(copy).start, RING + FT, FT)
+    expect(noteIn(alone.canvas, 'n')).toBe(n)
+  })
+
+  it('pastes arrows holding only what was pasted with them', () => {
+    const t = tableAt('round', 't')
+    const n = arrowNote('n', { x: 0, y: 0 }, { x: 500, y: 0 }, { start: 't', end: 'gone' })
+    const target = canvasOf([tableAt('round', 'gone', 900)])
+    const { canvas, ids } = pasteItems(target, [t, n], counter('p'), { offset: { x: 0, y: 0 } })
+    expect(noteIn(canvas, ids[1]).attachedTo).toEqual({ start: ids[0], end: null })
+  })
+
+  it('moves, resizes and deletes sticky notes like other items', () => {
+    const s = makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 's')
+    let c = canvasOf([s])
+    c = moveItems(c, ['s'], 30, 40)
+    expect(noteIn(c, 's')).toMatchObject({ x: 30, y: 40 })
+    c = resizeItem(c, 's', 'se', { x: 30 + 100, y: 40 + 100 })
+    expect(noteIn(c, 's')).toMatchObject({ width: 160, height: 160 })
+    expect(deleteItems(c, ['s']).items).toEqual([])
   })
 })

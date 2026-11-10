@@ -222,6 +222,8 @@ describe('canvasMenu', () => {
     paste: vi.fn(() => true),
     selectAll: vi.fn(),
     zoomFit: vi.fn(),
+    startNoteEdit: vi.fn(() => true),
+    toggleNoteDone: vi.fn(() => true),
   } satisfies CanvasMenuInput['actions'] & Partial<EditorActions>
 
   function menu(patch: Partial<CanvasMenuInput>) {

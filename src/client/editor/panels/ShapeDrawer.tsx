@@ -59,7 +59,7 @@ function Drawer({ onClose, blank, disabled, dropTarget }: Omit<ShapeDrawerProps,
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          <ShapePanel blank={blank} disabled={disabled} dropTarget={dropTarget} onAdded={onClose} onDragChange={setDragging} columns={3} />
+          <ShapePanel blank={blank} disabled={disabled} dropTarget={dropTarget} onAdded={onClose} onDragChange={setDragging} columns={3} phone />
         </div>
       </div>
     </div>

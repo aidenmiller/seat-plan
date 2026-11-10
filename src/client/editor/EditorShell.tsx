@@ -19,6 +19,12 @@
  *
  * Once "Keep mine as a new copy" or "Save as a copy" has made the copy,
  * editing stays off until the page has opened the copy.
+ *
+ * Notes (spec section 9): the shape panel's Notes tools, the toolbar's notes
+ * layer switches, the Notes tab and a note's Properties all work through the
+ * editor state. A refused change says why under the canvas (View mode, no
+ * author picked, notes hidden or locked). On phones, picking a note in the
+ * Notes tab or starting to type into one lowers the sheet so the plan shows.
  */
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -41,7 +47,7 @@ import type { Group, Guest, LayoutDetail } from '@/shared/api'
 import { VenuePickerDialog } from '@/client/venues/VenuePicker'
 import { ConflictDialog } from './ConflictDialog'
 import { createDocStore, type DocStore } from './doc-store'
-import type { ContextMenuRequest, SeatRequest } from './input/controller'
+import type { ContextMenuRequest, RefusalReason, SeatRequest } from './input/controller'
 import { isTableTarget } from './input/hit-test'
 import { openLayoutSession, type ConflictInfo, type LayoutSession } from './layout-session'
 import type { UnseatConfirm } from './overlay/EditorOverlay'
@@ -112,6 +118,20 @@ export function canvasInsets(phone: boolean): ScreenInsets {
     bottom: zoomControlsBottom(phone) + ZOOM_CONTROLS_PX + 8,
     left: 0,
   })
+}
+
+/**
+ * What the notice under the canvas says when the editor refuses a change, or
+ * null to say nothing: View mode first, then no author picked, then the
+ * notes layer (hidden or locked) or another locked layer.
+ */
+export function refusalNotice(reason: RefusalReason | undefined, mode: 'edit' | 'view', hasAuthor: boolean): string | null {
+  if (mode === 'view') return 'Switch to Edit to change the plan.'
+  if (reason === 'noAuthor' || !hasAuthor) return 'Pick Noa or Aiden at the top first.'
+  if (reason === 'notesHidden') return 'Notes are hidden. Show them to change notes.'
+  if (reason === 'notesLocked') return 'Notes are locked. Unlock them to change notes.'
+  if (reason === 'layerLocked') return 'That part of the plan is locked.'
+  return null
 }
 
 const PHONE_CANVAS_INSETS = canvasInsets(true)
@@ -193,7 +213,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
       events: {
         onContextMenu: (request) => bridge.get().events.onContextMenu?.(request),
         onTap: (tap) => bridge.get().events.onTap?.(tap),
-        onRefused: () => bridge.get().events.onRefused?.(),
+        onRefused: (reason) => bridge.get().events.onRefused?.(reason),
       },
     }),
   )
@@ -302,6 +322,11 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
     if (phone) setSheet((s) => (s === 'strip' ? 'half' : s))
   }, [phone])
 
+  /** Phones: the sheet drops to its strip so the plan shows (a note picked in the Notes tab, typing into a note). */
+  const showCanvas = useCallback(() => {
+    if (phone) setSheet('strip')
+  }, [phone])
+
   useEffect(() => {
     bridge.set({
       events: {
@@ -320,6 +345,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
             actions: editor.actions,
             onSeatRequest,
             onDetails: showDetails,
+            onEditNote: showCanvas,
           })
           if (!built) return
           // Screen points are from the viewport's top left; the menu wants the window's.
@@ -327,11 +353,13 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
           setMenu({ at: { x: request.at.x - origin.x, y: request.at.y - origin.y }, menu: built })
         },
         onTap({ target }) {
-          if (editor.ui.getState().mode === 'view' && isTableTarget(target)) showDetails()
+          // View mode: a tapped table lists its seats, a tapped note shows all its text.
+          const note = target.kind === 'item' && target.itemKind === 'note'
+          if (editor.ui.getState().mode === 'view' && (isTableTarget(target) || note)) showDetails()
         },
-        onRefused() {
-          if (editor.ui.getState().mode === 'view') setNotice('Switch to Edit to change the plan.')
-          else if (getAuthor() === null) setNotice('Pick Noa or Aiden at the top first.')
+        onRefused(reason) {
+          const message = refusalNotice(reason, editor.ui.getState().mode, getAuthor() !== null)
+          if (message) setNotice(message)
         },
       },
     })
@@ -399,8 +427,8 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   const venueLabel = blank ? 'Blank canvas' : venueInfo.venueDeleted ? `${venueInfo.venueName ?? 'Venue'} (deleted)` : (venueInfo.venueName ?? 'Venue')
   const onPickVenue = useCallback(() => setPickingVenue(true), [])
   const editorUi = useMemo<EditorUi>(
-    () => ({ unit: wedding.unit, phone, layoutName: name, venueLabel, onSeatRequest, showDetails, venue, onPickVenue }),
-    [wedding.unit, phone, name, venueLabel, onSeatRequest, showDetails, venue, onPickVenue],
+    () => ({ unit: wedding.unit, phone, layoutName: name, venueLabel, onSeatRequest, showDetails, showCanvas, venue, onPickVenue }),
+    [wedding.unit, phone, name, venueLabel, onSeatRequest, showDetails, showCanvas, venue, onPickVenue],
   )
   const venueGone = !blank && (venueInfo.venueDeleted || venueInfo.template?.deleted === true)
   const dropTarget = useCallback(() => canvasAreaRef.current?.querySelector<HTMLElement>('[data-editor-viewport]') ?? null, [])

@@ -26,13 +26,21 @@
  * rotate handle by data-rotate-handle. The seat buttons and More sit in
  * [data-overlay-control], which the adapter leaves to their own click
  * handlers.
+ *
+ * Notes: a selected arrow or line gets a handle on each end (data-vertex 0
+ * and 1, filled when the end is attached); the table or fixture an end
+ * would attach to gets a green outline round its chairs; and a sticky or
+ * text note being typed into gets a text box over it ([data-note-editor],
+ * inside [data-overlay-control]) holding the draft. Esc or Cmd/Ctrl+Enter
+ * in the box, or leaving it, ends typing and saves the text as one undo step.
  */
-import { useLayoutEffect, useMemo, useState, useSyncExternalStore, type MouseEvent } from 'react'
-import type { Item } from '@/domain/canvas-schema'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent } from 'react'
+import type { Item, Note } from '@/domain/canvas-schema'
 import type { Point } from '@/domain/geometry'
+import { NOTE_COLOR_PRESETS } from '@/domain/notes'
 import type { CameraController } from '../camera/camera-controller'
 import { Icon } from '../icons/glyphs'
-import { useEditorState, useInteraction, useMode, useSelectedItems } from '../state/react'
+import { itemIndex, useCanvas, useEditorState, useInteraction, useMode, useResolvedSelection, useUi, useViewState } from '../state/react'
 import { shallowEqual } from '../state/store'
 import type { PointerKind } from '../input/pointer-machine'
 import type { SeatRequest } from '../input/controller'
@@ -46,6 +54,7 @@ import {
   type ProjectOptions,
   type ScreenInsets,
   type ScreenLine,
+  type ScreenOutline,
   type ScreenOverlay,
 } from './geometry'
 
@@ -107,6 +116,7 @@ function pointerKindOf(event: MouseEvent): PointerKind {
 
 const SELECT_STROKE = '#2563eb'
 const GUIDE_STROKE = '#db2777'
+const ATTACH_STROKE = '#16a34a'
 
 function pointsAttr(points: readonly Point[]): string {
   return points.map((p) => `${p.x},${p.y}`).join(' ')
@@ -122,6 +132,27 @@ function translate(x: number, y: number): string {
 
 function cssCenter(p: Point, size: number): string {
   return `translate(${p.x - size / 2}px, ${p.y - size / 2}px)`
+}
+
+type NoteEditorBox = NonNullable<ScreenOverlay['noteEditor']>
+
+/** The text box's place, size and font, as inline styles. */
+function noteEditorStyle(box: NoteEditorBox) {
+  return {
+    width: `${box.width}px`,
+    height: `${box.height}px`,
+    fontSize: `${box.fontPx}px`,
+    transform: `translate(${box.x - box.width / 2}px, ${box.y - box.height / 2}px) rotate(${box.rotation}deg)`,
+  }
+}
+
+function setOutline(el: Element | undefined, o: ScreenOutline) {
+  if (!el) return
+  if (o.kind === 'circle') {
+    el.setAttribute('cx', String(o.cx))
+    el.setAttribute('cy', String(o.cy))
+    el.setAttribute('r', String(o.r))
+  } else el.setAttribute('points', pointsAttr(o.points))
 }
 
 /** The overlay's elements by key, filled by ref callbacks, so camera frames can move them. */
@@ -155,9 +186,15 @@ function writeOverlay(els: ReadonlyMap<string, Element>, s: ScreenOverlay) {
     const el = els.get(key) as HTMLElement | undefined
     if (el) el.style.transform = transform
   }
-  for (const o of s.outlines) {
-    if (o.kind === 'circle') set(`outline:${o.id}`, { cx: o.cx, cy: o.cy, r: o.r })
-    else set(`outline:${o.id}`, { points: pointsAttr(o.points) })
+  for (const o of s.outlines) setOutline(els.get(`outline:${o.id}`), o)
+  if (s.attachOutline) setOutline(els.get('attach'), s.attachOutline)
+  if (s.arrowEnds) {
+    set('end:0', { transform: translate(s.arrowEnds.start.x, s.arrowEnds.start.y) })
+    set('end:1', { transform: translate(s.arrowEnds.end.x, s.arrowEnds.end.y) })
+  }
+  if (s.noteEditor) {
+    const el = els.get('note-editor') as HTMLElement | undefined
+    if (el) Object.assign(el.style, noteEditorStyle(s.noteEditor))
   }
   for (const h of s.handles) set(`handle:${h.handle}`, { transform: translate(h.x, h.y) })
   if (s.rotate) {
@@ -177,15 +214,72 @@ function writeOverlay(els: ReadonlyMap<string, Element>, s: ScreenOverlay) {
   if (s.menuButton) move('more', cssCenter(s.menuButton.at, TAP_TARGET_PX))
 }
 
+/** The text box over a sticky or text note being typed into. Its draft lives in ui noteEdit. */
+function NoteTextBox({ note, box, register }: { note: Note; box: NoteEditorBox; register: (el: Element | null) => void }) {
+  const editor = useEditorState()
+  const draft = useUi((s) => (s.noteEdit?.id === note.id ? s.noteEdit.text : ''))
+  const field = useRef<HTMLTextAreaElement | null>(null)
+  const ref = useCallback(
+    (el: HTMLTextAreaElement | null) => {
+      field.current = el
+      register(el)
+    },
+    [register],
+  )
+
+  useEffect(() => {
+    const el = field.current
+    if (!el) return
+    el.focus({ preventScroll: true })
+    el.select()
+  }, [note.id])
+
+  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Escape' || (event.key === 'Enter' && (event.metaKey || event.ctrlKey))) {
+      event.preventDefault()
+      editor.actions.finishNoteEdit()
+    }
+  }
+
+  const sticky = note.type === 'sticky'
+  return (
+    <textarea
+      ref={ref}
+      data-note-editor=""
+      data-testid="note-editor"
+      aria-label={sticky ? 'Sticky note text' : 'Note text'}
+      className="pointer-events-auto absolute left-0 top-0 origin-center resize-none rounded-md border-2 border-blue-600 p-1.5 leading-tight text-stone-900 shadow-lg outline-none"
+      style={{ ...noteEditorStyle(box), backgroundColor: sticky ? NOTE_COLOR_PRESETS[note.color].fill : 'rgba(255, 255, 255, 0.96)' }}
+      value={draft}
+      maxLength={5000}
+      spellCheck
+      onChange={(event) => editor.ui.setNoteDraft(event.target.value)}
+      onKeyDown={onKeyDown}
+      onBlur={() => editor.actions.finishNoteEdit()}
+    />
+  )
+}
+
 export function EditorOverlay({ onConfirmUnseat, insets = NO_INSETS }: EditorOverlayProps) {
   const editor = useEditorState()
-  const selected = useSelectedItems()
+  // Arrows where they are drawn, so their outline and end handles follow the items they hold.
+  const selected = useResolvedSelection()
   const mode = useMode()
-  const { marquee, guides, gap, longPress } = useInteraction(
-    (s) => ({ marquee: s.marquee, guides: s.guides, gap: s.gap, longPress: s.longPress }),
+  const layers = useViewState((s) => s.layers)
+  const { marquee, guides, gap, longPress, attachTargetId } = useInteraction(
+    (s) => ({ marquee: s.marquee, guides: s.guides, gap: s.gap, longPress: s.longPress, attachTargetId: s.attachTarget }),
     shallowEqual,
   )
-  const input = useMemo<OverlayInput>(() => ({ selected, mode, marquee, guides, gap }), [selected, mode, marquee, guides, gap])
+  const editingId = useUi((s) => s.noteEdit?.id ?? null)
+  const attachTarget = useCanvas((c) => (attachTargetId ? (itemIndex(c).get(attachTargetId) ?? null) : null))
+  const editing = useCanvas((c) => {
+    const item = editingId ? itemIndex(c).get(editingId) : undefined
+    return item?.kind === 'note' ? item : null
+  })
+  const input = useMemo<OverlayInput>(
+    () => ({ selected, mode, marquee, guides, gap, layers, attachTarget, editing }),
+    [selected, mode, marquee, guides, gap, layers, attachTarget, editing],
+  )
   const coarse = useCoarsePointer()
   const options = useMemo<ProjectOptions>(() => ({ insets, coarse }), [insets, coarse])
   const [registry] = useState(createRegistry)
@@ -278,6 +372,47 @@ export function EditorOverlay({ onConfirmUnseat, insets = NO_INSETS }: EditorOve
             <rect x={-HANDLE_PX / 2} y={-HANDLE_PX / 2} width={HANDLE_PX} height={HANDLE_PX} fill="#ffffff" stroke={SELECT_STROKE} strokeWidth={1.5} />
           </g>
         ))}
+        {screen.attachOutline &&
+          (screen.attachOutline.kind === 'circle' ? (
+            <circle
+              ref={register('attach')}
+              cx={screen.attachOutline.cx}
+              cy={screen.attachOutline.cy}
+              r={screen.attachOutline.r}
+              fill="rgba(22, 163, 74, 0.08)"
+              stroke={ATTACH_STROKE}
+              strokeWidth={3}
+              data-testid="attach-target"
+            />
+          ) : (
+            <polygon
+              ref={register('attach')}
+              points={pointsAttr(screen.attachOutline.points)}
+              fill="rgba(22, 163, 74, 0.08)"
+              stroke={ATTACH_STROKE}
+              strokeWidth={3}
+              data-testid="attach-target"
+            />
+          ))}
+        {screen.arrowEnds &&
+          ([
+            [0, 'start', screen.arrowEnds.start, screen.arrowEnds.startAttached],
+            [1, 'end', screen.arrowEnds.end, screen.arrowEnds.endAttached],
+          ] as const).map(([index, end, p, attached]) => (
+            <g
+              key={end}
+              ref={register(`end:${index}`)}
+              transform={translate(p.x, p.y)}
+              data-vertex={index}
+              data-item-id={screen.arrowEnds?.itemId}
+              data-attached={attached ? 'true' : 'false'}
+              className="pointer-events-auto cursor-move"
+              data-testid={`arrow-${end}`}
+            >
+              <circle className="[r:12px] pointer-coarse:[r:22px]" r={12} fill="transparent" />
+              <circle r={6} fill={attached ? SELECT_STROKE : '#ffffff'} stroke={SELECT_STROKE} strokeWidth={1.5} />
+            </g>
+          ))}
         {longPress && <circle cx={longPress.x} cy={longPress.y} r={28} fill="rgba(37, 99, 235, 0.15)" stroke={SELECT_STROKE} strokeWidth={2} />}
       </svg>
       {screen.gap && (
@@ -292,6 +427,11 @@ export function EditorOverlay({ onConfirmUnseat, insets = NO_INSETS }: EditorOve
           data-warn={screen.gap.warn ? 'true' : 'false'}
         >
           {screen.gap.warn ? `${screen.gap.text} · too close` : screen.gap.text}
+        </div>
+      )}
+      {screen.noteEditor && editing && (
+        <div data-overlay-control="">
+          <NoteTextBox key={editing.id} note={editing} box={screen.noteEditor} register={register('note-editor')} />
         </div>
       )}
       {(buttons || more) && (

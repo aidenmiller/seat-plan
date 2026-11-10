@@ -172,7 +172,28 @@ describe('handles, seats and panning', () => {
   })
 
   it('places the place tool preset on a click', () => {
-    expect(run([down(empty, 40, 50), up(40, 50)], ctx({ tool: 'place' })).intents).toEqual([{ type: 'place', at: { x: 40, y: 50 } }])
+    expect(run([down(empty, 40, 50), up(40, 50)], ctx({ tool: 'place' })).intents).toEqual([{ type: 'place', at: { x: 40, y: 50 }, alt: false }])
+  })
+
+  it('places a note with a click and draws one with a drag, from anywhere, Alt passed on', () => {
+    const note = ctx({ tool: 'note' })
+    expect(run([down(table, 40, 50, { alt: true }), up(40, 50)], note).intents).toEqual([{ type: 'place', at: { x: 40, y: 50 }, alt: true }])
+    for (const target of [empty, table, lockedItem, takenSeat]) {
+      const { intents } = run([down(target, 0, 0), move(30, 0), up(30, 0)], note)
+      expect(types(intents)).toEqual(['dragStart', 'dragMove', 'dragEnd'])
+      expect(intents[0]).toMatchObject({ drag: 'draw', target })
+    }
+    // A handle still resizes, and a touch draws instead of panning.
+    expect(chooseDrag({ id: 1, pointer: 'mouse', start: { x: 0, y: 0 }, last: { x: 0, y: 0 }, startTime: 0, shift: false, alt: false, target: handle, longPressed: false }, note)).toBe('resize')
+    expect(types(run([down(empty, 0, 0, { pointer: 'touch' }), move(30, 0), up(30, 0)], note).intents)).toEqual(['wantTimer', 'dragStart', 'dragMove', 'dragEnd'])
+    // View mode pans.
+    expect(types(run([down(empty, 0, 0), move(30, 0), up(30, 0)], ctx({ tool: 'note', mode: 'view' })).intents)).toEqual(['panStart', 'pan', 'panEnd'])
+  })
+
+  it('drags an arrow end (a vertex) like a handle', () => {
+    const end: Target = { kind: 'vertex', itemId: 'n', index: 1 }
+    expect(run([down(end, 0, 0), move(30, 0)]).intents[0]).toMatchObject({ type: 'dragStart', drag: 'resize', target: end })
+    expect(run([down(end, 0, 0), up(0, 0)]).intents).toEqual([])
   })
 
   it('cancels a drag on Esc and ignores the pointer until it lifts', () => {

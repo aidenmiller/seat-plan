@@ -2,13 +2,15 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { emptyCanvas, type Item, type Table } from '@/domain/canvas-schema'
+import { emptyCanvas, type Item, type Note, type Table } from '@/domain/canvas-schema'
+import { anchorPoint, withEnds } from '@/domain/arrows'
+import { makeNote, NOTE_COLOR_PRESETS, NOTE_DONE_OPACITY, NOTE_LINE_CM, type NoteType } from '@/domain/notes'
 import { makeItem, type PresetId } from '@/domain/presets'
 import { CHAIR_DEPTH_CM, SEAT_EMPTY_COLOR, SEAT_TAKEN_COLOR, seatLocalLayout, SEAT_RADIUS_CM } from '@/domain/seats'
 import type { FixedItem } from '@/domain/venue-schema'
 import { createDocStore } from '../doc-store'
 import { createEditorState, EditorStateProvider } from '../state'
-import { TABLE_STROKE_CM, TABLE_STROKE_MIN_SCREEN_PX, TIGHT_OFFSET_CM, TIGHT_STROKE, TIGHT_STROKE_SCREEN_PX } from './style'
+import { NOTE_LINE_MIN_SCREEN_PX, TABLE_STROKE_CM, TABLE_STROKE_MIN_SCREEN_PX, TIGHT_OFFSET_CM, TIGHT_STROKE, TIGHT_STROKE_SCREEN_PX } from './style'
 import { tightRing } from './TableView'
 import { WorldSvg } from './WorldLayers'
 
@@ -19,7 +21,28 @@ function item(preset: PresetId, id: string, x = 0, y = 0, items: Item[] = []): I
   return makeItem(preset, { x, y }, id, { items })
 }
 
-function render(items: Item[], options: { venue?: FixedItem[]; select?: string[]; hideFurniture?: boolean } = {}) {
+function note(type: NoteType, id: string, patch: Partial<Note> = {}, x = 0, y = 0): Note {
+  return { ...makeNote(type, { x, y }, 'Noa', 'pink', Date.UTC(2026, 10, 10), id), ...patch }
+}
+
+/** The markup of one item's group, from its opening tag to its closing </g>. */
+function itemMarkup(html: string, id: string): string {
+  const start = html.indexOf(`data-item-id="${id}"`)
+  const open = html.lastIndexOf('<g', start)
+  let depth = 0
+  const re = /<g[\s>]|<\/g>/g
+  re.lastIndex = open
+  for (let m = re.exec(html); m; m = re.exec(html)) {
+    depth += m[0] === '</g>' ? -1 : 1
+    if (depth === 0) return html.slice(open, m.index + 4)
+  }
+  return html.slice(open)
+}
+
+function render(
+  items: Item[],
+  options: { venue?: FixedItem[]; select?: string[]; hideFurniture?: boolean; hideNotes?: boolean; editing?: string } = {},
+) {
   const editor = createEditorState({
     layoutId: 'L1',
     store: createDocStore({ ...emptyCanvas(), items }),
@@ -31,6 +54,8 @@ function render(items: Item[], options: { venue?: FixedItem[]; select?: string[]
   editor.loadDevice()
   if (options.select) editor.ui.select(options.select)
   if (options.hideFurniture) editor.view.setLayer('furniture', { visible: false })
+  if (options.hideNotes) editor.view.setLayer('notes', { visible: false })
+  if (options.editing) editor.ui.beginNoteEdit(options.editing, 'draft')
   return renderToStaticMarkup(
     <EditorStateProvider state={editor}>
       <WorldSvg worldRef={{ current: null }} svgRef={{ current: null }} venue={options.venue ?? []} />
@@ -163,5 +188,109 @@ describe('WorldSvg', () => {
     expect(world).not.toContain('currentColor')
     expect(world).toContain('text-rendering="geometricPrecision"')
     expect(world).toMatch(/font-family="[^"]+"/)
+  })
+})
+
+describe('notes on the plan', () => {
+  it('draws notes on their own layer, above the furniture', () => {
+    const html = render([note('sticky', 'n1', { text: 'Hi' }), item('round', 't1')])
+    expect(html.indexOf('data-layer="furniture"')).toBeLessThan(html.indexOf('data-layer="notes"'))
+    expect(html.indexOf('data-item-id="t1"')).toBeLessThan(html.indexOf('data-item-id="n1"'))
+    expect(html.slice(html.indexOf('data-layer="notes"'))).toContain('data-item-id="n1"')
+  })
+
+  it('draws a sticky note as a filled square with its wrapped text and the author initial', () => {
+    const html = itemMarkup(render([note('sticky', 'n1', { text: 'Keep Uncle Bob away from the bar' })]), 'n1')
+    const color = NOTE_COLOR_PRESETS.pink
+    expect(html).toMatch(/data-kind="note" data-note-type="sticky" data-note-color="pink"/)
+    expect(html).toMatch(new RegExp(`<rect x="-60" y="-60" width="120" height="120"[^>]*fill="${color.fill}"`))
+    expect(html.match(/<tspan /g)!.length).toBeGreaterThan(1)
+    expect(html).toContain('Uncle')
+    expect(html).toMatch(new RegExp(`text-anchor="end" fill="${color.stroke}"[^>]*data-note-author="">N</text>`))
+    expect(html).toContain('text-rendering="geometricPrecision"')
+    expect(html).not.toContain('data-note-strike')
+    expect(html).not.toMatch(/\sopacity="/)
+  })
+
+  it('greys out a done note and strikes through a done sticky note', () => {
+    const html = render([note('sticky', 'n1', { text: 'Order cake', done: true }), note('box', 'n2', { done: true }, 400)])
+    const sticky = itemMarkup(html, 'n1')
+    expect(sticky).toMatch(new RegExp(`data-done="true"[^>]*opacity="${NOTE_DONE_OPACITY}"`))
+    expect(sticky).toContain('data-note-strike=""')
+    const box = itemMarkup(html, 'n2')
+    expect(box).toMatch(new RegExp(`opacity="${NOTE_DONE_OPACITY}"`))
+    expect(box).not.toContain('data-note-strike')
+  })
+
+  it('draws text in the darker shade, boxes and circles as outlines, in world units', () => {
+    const html = render([note('text', 'n1', { text: 'Dance floor' }), note('box', 'n2', {}, 400), note('circle', 'n3', {}, 800)])
+    const stroke = NOTE_COLOR_PRESETS.pink.stroke
+    expect(itemMarkup(html, 'n1')).toMatch(new RegExp(`<text font-size="18" fill="${stroke}"`))
+    expect(itemMarkup(html, 'n2')).toMatch(new RegExp(`<rect [^>]*stroke="${stroke}" stroke-width="${NOTE_LINE_CM}" data-note-line=""`))
+    expect(itemMarkup(html, 'n3')).toMatch(new RegExp(`<ellipse rx="75" ry="75"[^>]*stroke="${stroke}" stroke-width="${NOTE_LINE_CM}" data-note-line=""`))
+  })
+
+  it('gives an empty text note a dashed box that only the editor shows', () => {
+    const html = itemMarkup(render([note('text', 'n1', { text: '' })]), 'n1')
+    expect(html).toMatch(/stroke-dasharray="6 4" visibility="hidden" data-note-placeholder=""/)
+    expect(html).not.toContain('<text')
+  })
+
+  it('draws an arrow with a filled head and a line with none', () => {
+    const arrow = withEnds(note('arrow', 'a1'), { x: 0, y: 0 }, { x: 300, y: 0 })
+    const line = withEnds(note('line', 'l1'), { x: 0, y: 200 }, { x: 300, y: 200 })
+    const html = render([arrow, line])
+    const a = itemMarkup(html, 'a1')
+    expect(a).toMatch(/<line [^>]*stroke-linecap="round" data-note-line=""/)
+    expect(a).toMatch(/<polygon points="[^"]*150,0[^"]*"[^>]*data-arrow-head=""/)
+    expect(itemMarkup(html, 'l1')).not.toContain('data-arrow-head')
+  })
+
+  it('draws an attached arrow end where it meets its table, so it follows the table', () => {
+    const t = item('round', 't1', 1000, 0) as Table
+    const arrow = withEnds({ ...note('arrow', 'a1'), attachedTo: { start: null, end: 't1' } }, { x: 0, y: 0 }, { x: 500, y: 0 })
+    const html = itemMarkup(render([t, arrow]), 'a1')
+    // The stored end (500, 0) is only a fallback: the arrow is drawn to the chair ring of the table at 1000.
+    const meets = anchorPoint(t, { x: 0, y: 0 })
+    const tip = /<polygon points="([^"]+)"/.exec(html)![1].split(' ')[1].split(',').map(Number)
+    const transform = /transform="translate\(([-\d.]+) ([-\d.]+)\)"/.exec(html)!
+    expect(Number(transform[1]) + tip[0]).toBeCloseTo(meets.x, 2)
+    expect(Number(transform[2]) + tip[1]).toBeCloseTo(meets.y, 2)
+  })
+
+  it('leaves out the text of a note being typed into', () => {
+    const html = itemMarkup(render([note('sticky', 'n1', { text: 'Old words' })], { editing: 'n1' }), 'n1')
+    expect(html).toContain('data-editing="true"')
+    expect(html).not.toContain('Old words')
+    expect(html).toContain('data-note-author=""')
+  })
+
+  it('hides every note when the notes layer is off', () => {
+    const html = render([note('sticky', 'n1')], { hideNotes: true })
+    expect(html).toMatch(/data-layer="notes" display="none"/)
+  })
+
+  it('uses no page CSS inside notes, so print can draw them the same', () => {
+    const items: Item[] = [
+      note('sticky', 'n1', { text: 'One two three', done: true }),
+      note('text', 'n2', { text: '' }, 300),
+      note('box', 'n3', {}, 600),
+      note('circle', 'n4', {}, 900),
+      withEnds(note('arrow', 'n5'), { x: 0, y: 400 }, { x: 300, y: 400 }),
+      withEnds(note('line', 'n6'), { x: 0, y: 600 }, { x: 300, y: 600 }),
+    ]
+    const notes = render(items).split('data-layer="notes"')[1]
+    expect(notes).not.toMatch(/\sclass=/)
+    expect(notes).not.toMatch(/\sstyle=/)
+    expect(notes).not.toContain('var(')
+    expect(notes).not.toContain('currentColor')
+  })
+
+  it('keeps note lines at least 1 px on screen and shows placeholders through globals.css', () => {
+    const css = readFileSync(path.resolve(import.meta.dirname, '../../../app/globals.css'), 'utf8').replace(/\s+/g, ' ')
+    expect(css).toContain(
+      `[data-editor-viewport] [data-note-line] { stroke-width: max(${NOTE_LINE_CM}px, calc(${NOTE_LINE_MIN_SCREEN_PX}px / var(--zoom, 1))); }`,
+    )
+    expect(css).toContain('[data-editor-viewport] [data-note-placeholder] { visibility: visible; }')
   })
 })

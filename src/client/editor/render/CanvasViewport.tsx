@@ -38,9 +38,10 @@ function cursorFor(editor: EditorState): string {
   const u = editor.ui.getState()
   if (i.gesture === 'pan' || i.gesture === 'pinch') return 'grabbing'
   if (i.gesture === 'move') return 'move'
-  if (i.gesture === 'marquee') return 'crosshair'
+  if (i.gesture === 'marquee' || i.gesture === 'draw') return 'crosshair'
   if (i.spacePan || u.tool.kind === 'hand') return 'grab'
-  if (u.tool.kind === 'place') return 'crosshair'
+  // A note tool: the next click places a note, a drag draws one.
+  if (u.tool.kind === 'place' || u.tool.kind === 'note') return 'crosshair'
   if (u.hover) return 'pointer'
   return 'default'
 }

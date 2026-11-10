@@ -9,7 +9,7 @@
  * with --zoom, which the camera writes on the viewport at settle; the
  * attributes stay as the print widths.
  */
-import type { Fixture, Note } from '@/domain/canvas-schema'
+import type { Fixture } from '@/domain/canvas-schema'
 import { SEAT_EMPTY_COLOR, SEAT_TAKEN_COLOR } from '@/domain/seats'
 
 export const WORLD_FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
@@ -56,15 +56,6 @@ export const FIXTURE_COLORS: Record<Fixture['type'], { fill: string; stroke: str
   custom: { fill: '#f5f5f4', stroke: '#57534e' },
 }
 
-export const NOTE_COLORS: Record<Note['color'], string> = {
-  yellow: '#fef08a',
-  pink: '#fbcfe8',
-  blue: '#bfdbfe',
-  green: '#bbf7d0',
-  purple: '#e9d5ff',
-  grey: '#e5e7eb',
-}
-
 /** The venue layer: the template's fixed items, drawn quieter than the layout's own items. */
 export const VENUE = {
   wall: '#44403c',
@@ -77,12 +68,9 @@ export const VENUE = {
   gapCm: 24,
 } as const
 
-/** Lines, arrows and outlines of notes, a shade darker than the sticky colors. */
-export const NOTE_STROKES: Record<Note['color'], string> = {
-  yellow: '#a16207',
-  pink: '#be185d',
-  blue: '#1d4ed8',
-  green: '#15803d',
-  purple: '#7e22ce',
-  grey: '#4b5563',
-}
+/**
+ * Notes take their colors from NOTE_COLOR_PRESETS in src/domain/notes.ts.
+ * On screen, their outlines and lines keep at least this many px at every
+ * zoom (globals.css, [data-note-line]); print uses NOTE_LINE_CM.
+ */
+export const NOTE_LINE_MIN_SCREEN_PX = 1
