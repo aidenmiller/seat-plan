@@ -1,0 +1,85 @@
+{
+  "imageWidth": 1000,
+  "imageHeight": 700,
+  "draft": {
+    "walls": [
+      {
+        "id": "w1",
+        "segment_ids": [],
+        "points": [
+          { "x": 100, "y": 100 },
+          { "x": 900, "y": 100 },
+          { "x": 900, "y": 600 },
+          { "x": 540, "y": 600 }
+        ],
+        "thickness_px": 10,
+        "unsure": false,
+        "unsure_note": ""
+      },
+      {
+        "id": "w2",
+        "segment_ids": [],
+        "points": [
+          { "x": 450, "y": 600 },
+          { "x": 100, "y": 600 },
+          { "x": 100, "y": 100 }
+        ],
+        "thickness_px": 10,
+        "unsure": false,
+        "unsure_note": ""
+      }
+    ],
+    "rooms": [
+      {
+        "name": "Main Room",
+        "points": [
+          { "x": 100, "y": 100 },
+          { "x": 900, "y": 100 },
+          { "x": 900, "y": 600 },
+          { "x": 100, "y": 600 }
+        ],
+        "unsure": false,
+        "unsure_note": ""
+      }
+    ],
+    "zones": [],
+    "patio_edges": [],
+    "doors": [
+      {
+        "position": { "x": 495, "y": 600 },
+        "width_px": 90,
+        "rotation": 0,
+        "wall_id": "",
+        "segment_ids": [],
+        "swing": "left",
+        "unsure": false,
+        "unsure_note": ""
+      }
+    ],
+    "windows": [],
+    "columns": [
+      {
+        "center": { "x": 700, "y": 350 },
+        "width_px": 20,
+        "height_px": 20,
+        "rotation": 0,
+        "shape": "rect",
+        "unsure": true,
+        "unsure_note": "Could be a post or a planter"
+      }
+    ],
+    "stairs": [],
+    "bars": [],
+    "labels": [],
+    "dimension_labels": [
+      {
+        "text": "40'-0\"",
+        "value_cm": 1219.2,
+        "from": { "x": 100, "y": 60 },
+        "to": { "x": 900, "y": 60 },
+        "unsure": false,
+        "unsure_note": ""
+      }
+    ]
+  }
+}

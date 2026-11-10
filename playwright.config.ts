@@ -7,6 +7,11 @@
  *   desktop  1440 x 900
  *   phone    390 x 844 with touch, in Chromium (Safari's engine is not
  *            installable in this sandbox; real iPhones are checked by hand)
+ *
+ * The floor plan import talks to a stand-in Anthropic API that global setup
+ * starts on port 4210 (e2e/stand-in-anthropic.ts). The app gets its address
+ * and a dummy key explicitly, since the shell may hold its own
+ * ANTHROPIC_BASE_URL and the app must never reach the real API from a test.
  */
 import { randomBytes } from 'node:crypto'
 import { defineConfig, devices } from '@playwright/test'
@@ -15,12 +20,15 @@ const PORT = Number(process.env.E2E_PORT ?? 3100)
 // TEST_DB_SUFFIX (for example "_b") picks a second set of databases from scripts/create-test-dbs.ts.
 const SUFFIX = (process.env.TEST_DB_SUFFIX ?? '').replace(/[^a-z0-9_]/gi, '')
 const E2E_DATABASE_URL = process.env.E2E_DATABASE_URL ?? `postgres://seating:seating@127.0.0.1:5432/seating_e2e${SUFFIX}`
+const STAND_IN_PORT = Number(process.env.E2E_STAND_IN_PORT ?? 4210)
 
 // Set once in the runner; worker processes inherit these.
 process.env.E2E_SITE_PASSWORD ??= `e2e-${randomBytes(12).toString('hex')}`
 process.env.E2E_AUTH_SECRET ??= randomBytes(32).toString('base64')
 process.env.E2E_DATABASE_URL = E2E_DATABASE_URL
 process.env.E2E_BASE_URL = `http://localhost:${PORT}`
+process.env.E2E_STAND_IN_PORT = String(STAND_IN_PORT)
+process.env.E2E_STAND_IN_URL = `http://127.0.0.1:${STAND_IN_PORT}`
 
 export default defineConfig({
   testDir: 'e2e',
@@ -66,6 +74,10 @@ export default defineConfig({
       SITE_PASSWORD: process.env.E2E_SITE_PASSWORD,
       AUTH_SECRET: process.env.E2E_AUTH_SECRET,
       NEXT_TELEMETRY_DISABLED: '1',
+      // The stand-in Anthropic API, never the real one. The key is a dummy the stand-in accepts.
+      ANTHROPIC_BASE_URL: process.env.E2E_STAND_IN_URL,
+      ANTHROPIC_API_KEY: 'stand-in-dummy-key',
+      FLOORPLAN_MODEL: '',
     },
   },
 })

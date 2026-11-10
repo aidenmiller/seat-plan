@@ -9,7 +9,7 @@
  * Each item is a memoized component that reads only its own item by id, so
  * dragging one table re-renders only that table.
  */
-import { memo, type RefObject } from 'react'
+import { createContext, memo, useCallback, useContext, type RefObject } from 'react'
 import type { Canvas } from '@/domain/canvas-schema'
 import type { FixedItem } from '@/domain/venue-schema'
 import { worldTransform } from '../camera/camera-controller'
@@ -22,6 +22,12 @@ import { ShapeView } from './ShapeView'
 import { WORLD_FONT } from './style'
 import { TableView } from './TableView'
 import { VenueLayer } from './VenueLayer'
+import { crossedTables } from './wall-crossings'
+
+const NO_VENUE: readonly FixedItem[] = Object.freeze([])
+
+/** The layout's venue walls, for flagging the tables they run through. */
+const VenueItemsContext = createContext<readonly FixedItem[]>(NO_VENUE)
 
 const selectedSets = new WeakMap<readonly string[], Set<string>>()
 
@@ -38,10 +44,13 @@ function selectedSet(selection: readonly string[]): Set<string> {
 export const ItemView = memo(function ItemView({ id }: { id: string }) {
   const item = useItem(id)
   const selected = useUi((s) => selectedSet(s.selection).has(id))
+  const venue = useContext(VenueItemsContext)
+  // One set per canvas version, shared by every table (wall-crossings.ts).
+  const crossed = useCanvas(useCallback((canvas: Canvas) => crossedTables(canvas.items, venue).has(id), [venue, id]))
   if (!item) return null
   switch (item.kind) {
     case 'table':
-      return <TableView table={item} selected={selected} />
+      return <TableView table={item} selected={selected} crossed={crossed} />
     case 'fixture':
       return <FixtureView fixture={item} selected={selected} />
     case 'shape':
@@ -128,9 +137,11 @@ export const WorldSvg = memo(function WorldSvg({ worldRef, svgRef, venue }: Worl
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' }}
     >
       <g ref={worldRef} transform={worldTransform(camera.drawn())} fontFamily={WORLD_FONT} pointerEvents="none">
-        <VenueLayerSwitch items={venue} />
-        <FurnitureLayer />
-        <NotesLayer />
+        <VenueItemsContext.Provider value={venue}>
+          <VenueLayerSwitch items={venue} />
+          <FurnitureLayer />
+          <NotesLayer />
+        </VenueItemsContext.Provider>
       </g>
     </svg>
   )

@@ -26,7 +26,7 @@ import type { LayoutVersionInfo, SaveLayoutBody, SaveLayoutConflict, SaveLayoutO
 import { backoffDelay } from './backoff'
 import { defaultDraftStore } from './outbox'
 import { randomId } from './random-id'
-import type { DraftSnapshot, FlushOptions, LayoutSaver, LayoutSaverOptions, SaveStatus } from './types'
+import type { DraftSnapshot, DraftStore, FlushOptions, LayoutSaver, LayoutSaverOptions, SaveRequest, SaveStatus } from './types'
 
 /** Browsers refuse keepalive requests whose bodies add up to more than 64 KiB. */
 export const KEEPALIVE_LIMIT_BYTES = 60_000
@@ -40,10 +40,10 @@ export const MESSAGES = {
   unreadable: 'The server sent an answer the app could not read.',
 } as const
 
-type Flight = {
+type Flight<T> = {
   saveId: string
   baseVersion: number
-  canvas: Canvas
+  canvas: T
   editedBy: SaveLayoutBody['editedBy']
   /** The edit counter this snapshot carries. */
   seq: number
@@ -51,13 +51,26 @@ type Flight = {
 
 type Mode = 'active' | 'conflict' | 'failed' | 'disposed'
 
-export function createLayoutSaver(options: LayoutSaverOptions): LayoutSaver {
+/** The layout save body (PUT /api/layouts/:id). */
+function layoutBody(r: SaveRequest<Canvas>): SaveLayoutBody {
+  return { baseVersion: r.baseVersion, saveId: r.saveId, editedBy: r.editedBy, tabId: r.tabId, canvas: r.doc }
+}
+
+/**
+ * T is the saved document, a layout's canvas by default. Another document
+ * (the venue template's fixed items) passes `endpoint` and `body`, and its
+ * own `drafts` store.
+ */
+export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): LayoutSaver<T> {
   const { layoutId, tabId } = options
+  const endpoint = options.endpoint ?? `/api/layouts/${encodeURIComponent(layoutId)}`
+  const buildBody = options.body ?? (layoutBody as unknown as (r: SaveRequest<T>) => unknown)
+  const messages = { ...MESSAGES, ...options.messages }
   const debounceMs = options.debounceMs ?? 1000
   const maxWaitMs = Math.max(options.maxWaitMs ?? 5000, debounceMs)
   const requestTimeoutMs = options.requestTimeoutMs ?? 30_000
   const draftWaitMs = options.draftWaitMs ?? 2000
-  const drafts = options.drafts ?? defaultDraftStore()
+  const drafts = options.drafts ?? (defaultDraftStore() as unknown as DraftStore<T>)
   const random = options.random ?? Math.random
   const fetchFn: typeof fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
   const isOnline =
@@ -76,12 +89,12 @@ export function createLayoutSaver(options: LayoutSaverOptions): LayoutSaver {
   let failedReason: 'invalid' | 'gone' | 'signed-out' | null = null
   let baseVersion = options.baseVersion
   /** The newest canvas from noteEdit. */
-  let latest: Canvas | null = null
+  let latest: T | null = null
   /** Counts edits; confirmedSeq is the newest edit the server has. */
   let latestSeq = 0
   let confirmedSeq = 0
   /** The snapshot being sent, or waiting to be sent again. */
-  let flight: Flight | null = null
+  let flight: Flight<T> | null = null
   let requestActive = false
   let currentRequest: Promise<void> | null = null
   let activeAbort: AbortController | null = null
@@ -129,7 +142,7 @@ export function createLayoutSaver(options: LayoutSaverOptions): LayoutSaver {
   /** Queue a write of the current state. Writes run one after another, in call order. */
   function queueDraftWrite(): Promise<unknown> {
     if (!latest) return draftChain
-    const snapshot: DraftSnapshot = {
+    const snapshot: DraftSnapshot<T> = {
       layoutId,
       tabId,
       baseVersion,
@@ -221,7 +234,7 @@ export function createLayoutSaver(options: LayoutSaverOptions): LayoutSaver {
       clearDebounce()
     } else if (!isOnline()) {
       // Still offline when the retry came due: wait again (the 'online' event usually comes first).
-      retryLater(MESSAGES.network)
+      retryLater(messages.network)
       return Promise.resolve()
     }
     clearRetry()
@@ -233,14 +246,8 @@ export function createLayoutSaver(options: LayoutSaverOptions): LayoutSaver {
     return request
   }
 
-  async function attemptSend(f: Flight, opts: FlushOptions, gen: number): Promise<void> {
-    const body = JSON.stringify({
-      baseVersion: f.baseVersion,
-      saveId: f.saveId,
-      editedBy: f.editedBy,
-      tabId,
-      canvas: f.canvas,
-    } satisfies SaveLayoutBody)
+  async function attemptSend(f: Flight<T>, opts: FlushOptions, gen: number): Promise<void> {
+    const body = JSON.stringify(buildBody({ baseVersion: f.baseVersion, saveId: f.saveId, editedBy: f.editedBy, tabId, doc: f.canvas }))
     setStatus({ kind: 'saving' })
 
     // The draft names this snapshot and saveId before the request leaves, so a
@@ -262,7 +269,7 @@ export function createLayoutSaver(options: LayoutSaverOptions): LayoutSaver {
     let res: Response
     let data: unknown = null
     try {
-      res = await fetchFn(`/api/layouts/${encodeURIComponent(layoutId)}`, {
+      res = await fetchFn(endpoint, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body,
@@ -280,7 +287,7 @@ export function createLayoutSaver(options: LayoutSaverOptions): LayoutSaver {
       clearTimeout(timeout)
       if (gen !== generation) return
       endRequest()
-      retryLater(timedOut ? MESSAGES.timeout : MESSAGES.network)
+      retryLater(timedOut ? messages.timeout : messages.network)
       return
     }
     clearTimeout(timeout)
@@ -294,28 +301,28 @@ export function createLayoutSaver(options: LayoutSaverOptions): LayoutSaver {
     activeAbort = null
   }
 
-  function handleReply(f: Flight, httpStatus: number, data: unknown) {
+  function handleReply(f: Flight<T>, httpStatus: number, data: unknown) {
     if (httpStatus >= 200 && httpStatus < 300) {
       const ok = data as Partial<SaveLayoutOk> | null
       if (!ok || typeof ok.version !== 'number' || (ok.status !== 'saved' && ok.status !== 'already-saved')) {
-        retryLater(MESSAGES.unreadable)
+        retryLater(messages.unreadable)
         return
       }
       onSaved(f, ok as SaveLayoutOk)
       return
     }
     if (httpStatus === 409) return onConflict(data)
-    if (httpStatus === 401 || httpStatus === 403) return stopWithFailure('signed-out', MESSAGES.signedOut)
-    if (httpStatus === 410 || httpStatus === 404) return stopWithFailure('gone', MESSAGES.gone)
+    if (httpStatus === 401 || httpStatus === 403) return stopWithFailure('signed-out', messages.signedOut)
+    if (httpStatus === 410 || httpStatus === 404) return stopWithFailure('gone', messages.gone)
     if (httpStatus === 408 || httpStatus === 429 || httpStatus >= 500) {
       retryLater(`The server answered ${httpStatus}.`)
       return
     }
     // 400, 413, 422 and the like: sending the same body again cannot help.
-    stopWithFailure('invalid', MESSAGES.invalid)
+    stopWithFailure('invalid', messages.invalid)
   }
 
-  function onSaved(f: Flight, ok: SaveLayoutOk) {
+  function onSaved(f: Flight<T>, ok: SaveLayoutOk) {
     // For already-saved this may be older than the server's version: the next
     // save then meets the newer one as a 409, as it should.
     baseVersion = ok.version

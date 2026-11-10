@@ -33,7 +33,22 @@ import type {
   UpdateGuestReply,
   UpdateLayoutBody,
   UpdateWeddingBody,
+  AcceptImportBody,
+  CreateVenueBody,
+  DuplicateVenueBody,
+  FloorplanImportBody,
+  FloorplanImportLine,
+  RenameVenueBody,
+  RestoreRevisionBody,
+  SaveVenueBody,
+  SaveVenueConflict,
+  SaveVenueOk,
+  VenueDeleteSummary,
+  VenueDetail,
+  VenueImageInfo,
+  VenueRevisionList,
   VenueSummary,
+  VenueWallCheck,
   WeddingDeleteSummary,
   WeddingSummary,
 } from '@/shared/api'
@@ -59,8 +74,8 @@ function isApiError(value: unknown): value is ApiError {
 /** A plain sentence for a failed request, for showing next to the button that sent it. */
 export function errorMessage(error: unknown): string {
   if (!(error instanceof ApiRequestError)) return 'Something went wrong. Try again.'
-  // 409 and 413 replies carry a plain sentence to show (src/shared/api.ts).
-  if ((error.status === 409 || error.status === 413) && isApiError(error.body) && error.body.message) {
+  // 409, 413, 415 and 503 replies carry a plain sentence to show (src/shared/api.ts).
+  if ([409, 413, 415, 503].includes(error.status) && isApiError(error.body) && error.body.message) {
     return error.body.message
   }
   switch (error.status) {
@@ -164,6 +179,148 @@ export const layoutVersion = (id: string) => request<LayoutVersionInfo>('GET', `
 // ---------- Venues ----------
 
 export const listVenues = () => request<VenueSummary[]>('GET', '/api/venues')
+
+/** 201 VenueDetail: a new, empty template. Send an id so a retry gives the same template back. */
+export const createVenue = (body: CreateVenueBody) => request<VenueDetail>('POST', '/api/venues', body)
+
+export const getVenue = (id: string) => request<VenueDetail>('GET', `/api/venues/${enc(id)}`)
+
+/** The template editor's save. 409 SaveVenueConflict when someone saved since baseVersion; 410 when deleted. */
+export const saveVenue = (id: string, body: SaveVenueBody) => request<SaveVenueOk>('PUT', `/api/venues/${enc(id)}`, body)
+
+/** Rename. Leaves the version alone. */
+export const renameVenue = (id: string, body: RenameVenueBody) => request<VenueDetail>('PATCH', `/api/venues/${enc(id)}`, body)
+
+/** 409 VenueInUse (with the layouts) while live layouts use the template. */
+export const deleteVenue = (id: string) => request<{ ok: true }>('DELETE', `/api/venues/${enc(id)}`, { confirm: 'delete' })
+
+export const venueDeleteSummary = (id: string) => request<VenueDeleteSummary>('GET', `/api/venues/${enc(id)}/delete-summary`)
+
+/** A copy with the same fixed items, reference and reference image. */
+export const duplicateVenue = (id: string, body: DuplicateVenueBody) =>
+  request<VenueDetail>('POST', `/api/venues/${enc(id)}/duplicate`, body)
+
+export const listVenueRevisions = (id: string) => request<VenueRevisionList>('GET', `/api/venues/${enc(id)}/revisions`)
+
+/** Puts a revision back as a new save ("Undo import" restores VenueRevisionList.undoImportRevisionId). */
+export const restoreVenueRevision = (id: string, revisionId: string, body: RestoreRevisionBody) =>
+  request<SaveVenueOk>('POST', `/api/venues/${enc(id)}/revisions/${enc(revisionId)}/restore`, body)
+
+/**
+ * The 409 body of a venue save, accepted import or restore: someone saved the
+ * template since the baseVersion sent. Null for any other error.
+ */
+export function venueConflictOf(error: unknown): SaveVenueConflict | null {
+  if (!(error instanceof ApiRequestError) || error.status !== 409) return null
+  const body = error.body as Partial<SaveVenueConflict> | null
+  if (!body || typeof body !== 'object' || body.error !== 'conflict' || typeof body.version !== 'number') return null
+  return { ...body, editedBy: body.editedBy === 'Noa' || body.editedBy === 'Aiden' ? body.editedBy : null } as SaveVenueConflict
+}
+
+/** Saves an import draft into the template in one go. Answers like saveVenue. */
+export const acceptVenueImport = (id: string, body: AcceptImportBody) =>
+  request<SaveVenueOk>('POST', `/api/venues/${enc(id)}/accept-import`, body)
+
+/** Every live layout using the template, with the tables a saved wall runs through. */
+export const venueWallCheck = (id: string) => request<VenueWallCheck>('GET', `/api/venues/${enc(id)}/wall-check`)
+
+/** Where a stored image is served (behind the site cookie). */
+export const venueImageUrl = (id: string, imageId: string) => `/api/venues/${enc(id)}/images/${enc(imageId)}`
+
+/**
+ * Uploads a PNG or JPEG (at most MAX_VENUE_IMAGE_BYTES) as the raw body. The
+ * template does not use it until Accept. 413 too large, 415 not a PNG or JPEG.
+ */
+export async function uploadVenueImage(id: string, image: Blob): Promise<VenueImageInfo> {
+  const path = `/api/venues/${enc(id)}/images`
+  let res: Response
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': image.type || 'application/octet-stream' },
+      body: image,
+      cache: 'no-store',
+      credentials: 'same-origin',
+    })
+  } catch {
+    throw new ApiRequestError(0, null, 'Could not reach the server.')
+  }
+  const data: unknown = await res.json().catch(() => null)
+  if (!res.ok) {
+    const code = isApiError(data) ? data.error : `HTTP ${res.status}`
+    throw new ApiRequestError(res.status, data, `POST ${path} failed: ${code}`)
+  }
+  return data as VenueImageInfo
+}
+
+export type FloorplanImportResult = Extract<FloorplanImportLine, { type: 'draft' | 'error' }>
+
+/**
+ * Runs the AI import on an uploaded image. Calls onProgress for each progress
+ * line and resolves with the final draft or error line. Throws an
+ * ApiRequestError when the server refuses before starting (404, 422, 503
+ * not_configured) or the connection drops; an aborted signal rejects too.
+ */
+export async function runFloorplanImport(
+  id: string,
+  body: FloorplanImportBody,
+  options: { signal?: AbortSignal; onProgress?: (line: Extract<FloorplanImportLine, { type: 'progress' }>) => void } = {},
+): Promise<FloorplanImportResult> {
+  const path = `/api/venues/${enc(id)}/import`
+  let res: Response
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+      credentials: 'same-origin',
+      signal: options.signal,
+    })
+  } catch (err) {
+    if (options.signal?.aborted) throw err
+    throw new ApiRequestError(0, null, 'Could not reach the server.')
+  }
+  if (!res.ok || !res.body) {
+    const data: unknown = await res.json().catch(() => null)
+    const code = isApiError(data) ? data.error : `HTTP ${res.status}`
+    throw new ApiRequestError(res.status, data, `POST ${path} failed: ${code}`)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffered = ''
+  const take = (line: string): FloorplanImportResult | null => {
+    if (!line.trim()) return null
+    const parsed = JSON.parse(line) as FloorplanImportLine
+    if (parsed.type === 'progress') {
+      options.onProgress?.(parsed)
+      return null
+    }
+    return parsed
+  }
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      buffered += decoder.decode(value, { stream: !done })
+      let newline = buffered.indexOf('\n')
+      while (newline >= 0) {
+        const final = take(buffered.slice(0, newline))
+        buffered = buffered.slice(newline + 1)
+        if (final) return final
+        newline = buffered.indexOf('\n')
+      }
+      if (done) break
+    }
+    const final = take(buffered)
+    if (final) return final
+  } catch (err) {
+    if (options.signal?.aborted) throw err
+    throw new ApiRequestError(0, null, 'The connection dropped during the import.')
+  } finally {
+    reader.releaseLock()
+  }
+  throw new ApiRequestError(0, null, 'The connection dropped during the import.')
+}
 
 // ---------- Guests ----------
 

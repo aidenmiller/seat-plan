@@ -169,6 +169,19 @@ describe('the DOM adapter', () => {
     expect(overlayTarget({ target: el({ 'data-handle': 'zz', 'data-item-id': 't1' }, '[data-handle]') as unknown as EventTarget }, root)).toBeNull()
   })
 
+  it('finds a wall point by data-vertex (the template editor)', () => {
+    const el = (attrs: Record<string, string>) => ({
+      closest: (sel: string) => (sel === '[data-vertex]' ? { closest: () => null, getAttribute: (k: string) => attrs[k] ?? null } : null),
+    })
+    const root = { contains: () => true }
+    expect(overlayTarget({ target: el({ 'data-vertex': '2', 'data-item-id': 'w1' }) as unknown as EventTarget }, root)).toEqual({
+      kind: 'vertex',
+      itemId: 'w1',
+      index: 2,
+    })
+    expect(overlayTarget({ target: el({ 'data-vertex': 'x', 'data-item-id': 'w1' }) as unknown as EventTarget }, root)).toBeNull()
+  })
+
   it('picks the nearest handle when the touch targets of neighboring handles overlap', () => {
     // A thin table at a low zoom: e and se sit 10 px apart, so se's 44 px target covers e.
     const handle = (name: string, x: number, y: number) => ({

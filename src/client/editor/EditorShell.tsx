@@ -31,11 +31,14 @@ import { AuthorSwitch } from '@/client/ui/AuthorSwitch'
 import { BottomSheet, type SheetSnap } from '@/client/ui/BottomSheet'
 import { ContextMenu } from '@/client/ui/ContextMenu'
 import { InlineName } from '@/client/ui/InlineName'
+import { secondaryButton } from '@/client/ui/styles'
 import type { Item } from '@/domain/canvas-schema'
+import type { FixedItem } from '@/domain/venue-schema'
 import { DEFAULT_MIN_GAP_CM } from '@/domain/spacing'
 import type { LengthUnit } from '@/domain/units'
 import { copyLayoutName } from '@/domain/wording'
 import type { Group, Guest, LayoutDetail } from '@/shared/api'
+import { VenuePickerDialog } from '@/client/venues/VenuePicker'
 import { ConflictDialog } from './ConflictDialog'
 import { createDocStore, type DocStore } from './doc-store'
 import type { ContextMenuRequest, SeatRequest } from './input/controller'
@@ -70,10 +73,12 @@ type Bridge = {
   wedding: EditorWedding
   session: LayoutSession | null
   events: EditorEvents
+  /** The venue's fixed items under the layout (none on a blank canvas or after the venue was deleted). */
+  venue: readonly FixedItem[]
 }
 
-function createBridge(wedding: EditorWedding) {
-  let state: Bridge = { canEdit: false, wedding, session: null, events: {} }
+function createBridge(wedding: EditorWedding, venue: readonly FixedItem[]) {
+  let state: Bridge = { canEdit: false, wedding, session: null, events: {}, venue }
   return {
     get: () => state,
     set(patch: Partial<Bridge>) {
@@ -112,6 +117,19 @@ export function canvasInsets(phone: boolean): ScreenInsets {
 const PHONE_CANVAS_INSETS = canvasInsets(true)
 const DESKTOP_CANVAS_INSETS = canvasInsets(false)
 
+/** The layout's venue as the editor shows it; changes when another venue is picked. */
+type LayoutVenue = Pick<LayoutDetail, 'venueTemplateId' | 'venueName' | 'venueDeleted' | 'template'>
+
+function layoutVenue(layout: LayoutDetail): LayoutVenue {
+  return { venueTemplateId: layout.venueTemplateId, venueName: layout.venueName, venueDeleted: layout.venueDeleted, template: layout.template }
+}
+
+const NO_FIXED_ITEMS: readonly FixedItem[] = []
+
+function venueItemsOf(v: LayoutVenue): readonly FixedItem[] {
+  return v.template && !v.template.deleted ? v.template.fixedItems : NO_FIXED_ITEMS
+}
+
 const NO_GUESTS: Guest[] = []
 const NO_GROUPS: Group[] = []
 
@@ -132,6 +150,8 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   const backHref = `/w/${initial.weddingId}/layouts`
   const [store] = useState<DocStore>(() => createDocStore(layout.canvas))
   const [name, setName] = useState(layout.name)
+  const [venueInfo, setVenueInfo] = useState(() => layoutVenue(layout))
+  const [pickingVenue, setPickingVenue] = useState(false)
   const [saver, setSaver] = useState<LayoutSaver | null>(null)
   const [status, setStatus] = useState<SaveStatus | null>(null)
   const [conflict, setConflict] = useState<ConflictInfo | null>(null)
@@ -153,9 +173,10 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   const guestList = useEditorGuestList(layout.weddingId, guests, groups)
 
   const canEdit = saver !== null && author !== null && conflict === null && !leaving
-  const [bridge] = useState(() => createBridge(wedding))
+  const venue = useMemo(() => venueItemsOf(venueInfo), [venueInfo])
+  const [bridge] = useState(() => createBridge(wedding, venue))
   useEffect(() => {
-    bridge.set({ canEdit, wedding })
+    bridge.set({ canEdit, wedding, venue })
   })
 
   const [editor] = useState(() =>
@@ -168,7 +189,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
         const w = bridge.get().wedding
         return { unit: w.unit, minGapCm: w.minGapCm }
       },
-      venueItems: () => (initial.template && !initial.template.deleted ? initial.template.fixedItems : []),
+      venueItems: () => bridge.get().venue,
       events: {
         onContextMenu: (request) => bridge.get().events.onContextMenu?.(request),
         onTap: (tap) => bridge.get().events.onTap?.(tap),
@@ -374,13 +395,14 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
-  const venue = useMemo(() => (initial.template && !initial.template.deleted ? initial.template.fixedItems : []), [initial.template])
-  const blank = initial.venueTemplateId === null
-  const venueLabel = blank ? 'Blank canvas' : initial.venueDeleted ? `${initial.venueName ?? 'Venue'} (deleted)` : (initial.venueName ?? 'Venue')
+  const blank = venueInfo.venueTemplateId === null
+  const venueLabel = blank ? 'Blank canvas' : venueInfo.venueDeleted ? `${venueInfo.venueName ?? 'Venue'} (deleted)` : (venueInfo.venueName ?? 'Venue')
+  const onPickVenue = useCallback(() => setPickingVenue(true), [])
   const editorUi = useMemo<EditorUi>(
-    () => ({ unit: wedding.unit, phone, layoutName: name, venueLabel, onSeatRequest, showDetails }),
-    [wedding.unit, phone, name, venueLabel, onSeatRequest, showDetails],
+    () => ({ unit: wedding.unit, phone, layoutName: name, venueLabel, onSeatRequest, showDetails, venue, onPickVenue }),
+    [wedding.unit, phone, name, venueLabel, onSeatRequest, showDetails, venue, onPickVenue],
   )
+  const venueGone = !blank && (venueInfo.venueDeleted || venueInfo.template?.deleted === true)
   const dropTarget = useCallback(() => canvasAreaRef.current?.querySelector<HTMLElement>('[data-editor-viewport]') ?? null, [])
   const hint = saver !== null && author === null ? 'Pick Noa or Aiden to start editing.' : null
   const panelIds = usePanelIds()
@@ -430,6 +452,20 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
               onDownload={download}
             />
             <NotStoredBanner message={notStoredAlert(status, storedLocally)} />
+            {venueGone && (
+              <div
+                role="status"
+                className="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-1 text-sm text-amber-900"
+                data-testid="venue-deleted-notice"
+              >
+                <span className="min-w-0 flex-1 basis-48 py-2">
+                  The venue {venueInfo.venueName ? `“${venueInfo.venueName}” ` : ''}was deleted, so its walls and rooms are not shown on this layout.
+                </span>
+                <button type="button" className={secondaryButton} onClick={onPickVenue} data-testid="venue-deleted-pick">
+                  Pick another venue
+                </button>
+              </div>
+            )}
 
             <div className="relative flex min-h-0 flex-1 overflow-hidden">
               {!phone && mode === 'edit' && (
@@ -485,6 +521,17 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
             </div>
 
             <ConflictDialog conflict={conflict} me={author} onLoadTheirs={loadTheirs} onKeepMine={keepMine} />
+            <VenuePickerDialog
+              open={pickingVenue}
+              layoutId={initial.id}
+              current={venueInfo.venueTemplateId}
+              onCancel={() => setPickingVenue(false)}
+              onChanged={(updated) => {
+                setVenueInfo(layoutVenue(updated))
+                setPickingVenue(false)
+                setNotice(updated.venueTemplateId ? `This layout now uses “${updated.venueName ?? 'the venue'}”.` : 'This layout is now a blank canvas.')
+              }}
+            />
             <UnseatDialog ask={unseat} canvas={store.getState().canvas} onClose={() => setUnseat(null)} />
             <ContextMenu at={menu?.at ?? null} items={menu?.menu.items ?? []} label={menu?.menu.label ?? 'Menu'} onClose={() => setMenu(null)} testId="canvas-menu" />
           </div>

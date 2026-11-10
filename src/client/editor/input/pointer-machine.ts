@@ -14,6 +14,7 @@
  *    a seated guest starts a guest drag (milestone 5). Drag on empty canvas
  *    or a locked item draws a selection box.
  *  - Middle button, Space+drag and the hand tool pan.
+ *  - A vertex (a wall's point, in the template editor) drags like a handle.
  *
  * Touch (PLAN change 12):
  *  - Taps work as clicks; with the phone Select switch on, taps toggle.
@@ -192,7 +193,7 @@ function dragInfo(press: Press, drag: DragKind, at: Point, shift: boolean, alt: 
 export function chooseDrag(press: Press, ctx: MachineContext): DragKind | 'pan' {
   const t = press.target
   if (ctx.mode !== 'edit' || ctx.tool === 'hand') return 'pan'
-  if (t.kind === 'handle') return 'resize'
+  if (t.kind === 'handle' || t.kind === 'vertex') return 'resize'
   if (t.kind === 'rotate') return 'rotate'
   const touch = press.pointer === 'touch'
   if ((t.kind === 'item' || t.kind === 'seat') && !t.locked) {
@@ -210,7 +211,7 @@ function clickIntents(press: Press, ctx: MachineContext): Intent[] {
   const t = press.target
   const edit = ctx.mode === 'edit'
   const tap: Intent = { type: 'tap', target: t, at: press.start, pointer: press.pointer }
-  if (t.kind === 'handle' || t.kind === 'rotate') return []
+  if (t.kind === 'handle' || t.kind === 'rotate' || t.kind === 'vertex') return []
   if (edit && ctx.tool === 'place') return [{ type: 'place', at: press.start }]
   const toggle = press.shift || (press.pointer === 'touch' && ctx.phoneSelect && edit)
   if (t.kind === 'seat' && t.guestId !== null) return [{ type: 'selectGuest', itemId: t.itemId, seatIndex: t.seatIndex, toggle }, tap]

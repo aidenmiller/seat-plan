@@ -219,6 +219,8 @@ export const venueTemplates = pgTable(
       .default('hand'),
     version: integer().notNull().default(1),
     lastSaveId: uuid(),
+    /** The newest saves that landed (newest first, up to 20), as on layouts: a retried save after a lost reply answers "already saved". */
+    recentSaves: jsonb().$type<RecentSave[]>().notNull().default([]),
     editedBy: text({ enum: ['Noa', 'Aiden'] }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -226,6 +228,7 @@ export const venueTemplates = pgTable(
   },
   (t) => [
     check('venue_templates_name_not_blank', sql`length(btrim(${t.name})) > 0`),
+    check('venue_templates_recent_saves_array', sql`jsonb_typeof(${t.recentSaves}) = 'array'`),
     check('venue_templates_fixed_items_array', sql`jsonb_typeof(${t.fixedItems}) = 'array'`),
     check('venue_templates_imported_by_valid', sql`${t.importedBy} in ('hand', 'pdf vectors', 'ai')`),
     check('venue_templates_version_positive', sql`${t.version} >= 1`),

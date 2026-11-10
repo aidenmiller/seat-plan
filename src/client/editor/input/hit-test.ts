@@ -16,10 +16,13 @@ import type { LayerName, Layers } from '../state/device-view'
 
 export type Target =
   | { kind: 'empty' }
-  | { kind: 'item'; itemId: string; itemKind: Item['kind']; locked: boolean }
+  /** itemKind 'fixed': a venue template's fixed item, in the template editor. */
+  | { kind: 'item'; itemId: string; itemKind: Item['kind'] | 'fixed'; locked: boolean }
   | { kind: 'seat'; itemId: string; seatIndex: number; guestId: string | null; locked: boolean }
   | { kind: 'handle'; itemId: string; handle: Handle }
   | { kind: 'rotate'; itemId: string }
+  /** A point of a wall, room, zone or patio edge (template editor only); dragged like a handle. */
+  | { kind: 'vertex'; itemId: string; index: number }
 
 export const EMPTY_TARGET: Target = Object.freeze({ kind: 'empty' })
 

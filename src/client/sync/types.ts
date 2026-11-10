@@ -29,21 +29,45 @@ export type SaveStatus =
    */
   | { kind: 'failed'; reason: 'invalid' | 'gone' | 'signed-out'; message: string }
 
-export type DraftSnapshot = {
+/**
+ * T is the document the engine saves: a layout's canvas by default. The venue
+ * template editor saves its fixed items through the same engine (endpoint and
+ * body options), and names its own document type.
+ */
+export type DraftSnapshot<T = Canvas> = {
   layoutId: string
   tabId: string
   /** The version the latest local canvas starts from. */
   baseVersion: number
-  canvas: Canvas
+  canvas: T
   editedBy: Author
   /** The snapshot and save id currently sent (or about to be resent), if any. */
-  inFlight: { saveId: string; baseVersion: number; canvas: Canvas } | null
+  inFlight: { saveId: string; baseVersion: number; canvas: T } | null
   /** True while the canvas has edits the server has not confirmed. */
   dirty: boolean
   updatedAt: string
 }
 
-export type LayoutSaverOptions = {
+/** What one save request carries, for building its body. */
+export type SaveRequest<T = Canvas> = {
+  baseVersion: number
+  saveId: string
+  editedBy: Author
+  tabId: string
+  doc: T
+}
+
+/** Sentences the engine reports in statuses; the template editor names its own document. */
+export type SaverMessages = {
+  gone: string
+  invalid: string
+  signedOut: string
+  network: string
+  timeout: string
+  unreadable: string
+}
+
+export type LayoutSaverOptions<T = Canvas> = {
   layoutId: string
   tabId: string
   /** The server's version and last save id when the editor loaded the layout. */
@@ -58,7 +82,7 @@ export type LayoutSaverOptions = {
   debounceMs?: number
   maxWaitMs?: number
   /** Where drafts live. Defaults to the IndexedDB outbox (outbox.ts). */
-  drafts?: DraftStore
+  drafts?: DraftStore<T>
   /** Jitter source for retry delays. Defaults to Math.random. */
   random?: () => number
   /** Defaults to navigator.onLine (true when unknown). */
@@ -71,15 +95,21 @@ export type LayoutSaverOptions = {
   requestTimeoutMs?: number
   /** Longest wait for the draft write before sending anyway. Default 2,000 ms. */
   draftWaitMs?: number
+  /** Where saves go with PUT. Default: /api/layouts/<layoutId>. */
+  endpoint?: string
+  /** The JSON body of a save. Default: the layout body (SaveLayoutBody). */
+  body?: (request: SaveRequest<T>) => unknown
+  /** Replaces some of the engine's sentences. */
+  messages?: Partial<SaverMessages>
 }
 
 /** The IndexedDB outbox, as the save engine sees it (outbox.ts). Errors are reported, never thrown. */
-export interface DraftStore {
+export interface DraftStore<T = Canvas> {
   /** Resolves false when the browser would not store it (private mode, full disk). */
-  putDraft(draft: DraftSnapshot): Promise<boolean>
-  getDraft(layoutId: string, tabId: string): Promise<DraftSnapshot | null>
+  putDraft(draft: DraftSnapshot<T>): Promise<boolean>
+  getDraft(layoutId: string, tabId: string): Promise<DraftSnapshot<T> | null>
   /** Every tab's draft of this layout, newest first. */
-  listDrafts(layoutId: string): Promise<DraftSnapshot[]>
+  listDrafts(layoutId: string): Promise<DraftSnapshot<T>[]>
   deleteDraft(layoutId: string, tabId: string): Promise<boolean>
 }
 
@@ -92,9 +122,9 @@ export type FlushOptions = {
   keepalive?: boolean
 }
 
-export interface LayoutSaver {
+export interface LayoutSaver<T = Canvas> {
   /** Call after every finished edit with the whole canvas. Writes the draft to IndexedDB at once. */
-  noteEdit(canvas: Canvas): void
+  noteEdit(canvas: T): void
   /** Send now (used on page hide). Resolves when the attempt settles. */
   flush(options?: FlushOptions): Promise<void>
   /** True while there are edits the server has not confirmed (drives the beforeunload warning). */

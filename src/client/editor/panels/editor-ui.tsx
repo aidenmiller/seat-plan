@@ -7,6 +7,7 @@
  */
 import { createContext, useContext, useSyncExternalStore } from 'react'
 import type { LengthUnit } from '@/domain/units'
+import type { FixedItem } from '@/domain/venue-schema'
 import type { SeatRequest } from '../input/controller'
 import { isPhoneLike, readDeviceTraits } from '../state/mode'
 
@@ -22,6 +23,10 @@ export type EditorUi = {
   onSeatRequest(tableId: string, request: SeatRequest): void
   /** Phones: raise the sheet on the Properties tab. Desktops: nothing to do. */
   showDetails(): void
+  /** The venue template's fixed items (none on a blank canvas), for the tables a wall runs through. */
+  venue?: readonly FixedItem[]
+  /** Opens the venue picker (another venue template, or Blank canvas). Absent where the venue cannot change. */
+  onPickVenue?: () => void
 }
 
 const EditorUiContext = createContext<EditorUi | null>(null)
