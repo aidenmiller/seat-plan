@@ -14,7 +14,10 @@
  *    a seated guest starts a guest drag, on a locked table too (DECISIONS
  *    56: seats on locked items still change). Drag on empty canvas or a
  *    locked item draws a selection box.
- *  - Middle button, Space+drag and the hand tool pan.
+ *  - Middle button, Space+drag and the hand tool pan. So does a right press
+ *    that moves more than 4 px; one that does not is left to the browser's
+ *    contextmenu event, which opens the menu (the DOM adapter skips that
+ *    event after a right drag, since Windows sends it on release).
  *  - A vertex (a wall's point in the template editor, an arrow's end in a
  *    layout) drags like a handle.
  *  - With a note tool, a click places the note and a drag anywhere draws it
@@ -125,6 +128,8 @@ export type Press = {
   alt: boolean
   target: Target
   longPressed: boolean
+  /** The right mouse button: a drag pans, a release does nothing (the menu is the contextmenu event's). */
+  right?: boolean
 }
 
 export type Phase =
@@ -206,7 +211,7 @@ function dragInfo(press: Press, drag: DragKind, at: Point, shift: boolean, alt: 
 /** What a press that turned into a drag does. */
 export function chooseDrag(press: Press, ctx: MachineContext): DragKind | 'pan' {
   const t = press.target
-  if (ctx.mode !== 'edit' || ctx.tool === 'hand') return 'pan'
+  if (press.right || ctx.mode !== 'edit' || ctx.tool === 'hand') return 'pan'
   if (t.kind === 'handle' || t.kind === 'vertex') return 'resize'
   if (t.kind === 'rotate') return 'rotate'
   if (ctx.tool === 'note') return 'draw'
@@ -298,8 +303,6 @@ function onDown(state: MachineState, input: Extract<PointerInput, { type: 'down'
     return next(startPinch(pointers, phase.press.id, input.id), intents)
   }
 
-  // Right button: the browser's contextmenu event opens the menu (the DOM adapter sends it).
-  if (input.button === 2) return next({ kind: 'draining' })
   const press: Press = {
     id: input.id,
     pointer: input.pointer,
@@ -311,6 +314,8 @@ function onDown(state: MachineState, input: Extract<PointerInput, { type: 'down'
     target: input.target,
     longPressed: false,
   }
+  // Right button: a drag pans; the browser's contextmenu event opens the menu (the DOM adapter sends it).
+  if (input.button === 2) return next({ kind: 'pressed', press: { ...press, right: true } })
   if (input.button === 1 || (input.button === 0 && (ctx.spaceHeld || ctx.tool === 'hand'))) {
     return next({ kind: 'panning', press, last: input.at }, [{ type: 'panStart', pointer: input.pointer }])
   }
@@ -364,6 +369,7 @@ function onUp(state: MachineState, input: Extract<PointerInput, { type: 'up' }>,
   switch (phase.kind) {
     case 'pressed': {
       if (phase.press.id !== input.id) return { state: { phase, pointers }, intents: [] }
+      if (phase.press.right) return done([])
       if (phase.press.longPressed) {
         const t = phase.press.target
         return done([...menuSelection(t, ctx), { type: 'contextMenu', at: phase.press.start, target: t, pointer: phase.press.pointer }])

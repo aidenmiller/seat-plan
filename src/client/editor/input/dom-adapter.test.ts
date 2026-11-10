@@ -121,6 +121,48 @@ describe('the DOM adapter', () => {
     expect(controller.contextMenu).not.toHaveBeenCalled()
   })
 
+  it('skips the contextmenu that ends a right drag (Windows sends it on release, wherever the pointer is), once', () => {
+    const { viewport, controller, win } = setup()
+    viewport.dispatchEvent(pointer('pointerdown', { button: 2, buttons: 2 }))
+    viewport.dispatchEvent(pointer('pointermove', { clientX: 160, buttons: 2 }))
+    viewport.dispatchEvent(pointer('pointerup', { clientX: 160, button: 2, buttons: 0 }))
+    // In a page the window sees it first, from the canvas or from a panel the drag ended over, and stops it.
+    const release = event('contextmenu', { clientX: 160, clientY: 120 })
+    win.dispatchEvent(release)
+    expect(release.defaultPrevented).toBe(true)
+    expect(controller.contextMenu).not.toHaveBeenCalled()
+    // The next one (the keyboard's menu key, say) is a menu again.
+    const next = event('contextmenu', { clientX: 160, clientY: 120 })
+    win.dispatchEvent(next)
+    expect(next.defaultPrevented).toBe(false)
+    viewport.dispatchEvent(next)
+    expect(controller.contextMenu).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens the menu after a right click that moved 4 px or less', () => {
+    const { viewport, controller, win } = setup()
+    viewport.dispatchEvent(pointer('pointerdown', { button: 2, buttons: 2 }))
+    viewport.dispatchEvent(pointer('pointermove', { clientX: 113, buttons: 2 }))
+    viewport.dispatchEvent(pointer('pointerup', { clientX: 113, button: 2, buttons: 0 }))
+    const release = event('contextmenu', { clientX: 113, clientY: 120 })
+    win.dispatchEvent(release)
+    expect(release.defaultPrevented).toBe(false)
+    viewport.dispatchEvent(release)
+    expect(controller.contextMenu).toHaveBeenCalledWith({ x: 103, y: 100 }, { kind: 'empty' }, 'mouse')
+  })
+
+  it('skips nothing after a right press whose menu opened while the button was down (macOS and Linux)', () => {
+    const { viewport, controller, win } = setup()
+    viewport.dispatchEvent(pointer('pointerdown', { button: 2, buttons: 2 }))
+    viewport.dispatchEvent(event('contextmenu', { clientX: 110, clientY: 120 }))
+    expect(controller.contextMenu).toHaveBeenCalledTimes(1)
+    viewport.dispatchEvent(pointer('pointermove', { clientX: 160, buttons: 2 }))
+    viewport.dispatchEvent(pointer('pointerup', { clientX: 160, button: 2, buttons: 0 }))
+    const again = event('contextmenu', { clientX: 160, clientY: 120 })
+    win.dispatchEvent(again)
+    expect(again.defaultPrevented).toBe(false)
+  })
+
   it('prevents the browser use of handled keys, and leaves text fields alone', () => {
     const { win, controller } = setup()
     const key = event('keydown', { key: 'd', metaKey: true, ctrlKey: false, shiftKey: false, altKey: false })

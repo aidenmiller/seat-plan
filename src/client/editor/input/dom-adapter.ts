@@ -14,7 +14,9 @@
  *    pinch, only where GestureEvent exists and not on iPhone or iPad, whose
  *    pinches come as touch pointers;
  *  - contextmenu (right click) from a mouse; a touch's long press is the
- *    pointer machine's;
+ *    pointer machine's. A right drag pans, and Windows sends contextmenu when
+ *    its button lifts, wherever the pointer is then: the window skips that
+ *    one, so neither the canvas menu nor the browser's opens;
  *  - keydown and keyup on the window, skipped while a text field has focus
  *    (except Esc and Cmd/Ctrl+Enter in a note's text box, data-note-editor,
  *    which end editing) or a dialog is open, with preventDefault on every
@@ -31,7 +33,7 @@ import type { Handle } from '@/domain/resize'
 import type { EditorController } from './controller'
 import type { Target } from './hit-test'
 import { isNoteEditorKey, isTextEntry } from './keyboard'
-import type { PointerKind } from './pointer-machine'
+import { DRAG_THRESHOLD_PX, type PointerKind } from './pointer-machine'
 
 const HANDLES = new Set(['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'])
 
@@ -144,6 +146,11 @@ export function attachInput({ viewport, controller, camera }: AttachInputOptions
 
   const pressed = new Set<number>()
   let lastTouchAt = -Infinity
+  /** Where a right press began (client px), and whether it moved far enough to pan. */
+  let rightStart: { x: number; y: number } | null = null
+  let rightDragged = false
+  /** A right drag just ended: a contextmenu before this time (event ms) is its release, not a menu. */
+  let skipMenuUntil = -Infinity
 
   const screenOf = (e: { clientX: number; clientY: number }) => camera.clientToScreen(e.clientX, e.clientY)
   const ignored = (e: Event) => closestWithin(e.target, '[data-overlay-control]', viewport) !== null
@@ -151,6 +158,9 @@ export function attachInput({ viewport, controller, camera }: AttachInputOptions
   function onPointerDown(e: PointerEvent) {
     if (ignored(e)) return
     if (e.pointerType === 'touch') lastTouchAt = e.timeStamp
+    rightStart = e.pointerType !== 'touch' && e.button === 2 ? { x: e.clientX, y: e.clientY } : null
+    rightDragged = false
+    skipMenuUntil = -Infinity
     camera.measure()
     // A click on the canvas takes focus from a text field, so shortcuts work again.
     const active = typeof document === 'undefined' ? null : document.activeElement
@@ -183,17 +193,23 @@ export function attachInput({ viewport, controller, camera }: AttachInputOptions
       if (e.pointerType === 'mouse' && e.buttons === 0 && !ignored(e)) controller.hover(screenOf(e))
       return
     }
+    if (rightStart && Math.hypot(e.clientX - rightStart.x, e.clientY - rightStart.y) > DRAG_THRESHOLD_PX) rightDragged = true
     controller.pointer({ type: 'move', id: e.pointerId, at: screenOf(e), time: e.timeStamp, shift: e.shiftKey, alt: e.altKey })
   }
 
   function onPointerUp(e: PointerEvent) {
     if (!pressed.delete(e.pointerId)) return
     if (e.pointerType === 'touch') lastTouchAt = e.timeStamp
+    if (rightDragged) skipMenuUntil = e.timeStamp + 1000
+    rightStart = null
+    rightDragged = false
     controller.pointer({ type: 'up', id: e.pointerId, at: screenOf(e), time: e.timeStamp, shift: e.shiftKey, alt: e.altKey })
   }
 
   function onPointerCancel(e: PointerEvent) {
     if (!pressed.delete(e.pointerId)) return
+    rightStart = null
+    rightDragged = false
     controller.pointer({ type: 'cancel', id: e.pointerId })
   }
 
@@ -203,12 +219,21 @@ export function attachInput({ viewport, controller, camera }: AttachInputOptions
 
   function onContextMenu(e: MouseEvent) {
     e.preventDefault()
+    // macOS and Linux send this while the right button is still down: the menu takes that press, so it does not pan.
+    rightStart = null
     if (ignored(e)) return
     // Touch long presses are the pointer machine's; some browsers also send contextmenu for them.
     const kind = (e as PointerEvent).pointerType
     if (kind === 'touch' || e.timeStamp - lastTouchAt < 1000) return
     const at = screenOf(e)
     controller.contextMenu(at, overlayTarget(e, viewport) ?? controller.targetAt(at), 'mouse')
+  }
+
+  function onWindowContextMenu(e: MouseEvent) {
+    if (e.timeStamp > skipMenuUntil) return
+    skipMenuUntil = -Infinity
+    e.preventDefault()
+    e.stopPropagation()
   }
 
   function onWheel(e: WheelEvent) {
@@ -250,6 +275,8 @@ export function attachInput({ viewport, controller, camera }: AttachInputOptions
     // pointerup here, which would leave the editor waiting for it.
     for (const id of [...pressed]) controller.pointer({ type: 'cancel', id })
     pressed.clear()
+    rightStart = null
+    rightDragged = false
     controller.blur()
   }
 
@@ -271,6 +298,7 @@ export function attachInput({ viewport, controller, camera }: AttachInputOptions
   viewport.addEventListener('contextmenu', onContextMenu)
   viewport.addEventListener('wheel', onWheel, { passive: false })
   for (const [name, handler] of gestureHandlers) viewport.addEventListener(name, handler)
+  window.addEventListener('contextmenu', onWindowContextMenu, true)
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('keyup', onKeyUp)
   window.addEventListener('blur', onBlur)
@@ -285,6 +313,7 @@ export function attachInput({ viewport, controller, camera }: AttachInputOptions
     viewport.removeEventListener('contextmenu', onContextMenu)
     viewport.removeEventListener('wheel', onWheel)
     for (const [name, handler] of gestureHandlers) viewport.removeEventListener(name, handler)
+    window.removeEventListener('contextmenu', onWindowContextMenu, true)
     window.removeEventListener('keydown', onKeyDown)
     window.removeEventListener('keyup', onKeyUp)
     window.removeEventListener('blur', onBlur)

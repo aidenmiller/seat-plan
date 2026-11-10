@@ -165,10 +165,20 @@ describe('handles, seats and panning', () => {
     }
   })
 
-  it('leaves the right button to the browser context menu event', () => {
-    const { state, intents } = run([down(table, 0, 0, { button: 2 }), move(50, 50)])
+  it('pans with a right drag, on items too and in View mode', () => {
+    for (const c of [ctx(), ctx({ mode: 'view' }), ctx({ tool: 'note' })]) {
+      const { intents, state } = run([down(table, 0, 0, { button: 2 }), move(5, 7), move(6, 9), up(6, 9)], c)
+      expect(intents).toEqual([{ type: 'panStart', pointer: 'mouse' }, { type: 'pan', dx: 5, dy: 7 }, { type: 'pan', dx: 1, dy: 2 }, { type: 'panEnd' }])
+      expect(state.phase.kind).toBe('idle')
+    }
+  })
+
+  it('leaves a right click that does not move to the browser context menu event', () => {
+    const { state, intents } = run([down(table, 0, 0, { button: 2 }), move(3, 0)])
     expect(intents).toEqual([])
-    expect(run([up(50, 50)], ctx(), state).state.phase.kind).toBe('idle')
+    const released = run([up(3, 0)], ctx(), state)
+    expect(released.intents).toEqual([])
+    expect(released.state.phase.kind).toBe('idle')
   })
 
   it('places the place tool preset on a click', () => {
@@ -327,7 +337,7 @@ describe('chooseDrag', () => {
 
 describe('a press the right-click menu takes over (A2)', () => {
   it('names the only mouse press, pressed or waiting to lift, and nothing else', () => {
-    // Right button: waiting for the release.
+    // Right button: pressed, not yet a pan.
     expect(menuPress(run([down(table, 0, 0, { button: 2, id: 7 })]).state)).toBe(7)
     // Ctrl+left on a Mac: still a press.
     expect(menuPress(run([down(table, 0, 0, { id: 3 })]).state)).toBe(3)
@@ -356,7 +366,7 @@ describe('a release that never came (A7)', () => {
     expect(isBusy(next.state)).toBe(false)
     expect(next.state.pointers.size).toBe(0)
     // The same pointer coming down again while waiting still waits.
-    state = run([down(empty, 0, 0, { button: 2 })]).state
+    state = run([down(table, 0, 0, { pointer: 'touch' }), { type: 'escape' }]).state
     expect(stepPointer(state, down(table, 0, 0), ctx()).state.phase.kind).toBe('draining')
   })
 })
