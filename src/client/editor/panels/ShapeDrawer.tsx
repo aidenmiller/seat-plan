@@ -71,6 +71,7 @@ function Drawer({ onClose, blank, ceremony, unit, disabled, dropTarget }: Omit<S
             onAdded={onClose}
             onDragChange={setDragging}
             columns={3}
+            phone
           />
         </div>
       </div>

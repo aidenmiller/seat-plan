@@ -3,12 +3,12 @@
 /**
  * The right panel's tabs (PLAN section 6, "Right panel"): Properties, Guests,
  * Groups, Problems and Notes. Desktops show it right of the canvas; phones
- * put the same tabs and contents in the bottom sheet. Groups, Problems and
- * Notes fill in with a later milestone.
+ * put the same tabs and contents in the bottom sheet.
  */
 import { useId, type KeyboardEvent, type ReactNode } from 'react'
 import { GuestsPanel } from './GuestsPanel'
 import { GroupsPanel } from './GroupsPanel'
+import { NotesPanel } from './NotesPanel'
 import { ProblemsPanel } from './ProblemsPanel'
 import { PropertiesPanel } from './PropertiesPanel'
 
@@ -21,10 +21,6 @@ export const PANEL_TABS: readonly { id: PanelTab; label: string }[] = [
   { id: 'problems', label: 'Problems' },
   { id: 'notes', label: 'Notes' },
 ]
-
-const EMPTY_TEXT: Record<Exclude<PanelTab, 'properties' | 'guests' | 'problems' | 'groups'>, string> = {
-  notes: 'Notes on the plan show here.',
-}
 
 /** Ids that tie each tab to its panel. */
 export function usePanelIds(): (tab: PanelTab) => { tab: string; panel: string } {
@@ -94,12 +90,7 @@ export function PanelContent({ tab, ids }: { tab: PanelTab; ids: (tab: PanelTab)
   else if (tab === 'guests') body = <GuestsPanel />
   else if (tab === 'problems') body = <ProblemsPanel />
   else if (tab === 'groups') body = <GroupsPanel />
-  else
-    body = (
-      <p className="px-4 py-6 text-sm text-stone-600" data-testid={`${tab}-empty`}>
-        {EMPTY_TEXT[tab]}
-      </p>
-    )
+  else body = <NotesPanel />
   return (
     <div role="tabpanel" id={ids(tab).panel} aria-labelledby={ids(tab).tab}>
       {body}

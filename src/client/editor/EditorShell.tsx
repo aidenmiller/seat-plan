@@ -27,6 +27,12 @@
  * such as "Table 4 is full". On phones it lowers the sheet to its strip when
  * a name is tapped or dragged, or the view pans to a seat, so the seats
  * stay in sight.
+ *
+ * Notes (spec section 9): the shape panel's Notes tools, the toolbar's notes
+ * layer switches, the Notes tab and a note's Properties all work through the
+ * editor state. A refused change says why under the canvas (View mode, no
+ * author picked, notes hidden or locked). On phones, picking a note in the
+ * Notes tab or starting to type into one lowers the sheet so the plan shows.
  */
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -37,6 +43,7 @@ import { randomId } from '@/client/sync/random-id'
 import { getAuthor, useAuthor } from '@/client/author'
 import type { LayoutSaver, SaveStatus } from '@/client/sync/types'
 import { useUnloadGuard } from '@/client/sync/unload'
+import { ShareButton } from '@/client/share/ShareButton'
 import { AuthorSwitch } from '@/client/ui/AuthorSwitch'
 import { BottomSheet, type SheetSnap } from '@/client/ui/BottomSheet'
 import { ContextMenu } from '@/client/ui/ContextMenu'
@@ -51,7 +58,7 @@ import type { Group, Guest, LayoutDetail, StoredRule } from '@/shared/api'
 import { VenuePickerDialog } from '@/client/venues/VenuePicker'
 import { ConflictDialog } from './ConflictDialog'
 import { createDocStore, type DocStore } from './doc-store'
-import type { ContextMenuRequest, SeatRequest } from './input/controller'
+import type { ContextMenuRequest, RefusalReason, SeatRequest } from './input/controller'
 import { isTableTarget } from './input/hit-test'
 import { openLayoutSession, type ConflictInfo, type LayoutSession } from './layout-session'
 import type { UnseatConfirm } from './overlay/EditorOverlay'
@@ -127,6 +134,20 @@ export function canvasInsets(phone: boolean): ScreenInsets {
     bottom: zoomControlsBottom(phone) + ZOOM_CONTROLS_PX + 8,
     left: 0,
   })
+}
+
+/**
+ * What the notice under the canvas says when the editor refuses a change, or
+ * null to say nothing: View mode first, then no author picked, then the
+ * notes layer (hidden or locked) or another locked layer.
+ */
+export function refusalNotice(reason: RefusalReason | undefined, mode: 'edit' | 'view', hasAuthor: boolean): string | null {
+  if (mode === 'view') return 'Switch to Edit to change the plan.'
+  if (reason === 'noAuthor' || !hasAuthor) return 'Pick Noa or Aiden at the top first.'
+  if (reason === 'notesHidden') return 'Notes are hidden. Show them to change notes.'
+  if (reason === 'notesLocked') return 'Notes are locked. Unlock them to change notes.'
+  if (reason === 'layerLocked') return 'That part of the plan is locked.'
+  return null
 }
 
 const PHONE_CANVAS_INSETS = canvasInsets(true)
@@ -212,7 +233,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
       events: {
         onContextMenu: (request) => bridge.get().events.onContextMenu?.(request),
         onTap: (tap) => bridge.get().events.onTap?.(tap),
-        onRefused: () => bridge.get().events.onRefused?.(),
+        onRefused: (reason) => bridge.get().events.onRefused?.(reason),
         onNotice: (text) => bridge.get().events.onNotice?.(text),
       },
     }),
@@ -403,6 +424,11 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
     if (phone) setSheet((s) => (s === 'strip' ? 'half' : s))
   }, [phone])
 
+  /** Phones: the sheet drops to its strip so the plan shows (a note picked in the Notes tab, typing into a note). */
+  const showCanvas = useCallback(() => {
+    if (phone) setSheet('strip')
+  }, [phone])
+
   useEffect(() => {
     bridge.set({
       events: {
@@ -435,16 +461,19 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
             actions: editor.actions,
             onSeatRequest,
             onDetails: showDetails,
+            onEditNote: showCanvas,
           })
           if (!built) return
           setMenu({ at, menu: built })
         },
         onTap({ target }) {
-          if (editor.ui.getState().mode === 'view' && isTableTarget(target)) showDetails()
+          // View mode: a tapped table lists its seats, a tapped note shows all its text.
+          const note = target.kind === 'item' && target.itemKind === 'note'
+          if (editor.ui.getState().mode === 'view' && (isTableTarget(target) || note)) showDetails()
         },
-        onRefused() {
-          if (editor.ui.getState().mode === 'view') setNotice('Switch to Edit to change the plan.')
-          else if (getAuthor() === null) setNotice('Pick Noa or Aiden at the top first.')
+        onRefused(reason) {
+          const message = refusalNotice(reason, editor.ui.getState().mode, getAuthor() !== null)
+          if (message) setNotice(message)
         },
         onNotice(text: string) {
           setNotice(text)
@@ -515,8 +544,19 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   const venueLabel = blank ? 'Blank canvas' : venueInfo.venueDeleted ? `${venueInfo.venueName ?? 'Venue'} (deleted)` : (venueInfo.venueName ?? 'Venue')
   const onPickVenue = useCallback(() => setPickingVenue(true), [])
   const editorUi = useMemo<EditorUi>(
-    () => ({ unit: wedding.unit, phone, layoutName: name, venueLabel, onSeatRequest, showDetails, venue, onPickVenue, layoutKind: initial.kind }),
-    [wedding.unit, phone, name, venueLabel, onSeatRequest, showDetails, venue, onPickVenue, initial.kind],
+    () => ({
+      unit: wedding.unit,
+      phone,
+      layoutName: name,
+      venueLabel,
+      onSeatRequest,
+      showDetails,
+      showCanvas,
+      venue,
+      onPickVenue,
+      layoutKind: initial.kind,
+    }),
+    [wedding.unit, phone, name, venueLabel, onSeatRequest, showDetails, showCanvas, venue, onPickVenue, initial.kind],
   )
   const venueGone = !blank && (venueInfo.venueDeleted || venueInfo.template?.deleted === true)
   const dropTarget = useCallback(() => canvasAreaRef.current?.querySelector<HTMLElement>('[data-editor-viewport]') ?? null, [])
@@ -555,6 +595,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
               </h1>
               <ProblemCount compact={phone} onOpen={openProblems} />
               <SaveStatusSlot status={status} />
+              <ShareButton layoutId={initial.id} compact={phone} />
               <ModeSwitch compact={phone} />
               <AuthorSwitch compact />
             </header>

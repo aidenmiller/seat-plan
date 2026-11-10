@@ -10,6 +10,8 @@
  *  - one ceremony chair row: label, reserved for, chair count (with the
  *    same unseat question as tables), spacing, Select block, Add row
  *    behind, and its chairs in order;
+ *  - one note: its text, color, Done, size or arrow ends, who added it and
+ *    when (NoteProperties.tsx), Lock;
  *  - several items: align and distribute;
  *  - nothing: the Room panel (seats or chairs against the guest list) and
  *    the layout.
@@ -41,6 +43,7 @@ import { shallowEqual } from '../state/store'
 import { ButtonRow, CommitField, LengthField, NumberField, Section, Segmented, smallButton, smallDangerButton, Switch } from './controls'
 import { useEditorUi } from './editor-ui'
 import { ALIGN_BUTTONS, DISTRIBUTE_BUTTONS, FIXTURE_NAMES, itemName, SHAPE_NAMES, shapeIsLinear, shapeTakesText, type ItemFields } from './names'
+import { NoteProperties, NoteSummary } from './NoteProperties'
 import { canTakeShape, changeTableShape } from './table-shape'
 import { useSeatReorder } from './seat-reorder'
 
@@ -118,8 +121,15 @@ function SingleItem({ item, edit }: { item: ItemFields; edit: boolean }) {
       return edit ? <ItemProperties item={item} /> : <ItemSummary item={item} />
     case 'chairRow':
       return edit ? <ChairRowProperties row={item} /> : <RowSeats row={item} />
-    default:
-      return edit ? <OtherProperties item={item} /> : <ItemSummary item={item} />
+    case 'note':
+      return edit ? (
+        <>
+          <NoteProperties note={item} />
+          <ItemOptions item={item} layering />
+        </>
+      ) : (
+        <NoteSummary note={item} />
+      )
   }
 }
 
@@ -480,19 +490,6 @@ function ItemProperties({ item }: { item: FieldsOf<'fixture'> | FieldsOf<'shape'
         )}
         <NumberField label="Rotation" value={item.rotation} suffix="°" disabled={locked} testId="item-rotation" onChange={(r) => actions.setItemBox(id, { rotation: r })} />
         {locked && <p className="text-xs text-stone-500">Unlock to move, turn or resize.</p>}
-      </Section>
-      <ItemOptions item={item} layering />
-    </>
-  )
-}
-
-/** Notes get their own tools later; for now rotation and Lock. */
-function OtherProperties({ item }: { item: FieldsOf<'note'> }) {
-  const { actions } = useEditorState()
-  return (
-    <>
-      <Section title="Note">
-        <NumberField label="Rotation" value={item.rotation} suffix="°" disabled={item.locked} onChange={(r) => actions.setItemBox(item.id, { rotation: r })} />
       </Section>
       <ItemOptions item={item} layering />
     </>

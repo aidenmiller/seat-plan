@@ -4,12 +4,17 @@
  * and − buttons live in the overlay; the DOM adapter finds those by their
  * data attributes first.
  *
- * Items on hidden layers and on locked layers are not there for the pointer.
- * Topmost first: the last item in the canvas wins. A table's seats, and a
+ * Items on hidden and locked layers are not there for the pointer: a click
+ * on a locked note lands on what is under it (DECISIONS 90). The editor
+ * passes the layers with their locks off in View mode, where nothing
+ * changes, so a tap there still reads a note. Topmost first: notes before
+ * furniture, then the last item in the canvas wins. A table's seats, and a
  * ceremony row's chairs, come before its body, so a click on a seat circle
- * is a seat.
+ * is a seat. Arrows are tested where they are drawn, their attached ends on
+ * their items (src/domain/arrows.ts).
  */
 import type { Canvas, ChairRow, Item } from '@/domain/canvas-schema'
+import { isArrowNote, resolvedItems } from '@/domain/arrows'
 import { boxContainsPoint, boxSelects, expandBox, footprintBox, hitTestItem, type Box, type Point } from '@/domain/geometry'
 import type { Handle } from '@/domain/resize'
 import { chairRowSeatCenters } from '@/domain/seating'
@@ -42,11 +47,25 @@ export function isVisible(item: Item, layers?: Layers): boolean {
   return !layers || layers[itemLayer(item)].visible
 }
 
+/** On a locked layer: it draws, but the pointer goes through it and nothing on it changes. */
+export function isLayerLocked(item: Item, layers?: Layers): boolean {
+  return !!layers && layers[itemLayer(item)].locked
+}
+
 /** Visible and on an unlocked layer: the pointer can reach it. */
 export function isReachable(item: Item, layers?: Layers): boolean {
   if (!layers) return true
   const layer = layers[itemLayer(item)]
   return layer.visible && !layer.locked
+}
+
+/** The same layers with every lock off (View mode, where nothing changes, reads locked notes too). */
+export function unlockedLayers(layers: Layers): Layers {
+  return {
+    venue: { ...layers.venue, locked: false },
+    furniture: { ...layers.furniture, locked: false },
+    notes: { ...layers.notes, locked: false },
+  }
 }
 
 /** True for a target on a table: its body or one of its seats. */
@@ -78,37 +97,56 @@ export function targetItemId(target: Target): string | null {
 export type HitOptions = {
   /** Extra reach in cm: a few screen pixels over the zoom. */
   tolerance?: number
+  /** Reach for arrows and lines in cm, when more than `tolerance`: a finger is wider than their line. */
+  lineTolerance?: number
   layers?: Layers
 }
 
-/** The item or seat under a world point, topmost first. */
+/**
+ * The item or seat under a world point, topmost first: notes before
+ * furniture, since the notes layer draws above it whatever the item order.
+ * Items on hidden or locked layers are passed over.
+ */
 export function hitTest(canvas: Pick<Canvas, 'items'>, point: Point, options: HitOptions = {}): Target {
-  const tolerance = options.tolerance ?? 0
-  const items = canvas.items
+  const items = resolvedItems(canvas)
+  return hitLayer(items, point, options, 'notes') ?? hitLayer(items, point, options, 'furniture') ?? EMPTY_TARGET
+}
+
+function hitLayer(items: readonly Item[], point: Point, options: HitOptions, layer: LayerName): Target | null {
+  const base = options.tolerance ?? 0
+  const lineReach = Math.max(base, options.lineTolerance ?? 0)
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i]
-    if (!isReachable(item, options.layers)) continue
+    if (itemLayer(item) !== layer || !isReachable(item, options.layers)) continue
+    const tolerance = isArrowNote(item) ? lineReach : base
     if (!boxContainsPoint(expandBox(footprintBox(item), tolerance), point)) continue
+    const locked = item.locked
     if (item.kind === 'table' && item.seatCount > 0) {
       const seatIndex = seatIndexAt(item, point, tolerance)
       if (seatIndex !== null) {
-        return { kind: 'seat', itemId: item.id, seatIndex, guestId: item.seats[seatIndex]?.guestId ?? null, locked: item.locked }
+        return { kind: 'seat', itemId: item.id, seatIndex, guestId: item.seats[seatIndex]?.guestId ?? null, locked }
       }
     }
     if (item.kind === 'chairRow' && item.chairCount > 0) {
       const seatIndex = chairIndexAt(item, point, tolerance)
       if (seatIndex !== null) {
-        return { kind: 'seat', itemId: item.id, seatIndex, guestId: item.seats[seatIndex]?.guestId ?? null, locked: item.locked, itemKind: 'chairRow' }
+        return { kind: 'seat', itemId: item.id, seatIndex, guestId: item.seats[seatIndex]?.guestId ?? null, locked, itemKind: 'chairRow' }
       }
     }
-    if (hitTestItem(item, point, tolerance)) return { kind: 'item', itemId: item.id, itemKind: item.kind, locked: item.locked }
+    if (hitTestItem(item, point, tolerance)) return { kind: 'item', itemId: item.id, itemKind: item.kind, locked }
   }
-  return EMPTY_TARGET
+  return null
 }
 
-/** Unlocked items a selection box holds whole. Locked items are left out, so a box never grabs a room outline. */
+/**
+ * Unlocked items a selection box holds whole, arrows by their ends as drawn.
+ * Locked items and locked layers are left out, so a box never grabs a room
+ * outline.
+ */
 export function itemsInBox(canvas: Pick<Canvas, 'items'>, box: Box, layers?: Layers): string[] {
-  return canvas.items.filter((item) => !item.locked && isReachable(item, layers) && boxSelects(box, item)).map((item) => item.id)
+  return resolvedItems(canvas)
+    .filter((item) => !item.locked && isReachable(item, layers) && boxSelects(box, item))
+    .map((item) => item.id)
 }
 
 /** Everything Select all takes: items the pointer can reach. */

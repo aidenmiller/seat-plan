@@ -16,8 +16,17 @@
  * and one moving sideways drags the tile. A touch drag starts only once the
  * finger has moved more across than down, so a scroll never flashes the
  * drag's ghost or hides the phone drawer.
+ *
+ * Notes (spec section 9) have their own section: six tools and the color
+ * new notes take. A click or tap on a note tool arms it (pressed), so the
+ * next click on the plan places that note and a drag draws it (arrows and
+ * lines from end to end); a second click puts the tool down. A note tool
+ * can also be dragged onto the plan like any tile. Note tools are off while
+ * the notes layer is hidden or locked, and say so.
  */
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import type { Point } from '@/domain/geometry'
+import { NOTE_SIZES, NOTE_TYPE_NAMES, NOTE_TYPES, type NoteType } from '@/domain/notes'
 import {
   CEREMONY_FIXTURE_PRESETS,
   CHAIR_ROW_PRESET,
@@ -29,10 +38,11 @@ import {
   type Preset,
   type PresetId,
 } from '@/domain/presets'
+import type { LengthUnit } from '@/domain/units'
 import { Icon, presetGlyph } from '../icons/glyphs'
 import type { EditorActions } from '../input/controller'
-import { useEditorState } from '../state/react'
-import type { LengthUnit } from '@/domain/units'
+import { useEditorState, useUi, useViewState } from '../state/react'
+import { ColorSwatches, NoteIcon } from './note-ui'
 import { SeatingBlockDialog } from './SeatingBlockDialog'
 
 /** What each tile adds, for screen readers and tests ("Add round table"). */
@@ -68,6 +78,33 @@ export const PRESET_NAMES: Record<PresetId, string> = {
   window: 'Add window',
 }
 
+/** What each note tool is called, for screen readers and tests ("Sticky note", "Arrow note"). */
+export const NOTE_TOOL_NAMES: Record<NoteType, string> = {
+  sticky: 'Sticky note',
+  text: 'Text note',
+  arrow: 'Arrow note',
+  line: 'Line note',
+  box: 'Box note',
+  circle: 'Circle note',
+}
+
+/** The short word under each note tool. */
+const NOTE_TOOL_LABELS: Record<NoteType, string> = {
+  sticky: 'Sticky',
+  text: 'Text',
+  arrow: 'Arrow',
+  line: 'Line',
+  box: 'Box',
+  circle: 'Circle',
+}
+
+/** Why the note tools are off, or null when notes can be added. */
+export function noteToolsBlocked(layer: { visible: boolean; locked: boolean }): string | null {
+  if (!layer.visible) return 'Notes are hidden. Show them to add notes.'
+  if (layer.locked) return 'Notes are locked. Unlock them to add notes.'
+  return null
+}
+
 const DRAG_START_PX = 4
 
 /**
@@ -86,6 +123,31 @@ export type TileDrop = { x: number; y: number; alt: boolean }
 export function dropTile(actions: Pick<EditorActions, 'dropPreset'>, presetId: PresetId, drop: TileDrop, overCanvas: boolean): string | null {
   if (!overCanvas) return null
   return actions.dropPreset(presetId, drop.x, drop.y, { free: drop.alt })
+}
+
+/**
+ * A note tool let go over the canvas: adds that note there (a sticky or text
+ * note then takes typing), off the grid when Alt was held. `toWorld` turns
+ * the pointer's client px into a world point. Returns the new id.
+ */
+export function dropNote(
+  actions: Pick<EditorActions, 'addNote'>,
+  type: NoteType,
+  drop: TileDrop,
+  overCanvas: boolean,
+  toWorld: (clientX: number, clientY: number) => Point,
+): string | null {
+  if (!overCanvas) return null
+  return actions.addNote(type, toWorld(drop.x, drop.y), { free: drop.alt })
+}
+
+/** A click on a note tool: arms it, or puts it down when it was the one armed. True when the tool is now armed. */
+export function toggleNoteTool(actions: Pick<EditorActions, 'setNoteTool'>, armed: NoteType | null, type: NoteType): boolean {
+  if (armed === type) {
+    actions.setNoteTool(null)
+    return false
+  }
+  return actions.setNoteTool(type)
 }
 
 /** The tiles' classes: pan-y lets a finger scroll the list up and down, and leaves sideways moves to the drag. */
@@ -109,10 +171,15 @@ export type ShapePanelProps = {
   onDragChange?(dragging: boolean): void
   /** Tiles per row: 2 in the desktop column, 3 in the phone drawer. */
   columns?: 2 | 3
+  /** The phone drawer: hints say tap. */
+  phone?: boolean
 }
 
+/** What a tile adds: a preset, or a note. */
+type Tile = { kind: 'preset'; presetId: PresetId } | { kind: 'note'; noteType: NoteType }
+
 type DragState = {
-  presetId: PresetId
+  tile: Tile
   pointerId: number
   pointerType: string
   startX: number
@@ -120,14 +187,28 @@ type DragState = {
   dragging: boolean
 }
 
-/** The outline that follows the pointer: the preset's size at the zoom now, in px. */
-type Ghost = { presetId: PresetId; width: number; height: number; round: boolean; x: number; y: number }
+/** The outline that follows the pointer: the tile's size at the zoom now, in px. */
+type Ghost = { tile: Tile; width: number; height: number; round: boolean; x: number; y: number }
 
-function ghostFor(preset: Preset, zoom: number, x: number, y: number): Ghost {
+function ghostFor(tile: Tile, zoom: number, x: number, y: number): Ghost {
   const clamp = (v: number) => Math.max(20, Math.min(640, v * zoom))
+  if (tile.kind === 'note') {
+    const size = NOTE_SIZES[tile.noteType]
+    const thin = tile.noteType === 'arrow' || tile.noteType === 'line'
+    return { tile, width: clamp(size.width), height: thin ? 12 : clamp(size.height), round: tile.noteType === 'circle', x, y }
+  }
+  const preset = getPreset(tile.presetId)
   const round = (preset.group === 'tables' && preset.shape === 'round') || preset.id === 'circle'
   const thin = preset.id === 'line' || preset.id === 'wall'
-  return { presetId: preset.id, width: clamp(preset.width), height: thin ? 12 : clamp(preset.height), round, x, y }
+  return { tile, width: clamp(preset.width), height: thin ? 12 : clamp(preset.height), round, x, y }
+}
+
+function GhostIcon({ tile }: { tile: Tile }) {
+  return tile.kind === 'note' ? (
+    <NoteIcon name={tile.noteType} className="h-6 w-6 text-stone-600" />
+  ) : (
+    <Icon name={presetGlyph(tile.presetId)} className="h-6 w-6 text-stone-600" />
+  )
 }
 
 function overTarget(target: HTMLElement | null, x: number, y: number): boolean {
@@ -138,9 +219,25 @@ function overTarget(target: HTMLElement | null, x: number, y: number): boolean {
   return hit !== null && target.contains(hit)
 }
 
-export function ShapePanel({ blank, ceremony = false, unit = 'ft', disabled, dropTarget, onAdded, onDragChange, columns = 2 }: ShapePanelProps) {
+export function ShapePanel({
+  blank,
+  ceremony = false,
+  unit = 'ft',
+  disabled,
+  dropTarget,
+  onAdded,
+  onDragChange,
+  columns = 2,
+  phone = false,
+}: ShapePanelProps) {
   const editor = useEditorState()
   const [blockOpen, setBlockOpen] = useState(false)
+  const tool = useUi((s) => s.tool)
+  const noteColor = useUi((s) => s.noteColor)
+  const notesLayer = useViewState((s) => s.layers.notes)
+  const armed = tool.kind === 'note' ? tool.noteType : null
+  const notesBlocked = noteToolsBlocked(notesLayer)
+  const notesOff = disabled || notesBlocked !== null
   const drag = useRef<DragState | null>(null)
   const suppressClick = useRef(false)
   const ghostRef = useRef<HTMLDivElement>(null)
@@ -173,13 +270,20 @@ export function ShapePanel({ blank, ceremony = false, unit = 'ft', disabled, dro
     setGhost(null)
     setOver(false)
     onDragChange?.(false)
-    if (drop && dropTile(editor.actions, d.presetId, drop, overTarget(dropTarget(), drop.x, drop.y)) !== null) onAdded?.()
+    if (!drop) return
+    const overCanvas = overTarget(dropTarget(), drop.x, drop.y)
+    const added =
+      d.tile.kind === 'preset'
+        ? dropTile(editor.actions, d.tile.presetId, drop, overCanvas)
+        : dropNote(editor.actions, d.tile.noteType, drop, overCanvas, (x, y) => editor.camera.screenToWorld(editor.camera.clientToScreen(x, y)))
+    if (added !== null) onAdded?.()
   }
 
-  function onPointerDown(event: ReactPointerEvent<HTMLButtonElement>, presetId: PresetId) {
-    if (disabled || event.button !== 0 || drag.current) return
+  function onPointerDown(event: ReactPointerEvent<HTMLButtonElement>, tile: Tile) {
+    if (event.button !== 0 || drag.current) return
+    if (tile.kind === 'preset' ? disabled : notesOff) return
     drag.current = {
-      presetId,
+      tile,
       pointerId: event.pointerId,
       pointerType: event.pointerType,
       startX: event.clientX,
@@ -194,7 +298,7 @@ export function ShapePanel({ blank, ceremony = false, unit = 'ft', disabled, dro
         if (!tileDragStarts(e.clientX - d.startX, e.clientY - d.startY, d.pointerType)) return
         d.dragging = true
         suppressClick.current = true
-        setGhost(ghostFor(getPreset(d.presetId), editor.camera.get().zoom, e.clientX, e.clientY))
+        setGhost(ghostFor(d.tile, editor.camera.get().zoom, e.clientX, e.clientY))
         onDragChange?.(true)
       }
       moveGhost(e.clientX, e.clientY)
@@ -232,6 +336,21 @@ export function ShapePanel({ blank, ceremony = false, unit = 'ft', disabled, dro
     add(presetId)
   }
 
+  function onNoteClick(type: NoteType) {
+    if (suppressClick.current || notesOff) return
+    // Phones close the drawer so the next tap lands on the plan.
+    if (toggleNoteTool(editor.actions, armed, type)) onAdded?.()
+  }
+
+  /** A press that never became a drag: the click acts. */
+  function onTilePointerUp() {
+    if (drag.current && !drag.current.dragging) {
+      drag.current = null
+      cleanup.current?.()
+      cleanup.current = null
+    }
+  }
+
   const grid = `grid gap-2 ${columns === 3 ? 'grid-cols-3' : 'grid-cols-2'}`
 
   function tiles(presets: readonly Preset[]) {
@@ -247,15 +366,8 @@ export function ShapePanel({ blank, ceremony = false, unit = 'ft', disabled, dro
         title={PRESET_NAMES[p.id]}
         disabled={disabled}
         data-preset={p.id}
-        onPointerDown={(e) => onPointerDown(e, p.id)}
-        onPointerUp={() => {
-          // A press that never became a drag: the click adds it.
-          if (drag.current && !drag.current.dragging) {
-            drag.current = null
-            cleanup.current?.()
-            cleanup.current = null
-          }
-        }}
+        onPointerDown={(e) => onPointerDown(e, { kind: 'preset', presetId: p.id })}
+        onPointerUp={onTilePointerUp}
         onClick={() => onClick(p.id)}
         className={TILE_CLASS}
       >
@@ -306,6 +418,37 @@ export function ShapePanel({ blank, ceremony = false, unit = 'ft', disabled, dro
           if (!disabled && editor.actions.addSeatingBlock(choice).length > 0) onAdded?.()
         }}
       />
+      <PanelGroup title="Notes">
+        <div className="space-y-3" data-testid="note-tools">
+          <div className={grid}>
+            {NOTE_TYPES.map((type) => {
+              const on = armed === type
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  aria-label={NOTE_TOOL_NAMES[type]}
+                  aria-pressed={on}
+                  title={on ? `${NOTE_TYPE_NAMES[type]}: click again to put it down` : `${NOTE_TYPE_NAMES[type]}: click, then click or drag on the plan`}
+                  disabled={notesOff}
+                  data-note-tool={type}
+                  onPointerDown={(e) => onPointerDown(e, { kind: 'note', noteType: type })}
+                  onPointerUp={onTilePointerUp}
+                  onClick={() => onNoteClick(type)}
+                  className={`${TILE_CLASS} ${on ? 'border-blue-900 bg-blue-50 text-blue-950 ring-2 ring-blue-900 hover:border-blue-900 hover:bg-blue-50' : ''}`}
+                >
+                  <NoteIcon name={type} className={`h-7 w-7 ${on ? 'text-blue-900' : 'text-stone-700'}`} />
+                  <span className="leading-tight">{NOTE_TOOL_LABELS[type]}</span>
+                </button>
+              )
+            })}
+          </div>
+          <ColorSwatches label="Color for new notes" value={noteColor} disabled={disabled} testId="note-color" onChange={(c) => editor.ui.setNoteColor(c)} />
+          <p className="text-xs text-stone-500">
+            {notesBlocked ?? (phone ? 'Tap a tool, then tap or drag on the plan.' : 'Pick a tool, then click or drag on the plan.')}
+          </p>
+        </div>
+      </PanelGroup>
       {ghost && (
         <div
           ref={ghostRef}
@@ -315,7 +458,7 @@ export function ShapePanel({ blank, ceremony = false, unit = 'ft', disabled, dro
           } ${ghost.round ? 'rounded-full' : 'rounded-md'}`}
           style={{ width: ghost.width, height: ghost.height, transform: `translate(${ghost.x}px, ${ghost.y}px) translate(-50%, -50%)` }}
         >
-          {ghost.height >= 28 && <Icon name={presetGlyph(ghost.presetId)} className="h-6 w-6 text-stone-600" />}
+          {ghost.height >= 28 && <GhostIcon tile={ghost.tile} />}
         </div>
       )}
     </div>

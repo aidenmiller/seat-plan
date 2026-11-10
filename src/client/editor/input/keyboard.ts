@@ -15,9 +15,14 @@
  * | Space (held)                           | space: drags pan           |
  * | Cmd/Ctrl + =, -, 0, 1                  | zoomIn, zoomOut, zoomReset, zoomFit |
  * | Esc                                    | escape                     |
+ * | Enter                                  | enter: type into the selected sticky or text note |
+ * | Cmd/Ctrl+Enter                         | enter (mod): stop typing into a note |
  *
  * Alt (no snapping) and Shift on a handle (keep proportions) are read from
  * pointer events and sent to the pointer machine as they change.
+ *
+ * While a note's text box has focus (it carries data-note-editor), the DOM
+ * adapter still passes Esc and Cmd/Ctrl+Enter here, so either ends editing.
  */
 import type { NudgeDirection } from '../commands'
 
@@ -46,6 +51,7 @@ export type KeyCommand =
   | { type: 'zoomFit' }
   | { type: 'escape' }
   | { type: 'space' }
+  | { type: 'enter'; mod: boolean }
 
 const ARROWS: Record<string, NudgeDirection> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
 
@@ -63,6 +69,7 @@ export function keyCommand(e: KeyLike): KeyCommand | null {
     if (key === '-' || key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract') return { type: 'zoomOut' }
     if ((key === '0' || e.code === 'Digit0' || e.code === 'Numpad0') && !e.shiftKey) return { type: 'zoomReset' }
     if ((key === '1' || e.code === 'Digit1' || e.code === 'Numpad1') && !e.shiftKey) return { type: 'zoomFit' }
+    if (key === 'Enter' || key === 'NumpadEnter') return e.shiftKey ? null : { type: 'enter', mod: true }
     switch (key) {
       case 'c':
         return e.shiftKey ? null : { type: 'copy' }
@@ -83,8 +90,17 @@ export function keyCommand(e: KeyLike): KeyCommand | null {
   if (key === 'Delete' || key === 'Backspace') return e.altKey ? null : { type: 'delete' }
   if (key in ARROWS) return { type: 'nudge', direction: ARROWS[key], big: e.shiftKey }
   if (key === 'Escape') return { type: 'escape' }
+  if (key === 'Enter' || key === 'NumpadEnter') return e.shiftKey || e.altKey ? null : { type: 'enter', mod: false }
   if (isSpaceKey(e)) return { type: 'space' }
   return null
+}
+
+/** Inside a note's text box (data-note-editor): only Esc and Cmd/Ctrl+Enter reach the editor from there. */
+export function isNoteEditorKey(e: KeyLike, target: unknown): boolean {
+  const el = target as { closest?(selector: string): unknown } | null
+  if (!el || typeof el.closest !== 'function' || !el.closest('[data-note-editor]')) return false
+  if (e.key === 'Escape') return true
+  return (e.key === 'Enter' || e.key === 'NumpadEnter') && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey
 }
 
 type ElementLike = { tagName?: string; isContentEditable?: boolean; getAttribute?(name: string): string | null; type?: string }

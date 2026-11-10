@@ -133,6 +133,23 @@ describe('the DOM adapter', () => {
     expect(controller.keyDown).not.toHaveBeenCalled()
   })
 
+  it('passes Esc and Cmd+Enter from a note text box, and nothing else typed there', () => {
+    const { win, controller } = setup()
+    controller.keyDown.mockClear()
+    const box = { tagName: 'TEXTAREA', closest: (s: string) => (s === '[data-note-editor]' ? {} : null) }
+    const keys = ['x', 'Backspace', 'Enter', 'Escape']
+    for (const key of keys) {
+      const e = event('keydown', { key, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false })
+      Object.defineProperty(e, 'target', { value: box })
+      win.dispatchEvent(e)
+    }
+    const done = event('keydown', { key: 'Enter', metaKey: true, ctrlKey: false, shiftKey: false, altKey: false })
+    Object.defineProperty(done, 'target', { value: box })
+    win.dispatchEvent(done)
+    expect(controller.keyDown.mock.calls.map((c) => (c as unknown as [{ key: string }])[0].key)).toEqual(['Escape', 'Enter'])
+    expect(done.defaultPrevented).toBe(true)
+  })
+
   it('lets go of everything when the window loses focus', () => {
     const { win, controller } = setup()
     win.dispatchEvent(new Event('blur'))

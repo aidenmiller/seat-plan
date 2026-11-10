@@ -2,10 +2,10 @@
 
 import { useRouter } from 'next/navigation'
 import { useState, type FormEvent } from 'react'
-import { errorMessage, updateWedding } from '@/client/api'
+import { backupUrl, errorMessage, updateWedding } from '@/client/api'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { ChoiceGroup, TextField, UNIT_CHOICES } from '@/client/ui/fields'
-import { errorClass, primaryButton, secondaryButton } from '@/client/ui/styles'
+import { errorClass, hintClass, labelClass, primaryButton, secondaryButton } from '@/client/ui/styles'
 import { convertLengthText, formatLength, parseLength, type LengthUnit } from '@/domain/units'
 import type { UpdateWeddingBody, WeddingSummary } from '@/shared/api'
 
@@ -141,6 +141,16 @@ function SettingsForm({
         autoCorrect="off"
         spellCheck={false}
       />
+      <div className="border-t border-stone-200 pt-4">
+        <p className={labelClass}>Backup</p>
+        <p className={hintClass}>
+          One file with the guests, groups, rules, layouts and venues. Restore it from the home screen as a new wedding.
+        </p>
+        {/* A plain link: the browser saves the file as it arrives. */}
+        <a href={backupUrl(wedding.id)} download className={`${secondaryButton} mt-2`} data-testid="backup-download">
+          Download backup
+        </a>
+      </div>
       {error && (
         <p role="alert" className={errorClass}>
           {error}

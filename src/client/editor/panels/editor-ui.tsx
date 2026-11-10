@@ -24,6 +24,8 @@ export type EditorUi = {
   onSeatRequest(tableId: string, request: SeatRequest): void
   /** Phones: raise the sheet on the Properties tab. Desktops: nothing to do. */
   showDetails(): void
+  /** Phones: lower the sheet to its strip, so the plan shows (a note picked in the Notes tab, typing into a note). */
+  showCanvas?(): void
   /** The venue template's fixed items (none on a blank canvas), for the tables a wall runs through. */
   venue?: readonly FixedItem[]
   /** Opens the venue picker (another venue template, or Blank canvas). Absent where the venue cannot change. */

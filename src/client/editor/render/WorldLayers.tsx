@@ -8,13 +8,15 @@
  * writes the world <g>'s transform, so panning and zooming re-render nothing.
  *
  * Each item is a memoized component that reads only its own item by id, so
- * dragging one table re-renders only that table.
+ * dragging one table re-renders only that table. Notes read theirs with
+ * arrows at their drawn ends (useResolvedItem), so dragging a table also
+ * re-renders the arrows attached to it, and nothing else.
  */
 import { createContext, memo, useCallback, useContext, type RefObject } from 'react'
 import type { Canvas } from '@/domain/canvas-schema'
 import type { FixedItem } from '@/domain/venue-schema'
 import { worldTransform } from '../camera/camera-controller'
-import { useCanvas, useEditorState, useItem, useUi, useViewState } from '../state/react'
+import { useCanvas, useEditorState, useItem, useResolvedItem, useUi, useViewState } from '../state/react'
 import { shallowEqual } from '../state/store'
 import { ChairRowView } from './ChairRowView'
 import { FixtureView } from './FixtureView'
@@ -60,6 +62,7 @@ export const ItemView = memo(function ItemView({ id }: { id: string }) {
     case 'chairRow':
       return <ChairRowView row={item} selected={selected} />
     case 'note':
+      // The notes layer draws notes with NoteItemView, which follows attached arrows.
       return <NoteView note={item} selected={selected} />
   }
 })
@@ -89,14 +92,28 @@ const FurnitureLayer = memo(function FurnitureLayer() {
   )
 })
 
-/** Notes get their tools in milestone 9; this layer already draws any the layout holds. */
+/**
+ * One note. Arrows come with their attached ends where they are drawn, so
+ * an arrow re-renders when the table or fixture it holds moves, with no
+ * change to the arrow itself. A note being typed into leaves its text to the
+ * overlay's text box.
+ */
+export const NoteItemView = memo(function NoteItemView({ id }: { id: string }) {
+  const item = useResolvedItem(id)
+  const selected = useUi((s) => selectedSet(s.selection).has(id))
+  const editing = useUi((s) => s.noteEdit?.id === id)
+  if (item?.kind !== 'note') return null
+  return <NoteView note={item} selected={selected} editing={editing} />
+})
+
+/** The notes layer (spec section 9): above the furniture, hidden all at once by the device's switch. */
 const NotesLayer = memo(function NotesLayer() {
   const ids = useCanvas(noteIds, shallowEqual)
   const visible = useViewState((s) => s.layers.notes.visible)
   return (
     <g data-layer="notes" display={visible ? undefined : 'none'}>
       {ids.map((id) => (
-        <ItemView key={id} id={id} />
+        <NoteItemView key={id} id={id} />
       ))}
     </g>
   )

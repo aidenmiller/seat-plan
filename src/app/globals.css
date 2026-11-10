@@ -165,6 +165,20 @@ body {
   }
 }
 
+/*
+ * Notes (spec section 9): outlines, lines and arrows keep at least 1 px on
+ * screen (NOTE_LINE_MIN_SCREEN_PX; their attributes stay the print width,
+ * NOTE_LINE_CM). An empty text note's dashed box shows in the editor only,
+ * so it can still be found; print leaves it out.
+ */
+[data-editor-viewport] [data-note-line] {
+  stroke-width: max(3px, calc(1px / var(--zoom, 1)));
+}
+
+[data-editor-viewport] [data-note-placeholder] {
+  visibility: visible;
+}
+
 /* No pull to refresh or rubber banding while the editor is open. */
 html:has([data-editor-root]),
 html:has([data-editor-root]) body {

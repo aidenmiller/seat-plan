@@ -20,14 +20,27 @@
  * Seating (milestone 5): a ring round each selected guest's seat and, in
  * Edit mode, a More button beside them (the guest menu). The + on empty
  * seats is drawn in the world SVG (TableView), not here.
+ *
+ * Notes (milestone 9): a selected arrow or line shows its outline as the
+ * line between its drawn ends and, instead of resize and rotate handles, a
+ * handle on each end (data-vertex 0 and 1, 44 px on touch). While an end
+ * is dragged or drawn, the table or fixture it would attach to gets an
+ * outline round its chairs. While a sticky or text note is typed into, a
+ * text box covers it: at least 160 by 72 px and a 16 px font (so phones
+ * do not zoom the page), never larger than the viewport. Items on a locked
+ * layer show their outline but no handles.
  */
-import type { Item } from '@/domain/canvas-schema'
-import { footprintBox, itemCorners, itemSize, localToWorld, unionBoxes, type Box, type Point } from '@/domain/geometry'
+import type { Item, Note } from '@/domain/canvas-schema'
+import { anchorOutline, isArrowNote, storedEnds } from '@/domain/arrows'
+import { footprintBox, itemCorners, itemSize, localToWorld, obbCorners, unionBoxes, type Box, type Point } from '@/domain/geometry'
 import { worldToScreen, type Camera, type Viewport } from '@/domain/camera'
+import { NOTE_FONT_CM } from '@/domain/notes'
 import { handlePoint, HANDLES, isResizable, ROTATE_HANDLE_OFFSET_PX, type Handle } from '@/domain/resize'
 import { maxSeats, SEAT_RADIUS_CM } from '@/domain/seats'
 import type { SeatRef } from '@/domain/seating'
 import type { Guide } from '@/domain/snapping'
+import type { Layers } from '../state/device-view'
+import { isLayerLocked } from '../input/hit-test'
 import type { EditorMode, GapReadout } from '../state/ui-store'
 
 export const HANDLE_PX = 10
@@ -46,6 +59,14 @@ export const BUTTON_STEP_PX = TAP_TARGET_PX + 8
  */
 export const ROTATE_HANDLE_COARSE_OFFSET_PX = 56
 
+/** The note text box's smallest size and its font size range, in screen px. */
+export const NOTE_EDITOR_MIN_WIDTH_PX = 160
+export const NOTE_EDITOR_MIN_HEIGHT_PX = 72
+export const NOTE_EDITOR_FONT_MIN_PX = 16
+export const NOTE_EDITOR_FONT_MAX_PX = 32
+/** Kept clear round the text box inside the viewport. */
+export const NOTE_EDITOR_MARGIN_PX = 8
+
 /** Screen px along each side of the viewport that other controls cover. */
 export type ScreenInsets = { top: number; right: number; bottom: number; left: number }
 export const NO_INSETS: ScreenInsets = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 })
@@ -61,7 +82,7 @@ export type ProjectOptions = {
 export type GuestSeatSpot = SeatRef & { world: Point }
 
 export type OverlayInput = {
-  /** Selected items, in selection order. */
+  /** Selected items, in selection order, arrows at their drawn ends (useResolvedSelection). */
   selected: readonly Item[]
   mode: EditorMode
   marquee: Box | null
@@ -69,6 +90,12 @@ export type OverlayInput = {
   gap: GapReadout | null
   /** Selected guests' seats. */
   guestSeats?: readonly GuestSeatSpot[]
+  /** The device's layer switches: items on a locked layer get no handles. */
+  layers?: Layers
+  /** The table or fixture an arrow end being dragged or drawn would attach to. */
+  attachTarget?: Item | null
+  /** The sticky or text note being typed into. */
+  editing?: Note | null
 }
 
 /** The ring round a selected guest's seat sits this far outside the seat circle. */
@@ -92,6 +119,12 @@ export type ScreenOverlay = {
   marquee: { x: number; y: number; width: number; height: number } | null
   guides: ScreenLine[]
   gap: (ScreenLine & { x: number; y: number; text: string; warn: boolean }) | null
+  /** One selected, unlocked arrow or line in Edit mode: its end handles. */
+  arrowEnds: { itemId: string; start: Point; end: Point; startAttached: boolean; endAttached: boolean } | null
+  /** The outline (chairs included) of the item an arrow end would attach to. */
+  attachOutline: ScreenOutline | null
+  /** The text box over the note being typed into: its center, size, turn and font size. */
+  noteEditor: { itemId: string; x: number; y: number; width: number; height: number; rotation: number; fontPx: number } | null
   /** Rings round the selected guests' seats. */
   guestRings: (SeatRef & { key: string; cx: number; cy: number; r: number })[]
   /** Beside selected guests in Edit mode: the More button for the guest menu, for `seat` (the first selected). */
@@ -125,7 +158,32 @@ function outline(item: Item, camera: Camera): ScreenOutline {
     const c = worldToScreen(camera, item)
     return { id: item.id, kind: 'circle', cx: c.x, cy: c.y, r: (item.width / 2) * camera.zoom }
   }
+  if (isArrowNote(item)) {
+    // The line itself: a two-point polygon draws as one segment.
+    const ends = storedEnds(item)
+    return { id: item.id, kind: 'polygon', points: [worldToScreen(camera, ends.start), worldToScreen(camera, ends.end)] }
+  }
   return { id: item.id, kind: 'polygon', points: itemCorners(item).map((p) => worldToScreen(camera, p)) }
+}
+
+/** The outline an arrow end attaches to, chairs included. */
+function attachOutline(item: Item, camera: Camera): ScreenOutline {
+  const o = anchorOutline(item)
+  if (o.kind === 'circle') {
+    const c = worldToScreen(camera, o)
+    return { id: item.id, kind: 'circle', cx: c.x, cy: c.y, r: o.r * camera.zoom }
+  }
+  return { id: item.id, kind: 'polygon', points: obbCorners(o).map((p) => worldToScreen(camera, p)) }
+}
+
+/** The text box over a note being typed into: the note's box on screen, kept usable and inside the viewport. */
+function noteEditorBox(note: Note, camera: Camera, viewport: Viewport): NonNullable<ScreenOverlay['noteEditor']> {
+  const c = worldToScreen(camera, note)
+  const room = (size: number) => (size > 0 ? size - 2 * NOTE_EDITOR_MARGIN_PX : Infinity)
+  const width = Math.min(Math.max(note.width * camera.zoom, NOTE_EDITOR_MIN_WIDTH_PX), Math.max(NOTE_EDITOR_MIN_WIDTH_PX, room(viewport.width)))
+  const height = Math.min(Math.max(note.height * camera.zoom, NOTE_EDITOR_MIN_HEIGHT_PX), Math.max(NOTE_EDITOR_MIN_HEIGHT_PX, room(viewport.height)))
+  const fontPx = Math.min(NOTE_EDITOR_FONT_MAX_PX, Math.max(NOTE_EDITOR_FONT_MIN_PX, NOTE_FONT_CM * camera.zoom))
+  return { itemId: note.id, x: c.x, y: c.y, width, height, rotation: note.rotation, fontPx }
 }
 
 function rotateHandle(item: Item, camera: Camera, offset: number): ScreenOverlay['rotate'] {
@@ -201,15 +259,29 @@ export function projectOverlay(input: OverlayInput, camera: Camera, viewport: Vi
   const insets = options.insets ?? NO_INSETS
   const coarse = options.coarse === true
   const single = input.selected.length === 1 ? input.selected[0] : null
-  const editable = edit && single !== null && !single.locked ? single : null
+  const editable = edit && single !== null && !single.locked && !isLayerLocked(single, input.layers) ? single : null
+  const arrow = editable && isArrowNote(editable) ? editable : null
+  const boxed = arrow ? null : editable
 
   const handles: ScreenHandle[] =
-    editable && isResizable(editable)
+    boxed && isResizable(boxed)
       ? HANDLES.map((handle) => {
-          const p = worldToScreen(camera, handlePoint(editable, handle))
-          return { handle, x: p.x, y: p.y, cursor: handleCursor(handle, editable.rotation) }
+          const p = worldToScreen(camera, handlePoint(boxed, handle))
+          return { handle, x: p.x, y: p.y, cursor: handleCursor(handle, boxed.rotation) }
         })
       : []
+
+  let arrowEnds: ScreenOverlay['arrowEnds'] = null
+  if (arrow) {
+    const ends = storedEnds(arrow)
+    arrowEnds = {
+      itemId: arrow.id,
+      start: worldToScreen(camera, ends.start),
+      end: worldToScreen(camera, ends.end),
+      startAttached: arrow.attachedTo.start !== null,
+      endAttached: arrow.attachedTo.end !== null,
+    }
+  }
 
   const marquee = input.marquee
     ? (() => {
@@ -252,14 +324,17 @@ export function projectOverlay(input: OverlayInput, camera: Camera, viewport: Vi
     guestRings,
     guestMenuButton,
     outlines: input.selected.map((item) => outline(item, camera)),
-    handleItemId: editable && isResizable(editable) ? editable.id : null,
+    handleItemId: boxed && isResizable(boxed) ? boxed.id : null,
     handles,
-    rotate: editable ? rotateHandle(editable, camera, coarse ? ROTATE_HANDLE_COARSE_OFFSET_PX : ROTATE_HANDLE_OFFSET_PX) : null,
+    rotate: boxed ? rotateHandle(boxed, camera, coarse ? ROTATE_HANDLE_COARSE_OFFSET_PX : ROTATE_HANDLE_OFFSET_PX) : null,
     ...(edit
       ? selectionButtons(input.selected, camera, viewport, insets, coarse ? COARSE_BUTTON_GAP_PX : SEAT_BUTTON_GAP_PX)
       : { seatButtons: null, menuButton: null }),
     marquee,
     guides,
     gap,
+    arrowEnds,
+    attachOutline: input.attachTarget ? attachOutline(input.attachTarget, camera) : null,
+    noteEditor: edit && input.editing ? noteEditorBox(input.editing, camera, viewport) : null,
   }
 }

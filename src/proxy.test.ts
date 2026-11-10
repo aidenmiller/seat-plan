@@ -47,6 +47,11 @@ describe('proxy', () => {
     }
   })
 
+  it('tells the browser never to pass a share address on', () => {
+    expect(proxy(req(`/share/${TOKEN}`)).headers.get('referrer-policy')).toBe('no-referrer')
+    expect(proxy(req(`/share/${TOKEN}/data`)).headers.get('referrer-policy')).toBe('no-referrer')
+  })
+
   it('marks every response noindex', () => {
     for (const path of ['/', '/api/x', '/login', `/share/${TOKEN}`]) {
       expect(proxy(req(path)).headers.get('x-robots-tag'), path).toContain('noindex')

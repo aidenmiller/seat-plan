@@ -869,6 +869,92 @@ export type CoupleRuleBody = z.input<typeof coupleRuleBody>
 /** 200 reply to PATCH /api/rules/couple: both partners as they are now, in the order sent. */
 export type CoupleRuleReply = { guests: Guest[] }
 
+// ---------- Share links ----------
+//
+// A view-only link to one layout for the venue (spec section 2, PLAN change
+// 24). Each has its own password (stored as an argon2id hash) and a long
+// random token in its URL. Changing the password or turning the link off
+// raises its credential version, which signs out everyone using it.
+
+/** The shortest share link password. */
+export const SHARE_PASSWORD_MIN = 6
+const sharePassword = z
+  .string()
+  .min(SHARE_PASSWORD_MIN, `Use at least ${SHARE_PASSWORD_MIN} characters`)
+  .max(200, 'Use at most 200 characters')
+const shareLabel = z.string().overwrite(cleanOneLine).max(100)
+
+export type ShareLink = {
+  id: string
+  weddingId: string
+  layoutId: string
+  layoutName: string
+  /** "Caterer", "DJ" (DECISIONS 27). May be empty. */
+  label: string
+  /** The link's path on this site: /share/<token>. */
+  path: string
+  showNames: boolean
+  showNotes: boolean
+  /** False once turned off. The lists show only links that are on. */
+  enabled: boolean
+  lastOpenedAt: string | null
+  createdAt: string
+}
+
+/** POST /api/layouts/:id/share-links. 201 ShareLink. */
+export const createShareLinkBody = z.object({
+  /** The browser may choose the id, so a retried create gives the same link back. */
+  id: uuid.optional(),
+  label: shareLabel.optional(),
+  password: sharePassword,
+  showNames: z.boolean().optional(),
+  showNotes: z.boolean().optional(),
+})
+export type CreateShareLinkBody = z.input<typeof createShareLinkBody>
+
+/**
+ * PATCH /api/share-links/:id with only the changed fields. A new password, or
+ * enabled: false, signs out everyone using the link. Replies with the ShareLink.
+ */
+export const updateShareLinkBody = z
+  .object({
+    label: shareLabel.optional(),
+    password: sharePassword.optional(),
+    enabled: z.boolean().optional(),
+    showNames: z.boolean().optional(),
+    showNotes: z.boolean().optional(),
+  })
+  .refine((b) => Object.keys(b).length > 0, 'Nothing to change')
+export type UpdateShareLinkBody = z.input<typeof updateShareLinkBody>
+
+/** POST /share/:token/login. 200 { ok: true } with the link's cookie, 401 wrong password, 429 too many tries. */
+export const shareLoginBody = z.object({ password: z.string().max(1000) })
+
+/** GET /share/:token/data: the one layout, as the link may show it. */
+export type { ShareView, ShareGuest } from '@/domain/share-view'
+
+// ---------- Backup and restore ----------
+//
+// GET /api/weddings/:id/backup downloads the backup file (src/domain/backup/schema.ts).
+// Restore sends it in steps, each under Vercel's 4.5 MB request limit:
+//   1. POST /api/weddings/restore: the wedding and its rows (restoreStartSchema). 201 RestoreStarted.
+//   2. POST /api/weddings/restore/:jobId/templates, once per template. RestoredTemplate.
+//   3. PUT /api/weddings/restore/:jobId/templates/:templateId/image with the raw image, when needsImage.
+//   4. POST /api/weddings/restore/:jobId/layouts, once per layout. RestoredLayout.
+// Every step can be sent again after a lost reply: it finds what the first try made.
+
+export type RestoreStarted = { jobId: string; weddingId: string; weddingName: string }
+
+export type RestoredTemplate = {
+  /** The template the restored layouts use: the old one, or a new "Name (restored)". */
+  templateId: string
+  reused: boolean
+  /** Send the template's floor plan image next. */
+  needsImage: boolean
+}
+
+export type RestoredLayout = { layoutId: string; droppedSeats: number }
+
 // ---------- Errors ----------
 
 /**

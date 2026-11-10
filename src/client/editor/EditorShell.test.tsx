@@ -2,9 +2,10 @@ import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { emptyCanvas } from '@/domain/canvas-schema'
+import { makeNote } from '@/domain/notes'
 import { makeItem } from '@/domain/presets'
 import type { LayoutDetail } from '@/shared/api'
-import { canvasInsets, EditorShell } from './EditorShell'
+import { canvasInsets, EditorShell, refusalNotice } from './EditorShell'
 import { projectOverlay, TAP_TARGET_PX } from './overlay/geometry'
 import { PHONE_TOOLBAR_BOTTOM_PX } from './panels/CanvasToolbar'
 import { ZOOM_CONTROLS_PX } from './panels/ZoomControls'
@@ -86,5 +87,35 @@ describe('canvasInsets', () => {
     expect(canvasInsets(false).top).toBe(PHONE_TOOLBAR_BOTTOM_PX + 8)
     expect(canvasInsets(true).bottom).toBe(88 + 8 + ZOOM_CONTROLS_PX + 8)
     expect(canvasInsets(false).bottom).toBe(8 + ZOOM_CONTROLS_PX + 8)
+  })
+})
+
+describe('refusalNotice', () => {
+  it('says why a change was refused, View mode and the author first', () => {
+    expect(refusalNotice('notesHidden', 'view', true)).toBe('Switch to Edit to change the plan.')
+    expect(refusalNotice(undefined, 'edit', false)).toBe('Pick Noa or Aiden at the top first.')
+    expect(refusalNotice('noAuthor', 'edit', true)).toBe('Pick Noa or Aiden at the top first.')
+    expect(refusalNotice('notesHidden', 'edit', true)).toBe('Notes are hidden. Show them to change notes.')
+    expect(refusalNotice('notesLocked', 'edit', true)).toBe('Notes are locked. Unlock them to change notes.')
+    expect(refusalNotice('layerLocked', 'edit', true)).toBe('That part of the plan is locked.')
+    // Saving not ready, or a conflict open: those have their own banners.
+    expect(refusalNotice(undefined, 'edit', true)).toBeNull()
+  })
+})
+
+describe('EditorShell notes', () => {
+  const withNotes: LayoutDetail = {
+    ...layout,
+    canvas: {
+      ...emptyCanvas(),
+      items: [{ ...makeNote('sticky', { x: 0, y: 0 }, 'Aiden', 'green', Date.UTC(2026, 10, 10), 'n1'), text: 'Bar opens at 6' }],
+    },
+  }
+  const html = renderToStaticMarkup(<EditorShell layout={withNotes} />)
+
+  it('draws notes on the plan and puts the notes switches on the canvas', () => {
+    expect(html).toMatch(/data-item-id="n1" data-kind="note" data-note-type="sticky" data-note-color="green"/)
+    expect(html).toContain('>Bar opens')
+    expect(html).toContain('data-testid="notes-show"')
   })
 })

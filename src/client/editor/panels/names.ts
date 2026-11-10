@@ -1,6 +1,7 @@
 /** Plain names for what is on the canvas, for panel headings and menus. */
 import type { Fixture, Item, Shape } from '@/domain/canvas-schema'
 import type { AlignMode, DistributeAxis } from '@/domain/align'
+import { NOTE_TYPE_NAMES, textPreview } from '@/domain/notes'
 
 export const FIXTURE_NAMES: Record<Fixture['type'], string> = {
   food: 'Food station',
@@ -38,7 +39,7 @@ export type WithoutPosition<T> = T extends unknown ? Omit<T, 'x' | 'y'> : never
 /** What the panels show of an item: every field but x and y, which change on every frame of a drag. */
 export type ItemFields = WithoutPosition<Item>
 
-/** "Table 3", "Family (table 3)", "Bar", "Wall". */
+/** "Table 3", "Family (table 3)", "Bar", "Wall", a note's first words or "Arrow". */
 export function itemName(item: ItemFields): string {
   switch (item.kind) {
     case 'table': {
@@ -52,7 +53,7 @@ export function itemName(item: ItemFields): string {
     case 'chairRow':
       return item.rowLabel.trim() || `Row ${item.rowNumber}`
     case 'note':
-      return 'Note'
+      return textPreview(item.text, 40) || NOTE_TYPE_NAMES[item.type]
   }
 }
 

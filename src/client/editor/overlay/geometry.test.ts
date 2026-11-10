@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { emptyCanvas, type Item, type Table } from '@/domain/canvas-schema'
+import { emptyCanvas, type Item, type Note, type Table } from '@/domain/canvas-schema'
+import { withEnds, withResolvedEnds } from '@/domain/arrows'
+import { makeNote } from '@/domain/notes'
 import { makeItem } from '@/domain/presets'
 import { footprintBox } from '@/domain/geometry'
+import { defaultLayers } from '../state/device-view'
 import {
   BUTTON_STEP_PX,
   COARSE_BUTTON_GAP_PX,
   GUEST_RING_GAP_PX,
   handleCursor,
+  NOTE_EDITOR_FONT_MIN_PX,
+  NOTE_EDITOR_MIN_HEIGHT_PX,
+  NOTE_EDITOR_MIN_WIDTH_PX,
   placeButtonColumn,
   projectOverlay,
   ROTATE_HANDLE_COARSE_OFFSET_PX,
@@ -251,5 +257,79 @@ describe('seating in the overlay', () => {
     const view = projectOverlay(input([], { guestSeats, mode: 'view' }), camera, viewport)
     expect(view.guestRings).toHaveLength(2)
     expect(view.guestMenuButton).toBeNull()
+  })
+})
+
+describe('notes in the overlay', () => {
+  const NOW = Date.UTC(2026, 10, 10)
+  const sticky = makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 's')
+  const arrow = (attachedTo: Note['attachedTo'] = { start: null, end: null }) =>
+    withEnds({ ...makeNote('arrow', { x: 0, y: 0 }, 'Noa', 'blue', NOW, 'a'), attachedTo }, { x: 0, y: 0 }, { x: 400, y: 300 })
+  const camera = { zoom: 0.5, x: 100, y: 50 }
+
+  it('gives a selected arrow two end handles, and no resize or rotate handles', () => {
+    const s = projectOverlay(input([arrow()]), camera, viewport)
+    expect(s.handles).toHaveLength(0)
+    expect(s.rotate).toBeNull()
+    expect(s.handleItemId).toBeNull()
+    expect(s.arrowEnds).toEqual({ itemId: 'a', start: { x: 100, y: 50 }, end: { x: 300, y: 200 }, startAttached: false, endAttached: false })
+    // Its outline is the line.
+    expect(s.outlines[0]).toEqual({ id: 'a', kind: 'polygon', points: [{ x: 100, y: 50 }, { x: 300, y: 200 }] })
+    expect(s.menuButton).not.toBeNull()
+  })
+
+  it('puts an attached end where it is drawn, on the chair ring', () => {
+    const table = makeItem('round', { x: 0, y: 0 }, 't', emptyCanvas()) as Table
+    const held = arrow({ start: 't', end: null })
+    const drawn = withResolvedEnds(held, { items: [table, held] })
+    const s = projectOverlay(input([drawn]), { zoom: 1, x: 0, y: 0 }, viewport)
+    const ring = 76.2 + 53
+    expect(Math.hypot(s.arrowEnds!.start.x, s.arrowEnds!.start.y)).toBeCloseTo(ring, 6)
+    expect(s.arrowEnds!.startAttached).toBe(true)
+    expect(s.arrowEnds!.endAttached).toBe(false)
+  })
+
+  it('gives no end handles in View mode, on a locked arrow, or among several', () => {
+    expect(projectOverlay(input([arrow()], { mode: 'view' }), camera, viewport).arrowEnds).toBeNull()
+    expect(projectOverlay(input([{ ...arrow(), locked: true }]), camera, viewport).arrowEnds).toBeNull()
+    expect(projectOverlay(input([arrow(), sticky]), camera, viewport).arrowEnds).toBeNull()
+  })
+
+  it('gives notes on a locked layer an outline but no handles', () => {
+    const layers = defaultLayers()
+    layers.notes.locked = true
+    const s = projectOverlay(input([sticky], { layers }), camera, viewport)
+    expect(s.outlines).toHaveLength(1)
+    expect(s.handles).toHaveLength(0)
+    expect(s.rotate).toBeNull()
+    expect(projectOverlay(input([arrow()], { layers }), camera, viewport).arrowEnds).toBeNull()
+    // Tables on the open furniture layer keep theirs.
+    expect(projectOverlay(input([rect()], { layers }), camera, viewport).handles).toHaveLength(8)
+    // A sticky note on an open layer resizes and turns like a shape.
+    const open = projectOverlay(input([sticky]), camera, viewport)
+    expect(open.handles).toHaveLength(8)
+    expect(open.rotate).not.toBeNull()
+  })
+
+  it('outlines the table an arrow end would attach to, chairs included', () => {
+    const table = makeItem('round', { x: 0, y: 0 }, 't', emptyCanvas())
+    const s = projectOverlay(input([], { attachTarget: table }), { zoom: 2, x: 10, y: 20 }, viewport)
+    expect(s.attachOutline).toEqual({ id: 't', kind: 'circle', cx: 10, cy: 20, r: (76.2 + 53) * 2 })
+    const bar = makeItem('bar', { x: 0, y: 0 }, 'b', emptyCanvas())
+    const p = projectOverlay(input([], { attachTarget: bar }), { zoom: 1, x: 0, y: 0 }, viewport).attachOutline
+    expect(p).toMatchObject({ id: 'b', kind: 'polygon' })
+    expect(projectOverlay(input([]), camera, viewport).attachOutline).toBeNull()
+  })
+
+  it('covers the note being typed into with a text box, kept usable at any zoom and inside the viewport', () => {
+    const near = projectOverlay(input([sticky], { editing: sticky }), { zoom: 2, x: 500, y: 400 }, viewport).noteEditor!
+    expect(near).toEqual({ itemId: 's', x: 500, y: 400, width: 240, height: 240, rotation: 0, fontPx: 32 })
+    const far = projectOverlay(input([sticky], { editing: sticky }), { zoom: 0.1, x: 500, y: 400 }, viewport).noteEditor!
+    expect(far).toMatchObject({ width: NOTE_EDITOR_MIN_WIDTH_PX, height: NOTE_EDITOR_MIN_HEIGHT_PX, fontPx: NOTE_EDITOR_FONT_MIN_PX })
+    const huge = projectOverlay(input([sticky], { editing: { ...sticky, rotation: 30 } }), { zoom: 8, x: 0, y: 0 }, phone).noteEditor!
+    expect(huge.width).toBeLessThanOrEqual(phone.width)
+    expect(huge.height).toBeLessThanOrEqual(phone.height)
+    expect(huge.rotation).toBe(30)
+    expect(projectOverlay(input([sticky], { editing: sticky, mode: 'view' }), camera, viewport).noteEditor).toBeNull()
   })
 })

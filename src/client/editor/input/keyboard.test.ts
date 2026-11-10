@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isPressable, isTextEntry, keyCommand, type KeyLike } from './keyboard'
+import { isNoteEditorKey, isPressable, isTextEntry, keyCommand, type KeyLike } from './keyboard'
 
 const k = (key: string, o: Partial<KeyLike> = {}): KeyLike => ({ key, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, ...o })
 
@@ -55,5 +55,27 @@ describe('focus checks', () => {
     expect(isPressable({ tagName: 'BUTTON' })).toBe(true)
     expect(isPressable({ tagName: 'DIV', getAttribute: () => 'switch' })).toBe(true)
     expect(isPressable({ tagName: 'DIV', getAttribute: () => null })).toBe(false)
+  })
+})
+
+describe('notes', () => {
+  it('maps Enter to typing into a note, and Cmd/Ctrl+Enter to stopping', () => {
+    expect(keyCommand(k('Enter'))).toEqual({ type: 'enter', mod: false })
+    expect(keyCommand(k('NumpadEnter'))).toEqual({ type: 'enter', mod: false })
+    expect(keyCommand(k('Enter', { metaKey: true }))).toEqual({ type: 'enter', mod: true })
+    expect(keyCommand(k('Enter', { ctrlKey: true }))).toEqual({ type: 'enter', mod: true })
+    expect(keyCommand(k('Enter', { shiftKey: true }))).toBeNull()
+    expect(keyCommand(k('Enter', { altKey: true }))).toBeNull()
+  })
+
+  it('lets only Esc and Cmd/Ctrl+Enter out of a note text box', () => {
+    const box = { tagName: 'TEXTAREA', closest: (s: string) => (s === '[data-note-editor]' ? {} : null) }
+    const other = { tagName: 'TEXTAREA', closest: () => null }
+    expect(isNoteEditorKey(k('Escape'), box)).toBe(true)
+    expect(isNoteEditorKey(k('Enter', { metaKey: true }), box)).toBe(true)
+    expect(isNoteEditorKey(k('Enter'), box)).toBe(false)
+    expect(isNoteEditorKey(k('Backspace'), box)).toBe(false)
+    expect(isNoteEditorKey(k('Escape'), other)).toBe(false)
+    expect(isNoteEditorKey(k('Escape'), null)).toBe(false)
   })
 })

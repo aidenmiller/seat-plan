@@ -5,6 +5,8 @@
  * the same menu.
  *
  *  - Tables: Fit seats, Lock, Copy, Duplicate, Delete.
+ *  - Notes: Edit text (sticky and text notes: the phone's way to type into
+ *    one), Mark done or Mark not done, then as other items.
  *  - Other items: Lock, Copy, Duplicate, To front, To back, Delete.
  *  - Several items: Lock all, Copy, Duplicate, Delete.
  *  - Empty canvas: Paste (at the pressed point), Select all, Fit to content.
@@ -16,6 +18,7 @@
  */
 import type { Item } from '@/domain/canvas-schema'
 import type { Point } from '@/domain/geometry'
+import { isTextNote } from '@/domain/notes'
 import type { ContextMenuItem } from '@/client/ui/ContextMenu'
 import type { EditorActions, SeatRequest } from '../input/controller'
 import type { Target } from '../input/hit-test'
@@ -34,10 +37,23 @@ export type CanvasMenuInput = {
   pasteAt?: Point | null
   actions: Pick<
     EditorActions,
-    'fitSeats' | 'setLocked' | 'copySelection' | 'duplicateSelection' | 'deleteSelection' | 'bringToFront' | 'sendToBack' | 'paste' | 'selectAll' | 'zoomFit'
+    | 'fitSeats'
+    | 'setLocked'
+    | 'copySelection'
+    | 'duplicateSelection'
+    | 'deleteSelection'
+    | 'bringToFront'
+    | 'sendToBack'
+    | 'paste'
+    | 'selectAll'
+    | 'zoomFit'
+    | 'startNoteEdit'
+    | 'toggleNoteDone'
   >
   onSeatRequest(tableId: string, request: SeatRequest): void
   onDetails(): void
+  /** Typing into a note began from the menu (phones lower the sheet so the plan shows). */
+  onEditNote?(): void
 }
 
 export type CanvasMenu = { label: string; items: ContextMenuItem[] }
@@ -99,10 +115,24 @@ export function canvasMenu(input: CanvasMenuInput): CanvasMenu | null {
       ],
     }
   }
+  const noteItems: ContextMenuItem[] = []
+  if (item.kind === 'note') {
+    if (isTextNote(item)) {
+      noteItems.push({
+        id: 'editText',
+        label: 'Edit text',
+        onSelect: () => {
+          if (actions.startNoteEdit(item.id)) input.onEditNote?.()
+        },
+      })
+    }
+    noteItems.push({ id: 'done', label: item.done ? 'Mark not done' : 'Mark done', onSelect: () => void actions.toggleNoteDone(item.id) })
+  }
   return {
-    label: 'Item menu',
+    label: item.kind === 'note' ? 'Note menu' : 'Item menu',
     items: [
       ...details,
+      ...noteItems,
       lock,
       copy,
       duplicate,

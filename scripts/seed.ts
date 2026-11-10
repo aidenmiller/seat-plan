@@ -11,15 +11,16 @@
  * list from scripts/demo-guests.ts: about 120 guests, 8 groups with their
  * members, 20 couples linked as partners and 5 rules, and seats about 80 of
  * them at the tables of "Reception plan A" and "Canvas tour" (the sweetheart
- * table stays free for Noa and Aiden). Later milestones add ceremony rows (8)
- * and notes (9). The Toronto Beach Club template itself comes from a
- * migration, so production has it too.
+ * table stays free for Noa and Aiden). Milestone 9 adds a few notes to
+ * "Canvas tour" (scripts/demo-notes.ts), among them an arrow attached to the
+ * bar and table 3. Ceremony rows come with milestone 8. The Toronto Beach Club
+ * template itself comes from a migration, so production has it too.
  *
  * On a second run: guests are matched by name (ignoring case and accents)
  * and only missing ones are added; a group that exists keeps its members; a
  * couple is linked only while neither has a partner; a rule is added only
  * when no rule has its note; a layout that already seats anyone is left as
- * it is.
+ * it is, and so is one that already holds notes.
  *
  * Run it with `npm run seed`, which starts tsx with the react-server
  * condition. That is how a server build resolves `import 'server-only'` (to
@@ -39,6 +40,7 @@ import { addRoundTable } from '../src/domain/round-table'
 import { createPool, requireDatabaseUrl } from '../src/server/db/connection'
 import * as schema from '../src/server/db/schema'
 import { demoPlan, PLAN_A_TABLES, type DemoPlan } from './demo-guests'
+import { addDemoNotes } from './demo-notes'
 
 export const DEMO_WEDDING_NAME = 'Demo wedding'
 export const BLANK_LAYOUT_NAME = 'Reception plan A'
@@ -165,6 +167,9 @@ async function main() {
 
     // The guest list (milestone 4).
     await seedGuestList(db, server, weddingId, demoPlan({ tour: TOUR_LAYOUT_NAME, planA: BLANK_LAYOUT_NAME }))
+
+    // Notes (milestone 9).
+    await seedNotes(db, server, weddingId, TOUR_LAYOUT_NAME)
   } finally {
     await pool.end()
   }
@@ -303,6 +308,38 @@ async function seedGuestList(db: Db, server: Server, weddingId: string, plan: De
     }
     console.log(`Seated ${count - result.dropped.length} guests in "${layoutName}".`)
   }
+}
+
+/** The demo notes, through writeCanvas(), in a layout that has no notes yet. */
+async function seedNotes(db: Db, server: Server, weddingId: string, layoutName: string) {
+  const summary = ((await server.listLayouts(db, weddingId)) ?? []).find((l) => l.name === layoutName)
+  const layout = summary ? await server.getLayoutDetail(db, summary.id) : null
+  if (!layout) {
+    console.log(`No "${layoutName}", so no notes.`)
+    return
+  }
+  if (layout.canvas.items.some((item) => item.kind === 'note')) {
+    console.log(`"${layoutName}" already has notes.`)
+    return
+  }
+  const canvas = addDemoNotes(layout.canvas, randomUUID, Date.now())
+  const added = canvas.items.length - layout.canvas.items.length
+  const result = await db.transaction((tx) =>
+    server.writeCanvas(tx, {
+      mode: 'save',
+      weddingId,
+      layoutId: layout.id,
+      canvas,
+      baseVersion: layout.version,
+      saveId: randomUUID(),
+      editedBy: 'Aiden',
+    }),
+  )
+  if (result.status !== 'saved') {
+    const detail = result.status === 'invalid' ? `: ${result.issues.join('; ')}` : ''
+    throw new Error(`Could not add notes to "${layoutName}": ${result.status}${detail}`)
+  }
+  console.log(`Added ${added} notes to "${layoutName}".`)
 }
 
 main().catch((err) => {

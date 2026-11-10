@@ -56,7 +56,14 @@ import type {
   CreateRuleBody,
   StoredRule,
   UpdateRuleBody,
+  CreateShareLinkBody,
+  RestoredLayout,
+  RestoredTemplate,
+  RestoreStarted,
+  ShareLink,
+  UpdateShareLinkBody,
 } from '@/shared/api'
+import type { BackupLayoutInput, BackupTemplateInput, RestoreStartInput } from '@/domain/backup/schema'
 
 export class ApiRequestError extends Error {
   /** The HTTP status, or 0 when no answer came back. */
@@ -236,12 +243,16 @@ export const venueImageUrl = (id: string, imageId: string) => `/api/venues/${enc
  * Uploads a PNG or JPEG (at most MAX_VENUE_IMAGE_BYTES) as the raw body. The
  * template does not use it until Accept. 413 too large, 415 not a PNG or JPEG.
  */
-export async function uploadVenueImage(id: string, image: Blob): Promise<VenueImageInfo> {
-  const path = `/api/venues/${enc(id)}/images`
+export function uploadVenueImage(id: string, image: Blob): Promise<VenueImageInfo> {
+  return sendRaw<VenueImageInfo>('POST', `/api/venues/${enc(id)}/images`, image)
+}
+
+/** Sends a file as the raw request body. */
+async function sendRaw<T>(method: 'POST' | 'PUT', path: string, image: Blob): Promise<T> {
   let res: Response
   try {
     res = await fetch(path, {
-      method: 'POST',
+      method,
       headers: { 'content-type': image.type || 'application/octet-stream' },
       body: image,
       cache: 'no-store',
@@ -253,9 +264,9 @@ export async function uploadVenueImage(id: string, image: Blob): Promise<VenueIm
   const data: unknown = await res.json().catch(() => null)
   if (!res.ok) {
     const code = isApiError(data) ? data.error : `HTTP ${res.status}`
-    throw new ApiRequestError(res.status, data, `POST ${path} failed: ${code}`)
+    throw new ApiRequestError(res.status, data, `${method} ${path} failed: ${code}`)
   }
-  return data as VenueImageInfo
+  return data as T
 }
 
 export type FloorplanImportResult = Extract<FloorplanImportLine, { type: 'draft' | 'error' }>
@@ -402,3 +413,35 @@ export const deleteRule = (id: string) => request<{ ok: true }>('DELETE', `/api/
 
 /** Switches a couple rule on both partners. 409 when they are no longer partners. */
 export const setCoupleRule = (body: CoupleRuleBody) => request<CoupleRuleReply>('PATCH', '/api/rules/couple', body)
+
+// ---------- Share links ----------
+
+export const listWeddingShareLinks = (weddingId: string) =>
+  request<ShareLink[]>('GET', `/api/weddings/${enc(weddingId)}/share-links`)
+
+export const listLayoutShareLinks = (layoutId: string) => request<ShareLink[]>('GET', `/api/layouts/${enc(layoutId)}/share-links`)
+
+export const createShareLink = (layoutId: string, body: CreateShareLinkBody) =>
+  request<ShareLink>('POST', `/api/layouts/${enc(layoutId)}/share-links`, body)
+
+/** A new password, or enabled: false, signs out everyone using the link. */
+export const updateShareLink = (id: string, body: UpdateShareLinkBody) =>
+  request<ShareLink>('PATCH', `/api/share-links/${enc(id)}`, body)
+
+export const deleteShareLink = (id: string) => request<{ ok: true }>('DELETE', `/api/share-links/${enc(id)}`)
+
+// ---------- Backup and restore ----------
+
+export const backupUrl = (weddingId: string) => `/api/weddings/${enc(weddingId)}/backup`
+
+export const startRestore = (body: RestoreStartInput) => request<RestoreStarted>('POST', '/api/weddings/restore', body)
+
+export const restoreTemplate = (jobId: string, body: BackupTemplateInput) =>
+  request<RestoredTemplate>('POST', `/api/weddings/restore/${enc(jobId)}/templates`, body)
+
+/** The image of a template the restore copied, as raw bytes. `templateId` is its id in the backup. */
+export const restoreTemplateImage = (jobId: string, templateId: string, image: Blob) =>
+  sendRaw<{ ok: true }>('PUT', `/api/weddings/restore/${enc(jobId)}/templates/${enc(templateId)}/image`, image)
+
+export const restoreLayout = (jobId: string, body: BackupLayoutInput) =>
+  request<RestoredLayout>('POST', `/api/weddings/restore/${enc(jobId)}/layouts`, body)
