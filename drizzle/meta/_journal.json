@@ -29,6 +29,13 @@
       "when": 1794269898404,
       "tag": "0003_venue_recent_saves",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794272380720,
+      "tag": "0004_toronto_beach_club_fixed_items",
+      "breakpoints": true
     }
   ]
 }
