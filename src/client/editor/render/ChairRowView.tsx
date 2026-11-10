@@ -1,9 +1,12 @@
 'use client'
 
 /**
- * A ceremony chair row (milestone 8 adds its tools): one seat circle per
- * chair along the row, dark blue when taken and grey when empty, and the
- * row's label at its left end.
+ * A ceremony chair row (spec section 8): one seat circle per chair along the
+ * row, dark blue when taken and grey when empty. At the end away from the
+ * aisle: the row's label ("Row 3") and, for a reserved row, what it is
+ * reserved for ("Family, row 1"). The front row of a block also shows the
+ * block's side label ("Noa's side") in front of it. Labels turn so they
+ * never read upside down.
  *
  * Seating marks as on tables (TableView): a + in empty chairs in Edit mode,
  * the green or red tint behind the row while a guest is dragged, the chair
@@ -12,7 +15,8 @@
  */
 import { memo } from 'react'
 import type { ChairRow } from '@/domain/canvas-schema'
-import { chairRowLength } from '@/domain/geometry'
+import { chairLocalXs, rowName } from '@/domain/ceremony'
+import { chairRowLength, normalizeDegrees } from '@/domain/geometry'
 import { SEAT_RADIUS_CM } from '@/domain/seats'
 import { useDragTint, useDropTargetSeat, useSeatPulse } from '../seating/react'
 import { SeatPlus, SeatPulseRing } from './seat-marks'
@@ -22,16 +26,32 @@ import { useItemMarks } from '../problems/analysis'
 import { FADED_OPACITY, ItemBadge, SeatRings } from './rule-marks'
 
 const ROW_LABEL_CM = 20
+const RESERVED_LABEL_CM = 15
+const SIDE_LABEL_CM = 18
+const RESERVED_INK = '#92400e'
+
+/** True when the row is turned so far that its labels would read upside down. */
+function upsideDown(rotation: number): boolean {
+  const r = normalizeDegrees(rotation)
+  return r > 90 && r <= 270
+}
 
 export const ChairRowView = memo(function ChairRowView({ row, selected }: { row: ChairRow; selected: boolean }) {
   const length = chairRowLength(row)
-  const first = -length / 2 + SEAT_RADIUS_CM
-  const label = row.rowLabel.trim() || `Row ${row.rowNumber}`
+  const label = rowName(row)
+  const reserved = row.reservedFor?.trim() ?? ''
+  const side = row.rowNumber === 1 ? (row.blockLabel?.trim() ?? '') : ''
+  // Labels go at the end away from the aisle.
+  const atRight = row.aisleEnd === 'left'
+  const flipped = upsideDown(row.rotation)
+  const labelX = atRight ? length / 2 + 10 : -length / 2 - 10
+  const anchor = atRight !== flipped ? 'start' : 'end'
+  const sideY = flipped ? SEAT_RADIUS_CM + 16 : -SEAT_RADIUS_CM - 16
   const tint = useDragTint(row.id)
   const tinted = tint === 'good' || tint === 'bad' ? tint : null
   const target = useDropTargetSeat(row.id)
   const pulse = useSeatPulse(row.id)
-  const xs = Array.from({ length: row.chairCount }, (_, i) => first + i * row.spacing)
+  const xs = chairLocalXs(row)
   const marks = useItemMarks(row)
   return (
     <g
@@ -82,17 +102,45 @@ export const ChairRowView = memo(function ChairRowView({ row, selected }: { row:
       {marks.badge && <ItemBadge x={-length / 2} y={-SEAT_RADIUS_CM} kind={marks.badge} />}
       <g data-seat-marks="">{xs.map((x, i) => ((row.seats[i]?.guestId ?? null) === null ? <SeatPlus key={i} x={x} y={0} index={i} /> : null))}</g>
       {pulse && xs[pulse.seatIndex] !== undefined && <SeatPulseRing key={pulse.id} x={xs[pulse.seatIndex]} y={0} />}
-      <text
-        x={-length / 2 - 10}
-        y={0}
-        textAnchor="end"
-        dominantBaseline="central"
-        fontSize={ROW_LABEL_CM}
+      <g
+        transform={flipped ? `rotate(180 ${labelX} 0)` : undefined}
+        textAnchor={anchor}
         fill={INK_SOFT}
         textRendering="geometricPrecision"
       >
-        {label}
-      </text>
+        <text x={labelX} y={reserved ? -RESERVED_LABEL_CM * 0.6 : 0} dominantBaseline="central" fontSize={ROW_LABEL_CM} data-row-label="">
+          {label}
+        </text>
+        {reserved && (
+          <text
+            x={labelX}
+            y={ROW_LABEL_CM * 0.65}
+            dominantBaseline="central"
+            fontSize={RESERVED_LABEL_CM}
+            fontStyle="italic"
+            fill={RESERVED_INK}
+            data-reserved-label=""
+          >
+            {reserved}
+          </text>
+        )}
+      </g>
+      {side && (
+        <text
+          x={0}
+          y={sideY}
+          transform={flipped ? `rotate(180 0 ${sideY})` : undefined}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={SIDE_LABEL_CM}
+          fontWeight={600}
+          fill={INK_SOFT}
+          textRendering="geometricPrecision"
+          data-block-label=""
+        >
+          {side}
+        </text>
+      )}
     </g>
   )
 })

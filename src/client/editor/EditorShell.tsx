@@ -588,7 +588,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
             <div className="relative flex min-h-0 flex-1 overflow-hidden">
               {!phone && mode === 'edit' && (
                 <aside aria-label="Shapes" className="hidden w-48 shrink-0 overflow-y-auto overscroll-contain border-r border-stone-200 bg-stone-50 md:block lg:w-56">
-                  <ShapePanel blank={blank} disabled={!canEdit} dropTarget={dropTarget} />
+                  <ShapePanel blank={blank} ceremony={initial.kind === 'ceremony'} unit={wedding.unit} disabled={!canEdit} dropTarget={dropTarget} />
                 </aside>
               )}
 
@@ -636,7 +636,15 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
                 </BottomSheet>
               )}
               {phone && (
-                <ShapeDrawer open={drawerOpen} onClose={() => setShapesOpen(false)} blank={blank} disabled={!canEdit} dropTarget={dropTarget} />
+                <ShapeDrawer
+                  open={drawerOpen}
+                  onClose={() => setShapesOpen(false)}
+                  blank={blank}
+                  ceremony={initial.kind === 'ceremony'}
+                  unit={wedding.unit}
+                  disabled={!canEdit}
+                  dropTarget={dropTarget}
+                />
               )}
             </div>
 

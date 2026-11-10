@@ -9,8 +9,11 @@
  *    name with no room shows as initials inside the seat circle. The labels
  *    come from editor.labels (worked out when the camera settles).
  *  - middle: each taken seat's initials in white inside its circle.
- *  - far: none. Ceremony chair rows have no names: their initials show at
- *    the middle and close levels.
+ *  - far: none.
+ *
+ * Ceremony chair rows at close level put each name beside its chair,
+ * running back toward the next row (domain/ceremony.ts chairNameLabels),
+ * worked out when the set mounts, which is after the zoom settles.
  *
  * Only the set for the current level is in the page, and none while a
  * gesture or a glide zooms the view: Chrome lays every SVG text out again at
@@ -26,10 +29,13 @@
  */
 import { memo, useCallback, useMemo, useSyncExternalStore } from 'react'
 import type { Canvas, ChairRow, Table } from '@/domain/canvas-schema'
-import { chairRowLength, type Point } from '@/domain/geometry'
-import { seatLocalLayout, SEAT_RADIUS_CM } from '@/domain/seats'
+import { chairLocalXs, chairNameLabels } from '@/domain/ceremony'
+import type { Point } from '@/domain/geometry'
+import type { MeasureText } from '@/domain/labels'
+import { seatLocalLayout } from '@/domain/seats'
+import { browserMeasure } from '../seating/name-labels'
 import type { CameraController } from '../camera/camera-controller'
-import { useLabelledTables, useSeatInitials, useSeatLabels } from '../seating/react'
+import { useLabelledTables, useSeatInitials, useSeatLabels, useSeating } from '../seating/react'
 import { useCanvas, useDetailLevel, useEditorState, useItem, useViewState } from '../state/react'
 import { shallowEqual } from '../state/store'
 import { SeatInitials } from './seat-marks'
@@ -81,6 +87,12 @@ function chairRowIds(canvas: Canvas): string[] {
   return out
 }
 
+function chairRows(canvas: Canvas): ChairRow[] {
+  return canvas.items.filter((i): i is ChairRow => i.kind === 'chairRow')
+}
+
+let rowMeasure: MeasureText | null = null
+
 export const NamesLayer = memo(function NamesLayer() {
   const visible = useViewState((s) => s.layers.furniture.visible)
   const level = useDetailLevel()
@@ -112,10 +124,54 @@ const NamesSet = memo(function NamesSet() {
       {tables.map((id) => (
         <TableNames key={id} id={id} />
       ))}
+      {rows.map((id) => (
+        <RowNames key={id} id={id} />
+      ))}
+    </g>
+  )
+})
+
+/** One chair row's names at close level: beside each chair, or initials inside it when there is no room. */
+const RowNames = memo(function RowNames({ id }: { id: string }) {
+  const found = useItem(id)
+  const row = found?.kind === 'chairRow' ? found : null
+  const rows = useCanvas(chairRows, shallowEqual)
+  const people = useSeating((s) => s.people)
+  const { camera } = useEditorState()
+  const zoom = camera.get().zoom
+  const faded = useNamesFaded(id)
+  const labels = useMemo(() => {
+    if (!row) return []
+    rowMeasure ??= browserMeasure()
+    return chairNameLabels({ row, rows, names: people.byId, zoom, measure: rowMeasure })
+  }, [row, rows, people, zoom])
+  if (!row) return null
+  const xs = chairLocalXs(row)
+  return (
+    <g transform={itemTransform(row)} data-names-for={id} opacity={faded ? FADED_OPACITY : undefined}>
+      {labels.map((l) =>
+        l.form === 'initials' ? null : (
+          <text
+            key={l.seatIndex}
+            transform={`translate(${l.x} ${l.y}) rotate(${l.rotation})`}
+            textAnchor={l.anchor}
+            dominantBaseline="central"
+            fontSize={l.fontSize}
+            fill={NAME_INK}
+            data-guest-name=""
+            data-name-for={l.seatIndex}
+            data-name-form={l.form}
+          >
+            {l.text}
+          </text>
+        ),
+      )}
       <g textAnchor="middle" fontSize={INITIALS_FONT_CM} fontWeight={600} fill="#ffffff">
-        {rows.map((id) => (
-          <ItemInitials key={id} id={id} />
-        ))}
+        {labels.map((l) =>
+          l.form === 'initials' && xs[l.seatIndex] !== undefined ? (
+            <SeatInitials key={l.seatIndex} x={xs[l.seatIndex]} y={0} index={l.seatIndex} text={l.text} rotation={-row.rotation} />
+          ) : null,
+        )}
       </g>
     </g>
   )
@@ -137,8 +193,7 @@ function useLocalSeats(item: Table | ChairRow | null): Point[] {
       return seatLocalLayout({ shape, width, height, seatCount, seatSides, fewerSeatsSide }).map((p) => ({ x: p.x, y: p.y }))
     }
     if (kind === 'chairRow' && chairCount !== undefined && spacing !== undefined) {
-      const first = -chairRowLength({ chairCount, spacing }) / 2 + SEAT_RADIUS_CM
-      return Array.from({ length: chairCount }, (_, i) => ({ x: first + i * spacing, y: 0 }))
+      return chairLocalXs({ chairCount, spacing }).map((x) => ({ x, y: 0 }))
     }
     return []
   }, [kind, shape, width, height, seatCount, seatSides, fewerSeatsSide, chairCount, spacing])

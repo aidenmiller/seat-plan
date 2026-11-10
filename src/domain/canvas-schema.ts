@@ -116,6 +116,12 @@ export const chairRowSchema = z.object({
   rowNumber: z.int().min(1).max(999),
   rowLabel: cleanText(100),
   reservedFor: cleanText(200).nullable(),
+  /**
+   * The end of the row next to the aisle, set by the seating block tool.
+   * The row's labels sit at the other end, and a new chair count or spacing
+   * keeps this end where it is. Optional: single rows have none (left end fixed).
+   */
+  aisleEnd: z.enum(['left', 'right']).optional(),
   seats: z.array(seatSchema).max(MAX_SEATS_RECT),
 })
 

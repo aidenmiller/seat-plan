@@ -7,8 +7,12 @@
  *    seat count with − and +, seat sides, Fit seats, why it is outlined in
  *    yellow, Lock;
  *  - one fixture or shape: label or text, size, rotation, Lock;
+ *  - one ceremony chair row: label, reserved for, chair count (with the
+ *    same unseat question as tables), spacing, Select block, Add row
+ *    behind, and its chairs in order;
  *  - several items: align and distribute;
- *  - nothing: the Room panel (filled in with the guest list) and the layout.
+ *  - nothing: the Room panel (seats or chairs against the guest list) and
+ *    the layout.
  *
  * A selected table lists its seats in order with each guest's name, in both
  * modes; in Edit mode a guest can be dragged to another seat in the list
@@ -23,12 +27,15 @@
  * It reads the selected items without x and y, compared field by field, so
  * dragging them re-renders nothing here (usePanelItems).
  */
-import type { Canvas, Item } from '@/domain/canvas-schema'
+import type { Canvas, Item, Seat } from '@/domain/canvas-schema'
+import { chairTotals, MAX_CHAIRS_PER_ROW, rowName } from '@/domain/ceremony'
+import { roomStats, roomStatsLines } from '@/domain/room-stats'
 import { fitSeatCount, maxSeats, seatedCount, tightReason } from '@/domain/seats'
 import type { WheelSetting } from '@/domain/wheel'
 import { guestIdsAtSeats } from '../seating/guest-menu'
 import { guestFullName } from '../seating/people'
 import { GUEST_ROW_STYLE, useSeating } from '../seating/react'
+import { setChairRow } from '../commands'
 import { itemIndex, useCanvas, useEditorState, useMode, useUi, useViewState } from '../state/react'
 import { shallowEqual } from '../state/store'
 import { ButtonRow, CommitField, LengthField, NumberField, Section, Segmented, smallButton, smallDangerButton, Switch } from './controls'
@@ -109,6 +116,8 @@ function SingleItem({ item, edit }: { item: ItemFields; edit: boolean }) {
     case 'fixture':
     case 'shape':
       return edit ? <ItemProperties item={item} /> : <ItemSummary item={item} />
+    case 'chairRow':
+      return edit ? <ChairRowProperties row={item} /> : <RowSeats row={item} />
     default:
       return edit ? <OtherProperties item={item} /> : <ItemSummary item={item} />
   }
@@ -222,7 +231,7 @@ function TableProperties({ table }: { table: FieldsOf<'table'> }) {
       </Section>
 
       <Section title="Guests" testId="table-guests-section">
-        <TableGuests table={table} edit />
+        <SeatList id={table.id} seats={table.seats} edit />
       </Section>
 
       <ItemOptions item={table} />
@@ -238,26 +247,138 @@ function TableSeats({ table }: { table: FieldsOf<'table'> }) {
       <p className="text-sm text-stone-700">
         Table {table.number} · {taken} of {table.seatCount} seats taken
       </p>
-      <TableGuests table={table} edit={false} />
+      <SeatList id={table.id} seats={table.seats} edit={false} />
     </Section>
   )
 }
 
+// ---------------------------------------------------------------- one chair row
+
+/** View mode: the row's guests in chair order, read only. */
+function RowSeats({ row }: { row: FieldsOf<'chairRow'> }) {
+  const taken = row.seats.filter((s) => s.guestId !== null).length
+  return (
+    <Section title={rowName(row)} testId="row-seats">
+      <p className="text-sm text-stone-700">
+        {row.blockLabel ? `${row.blockLabel} · ` : ''}
+        {taken} of {row.chairCount} chairs taken
+      </p>
+      {row.reservedFor && <p className="text-sm text-amber-800">Reserved: {row.reservedFor}</p>}
+      <SeatList id={row.id} seats={row.seats} edit={false} unit="Chair" />
+    </Section>
+  )
+}
+
+function ChairRowProperties({ row }: { row: FieldsOf<'chairRow'> }) {
+  const { actions } = useEditorState()
+  const { unit, onSeatRequest } = useEditorUi()
+  const id = row.id
+  const locked = row.locked
+  const count = row.chairCount
+  return (
+    <>
+      <Section title={rowName(row)} testId="row-properties">
+        {row.blockLabel && <p className="text-sm text-stone-600">{row.blockLabel}</p>}
+        <CommitField
+          label="Row label"
+          value={row.rowLabel}
+          maxLength={100}
+          hint={`Leave blank to show Row ${row.rowNumber}.`}
+          testId="row-label"
+          onCommit={(text) => void actions.run('Rename row', (c) => setChairRow(c, id, { rowLabel: text }))}
+        />
+        <CommitField
+          label="Reserved for"
+          value={row.reservedFor ?? ''}
+          maxLength={200}
+          hint="Such as Family, row 1. No names needed."
+          testId="row-reserved"
+          onCommit={(text) => void actions.run('Reserve row', (c) => setChairRow(c, id, { reservedFor: text }))}
+        />
+      </Section>
+
+      <Section title="Chairs">
+        <div className="flex items-end gap-2">
+          <div className="min-w-0 flex-1">
+            <NumberField
+              label="Chair count"
+              value={count}
+              integer
+              min={1}
+              max={MAX_CHAIRS_PER_ROW}
+              testId="row-chair-count"
+              onChange={(n) => onSeatRequest(id, actions.setSeatCount(id, n))}
+            />
+          </div>
+          <button
+            type="button"
+            className={`${smallButton} w-11 px-0 text-lg`}
+            aria-label="One chair fewer"
+            disabled={count <= 1}
+            onClick={() => onSeatRequest(id, actions.setSeatCount(id, count - 1))}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            className={`${smallButton} w-11 px-0 text-lg`}
+            aria-label="One more chair"
+            disabled={count >= MAX_CHAIRS_PER_ROW}
+            onClick={() => onSeatRequest(id, actions.setSeatCount(id, count + 1))}
+          >
+            +
+          </button>
+        </div>
+        <LengthField
+          label="Spacing"
+          cm={row.spacing}
+          unit={unit}
+          disabled={locked}
+          testId="row-spacing"
+          onChange={(cm) => void actions.run('Change spacing', (c) => setChairRow(c, id, { spacing: cm }))}
+        />
+        <p className="text-xs text-stone-500">From one chair&apos;s center to the next.</p>
+        <NumberField label="Rotation" value={row.rotation} suffix="°" disabled={locked} testId="row-rotation" onChange={(r) => actions.setItemBox(id, { rotation: r })} />
+        {locked && <p className="text-xs text-stone-500">Unlock to move or turn.</p>}
+      </Section>
+
+      <Section title="Block">
+        <ButtonRow>
+          {row.blockId && (
+            <button type="button" className={smallButton} onClick={() => actions.selectBlock(id)} data-testid="select-block">
+              Select block
+            </button>
+          )}
+          <button type="button" className={smallButton} onClick={() => actions.addRowBehind(id)} data-testid="add-row-behind">
+            Add row behind
+          </button>
+        </ButtonRow>
+      </Section>
+
+      <Section title="Guests" testId="row-guests-section">
+        <SeatList id={id} seats={row.seats} edit unit="Chair" />
+      </Section>
+
+      <ItemOptions item={row} layering />
+    </>
+  )
+}
+
 /**
- * The table's seats in order, each with its guest's name or Empty. In Edit
- * mode a guest row drags onto another row (swapping with whoever sits
- * there), and Move up and Move down do the same one seat at a time.
+ * A table's seats or a row's chairs in order, each with its guest's name or
+ * Empty. In Edit mode a guest row drags onto another row (swapping with
+ * whoever sits there), and Move up and Move down do the same one seat at a
+ * time.
  */
-function TableGuests({ table, edit }: { table: FieldsOf<'table'>; edit: boolean }) {
+function SeatList({ id, seats, edit, unit = 'Seat' }: { id: string; seats: readonly Seat[]; edit: boolean; unit?: 'Seat' | 'Chair' }) {
   const { actions } = useEditorState()
   const people = useSeating((s) => s.people)
-  const id = table.id
-  const count = table.seats.length
+  const count = seats.length
   const { onPointerDown, drag } = useSeatReorder((from, to) => void actions.reorderSeat(id, from, to))
-  if (table.seatCount === 0) return <p className="text-sm text-stone-600">This table has no seats.</p>
+  if (count === 0) return <p className="text-sm text-stone-600">This table has no seats.</p>
   return (
-    <ol className="space-y-1" data-testid="table-guests" aria-label="Seats in order">
-      {table.seats.map((seat, i) => {
+    <ol className="space-y-1" data-testid="table-guests" aria-label={unit === 'Chair' ? 'Chairs in order' : 'Seats in order'}>
+      {seats.map((seat, i) => {
         const guestId = seat.guestId
         const name = guestId ? guestFullName(people, guestId) : null
         const dragging = drag?.from === i
@@ -276,14 +397,16 @@ function TableGuests({ table, edit }: { table: FieldsOf<'table'>; edit: boolean 
             data-testid="table-guest"
           >
             <span aria-hidden="true" className={`h-3 w-3 shrink-0 rounded-full ${guestId ? 'bg-seat-taken' : 'bg-seat-empty'}`} />
-            <span className="w-14 shrink-0 text-stone-500">Seat {i + 1}</span>
+            <span className="w-14 shrink-0 text-stone-500">
+              {unit} {i + 1}
+            </span>
             <span className={`min-w-0 flex-1 truncate ${name ? 'text-stone-900' : 'text-stone-500'}`}>{name ?? 'Empty'}</span>
             {edit && guestId && (
               <span className="flex shrink-0 gap-1">
                 <button
                   type="button"
                   className={`${smallButton} w-11 px-0`}
-                  aria-label={`Move ${name} up a seat`}
+                  aria-label={`Move ${name} up a ${unit.toLowerCase()}`}
                   disabled={i === 0}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={() => actions.reorderSeat(id, i, i - 1)}
@@ -294,7 +417,7 @@ function TableGuests({ table, edit }: { table: FieldsOf<'table'>; edit: boolean 
                 <button
                   type="button"
                   className={`${smallButton} w-11 px-0`}
-                  aria-label={`Move ${name} down a seat`}
+                  aria-label={`Move ${name} down a ${unit.toLowerCase()}`}
                   disabled={i === count - 1}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={() => actions.reorderSeat(id, i, i + 1)}
@@ -325,7 +448,14 @@ function ItemProperties({ item }: { item: FieldsOf<'fixture'> | FieldsOf<'shape'
     <>
       <Section title={title} testId="item-properties">
         {item.kind === 'fixture' && (
-          <CommitField label="Label" value={item.label} maxLength={200} testId="item-label" onCommit={(text) => void actions.setLabel(id, text)} />
+          <CommitField
+            label="Label"
+            value={item.label}
+            maxLength={200}
+            hint={item.type === 'ceremonyStructure' ? 'Arch, chuppah, altar or anything else.' : undefined}
+            testId="item-label"
+            onCommit={(text) => void actions.setLabel(id, text)}
+          />
         )}
         {item.kind === 'shape' && shapeTakesText(item.type) && (
           <CommitField
@@ -356,12 +486,12 @@ function ItemProperties({ item }: { item: FieldsOf<'fixture'> | FieldsOf<'shape'
   )
 }
 
-/** Chair rows and notes get their own tools later; for now rotation and Lock. */
-function OtherProperties({ item }: { item: FieldsOf<'chairRow'> | FieldsOf<'note'> }) {
+/** Notes get their own tools later; for now rotation and Lock. */
+function OtherProperties({ item }: { item: FieldsOf<'note'> }) {
   const { actions } = useEditorState()
   return (
     <>
-      <Section title={item.kind === 'chairRow' ? 'Chair row' : 'Note'}>
+      <Section title="Note">
         <NumberField label="Rotation" value={item.rotation} suffix="°" disabled={item.locked} onChange={(r) => actions.setItemBox(item.id, { rotation: r })} />
       </Section>
       <ItemOptions item={item} layering />
@@ -496,36 +626,55 @@ function GuestSeatsSummary({ edit }: { edit: boolean }) {
 
 // ---------------------------------------------------------------- nothing selected
 
-function roomCounts(items: readonly Item[]): { tables: number; seats: number; taken: number } {
+function roomCounts(items: readonly Item[]): { tables: number; seats: number } {
   let tables = 0
   let seats = 0
-  let taken = 0
   for (const item of items) {
     if (item.kind !== 'table') continue
     tables++
     seats += item.seatCount
-    taken += seatedCount(item)
   }
-  return { tables, seats, taken }
+  return { tables, seats }
 }
 
 function RoomSummary() {
-  const { layoutName, venueLabel, onPickVenue } = useEditorUi()
+  const { layoutName, venueLabel, onPickVenue, layoutKind = 'reception', unit } = useEditorUi()
+  const ceremony = layoutKind === 'ceremony'
   const { tables, seats } = useCanvas((c) => roomCounts(c.items), shallowEqual)
+  const chairs = useCanvas((c) => chairTotals(c.items), shallowEqual)
+  const items = useCanvas((c) => c.items)
+  const guests = useSeating((s) => s.people.guests)
+  const lines = guests.length > 0 ? roomStatsLines(roomStats({ layoutKind, canvas: { items }, guests }), unit) : []
+  const tiles: [string, number][] = ceremony
+    ? [
+        ['Chairs', chairs.chairs],
+        ['Reserved', chairs.reserved],
+      ]
+    : [
+        ['Tables', tables],
+        ['Seats', seats],
+      ]
+
   return (
     <>
       <Section title="Room" testId="room-panel">
         <dl className="grid grid-cols-2 gap-2 text-sm">
-          <div className="rounded-lg bg-stone-50 px-3 py-2">
-            <dt className="text-stone-500">Tables</dt>
-            <dd className="text-lg font-semibold text-stone-900">{tables}</dd>
-          </div>
-          <div className="rounded-lg bg-stone-50 px-3 py-2">
-            <dt className="text-stone-500">Seats</dt>
-            <dd className="text-lg font-semibold text-stone-900">{seats}</dd>
-          </div>
+          {tiles.map(([label, value]) => (
+            <div key={label} className="rounded-lg bg-stone-50 px-3 py-2">
+              <dt className="text-stone-500">{label}</dt>
+              <dd className="text-lg font-semibold text-stone-900">{value}</dd>
+            </div>
+          ))}
         </dl>
-        <p className="text-sm text-stone-600">Seats against your guest list show here once guests are added.</p>
+        {lines.length > 0 ? (
+          <ul className="space-y-1 text-sm text-stone-800" data-testid="room-lines">
+            {lines.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-stone-600">{ceremony ? 'Chairs' : 'Seats'} against your guest list show here once guests are added.</p>
+        )}
       </Section>
       <Section title="Layout">
         <dl className="space-y-2 text-sm">

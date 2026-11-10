@@ -21,8 +21,9 @@
  * up in one after any of these edits.
  */
 import type { Canvas, ChairRow, Item, Seat, Table } from './canvas-schema'
+import { chairPositions } from './ceremony'
 import { pxToCm } from './detail-level'
-import { chairRowLength, itemFootprint, tableBodyFootprint, type Footprint, type Point } from './geometry'
+import { itemFootprint, tableBodyFootprint, type Footprint, type Point } from './geometry'
 import { itemLabel } from './item-labels'
 import { seatLayout, SEAT_RADIUS_CM } from './seats'
 
@@ -224,14 +225,7 @@ export function reorderWithinTable(canvas: Canvas, itemId: string, fromIndex: nu
 
 /** Chair centers of a ceremony row on the canvas, in seat order (as ChairRowView draws them). */
 export function chairRowSeatCenters(row: Pick<ChairRow, 'x' | 'y' | 'rotation' | 'chairCount' | 'spacing'>): Point[] {
-  const first = -chairRowLength(row) / 2 + SEAT_RADIUS_CM
-  const r = (row.rotation * Math.PI) / 180
-  const cos = Math.cos(r)
-  const sin = Math.sin(r)
-  return Array.from({ length: row.chairCount }, (_, i) => {
-    const lx = first + i * row.spacing
-    return { x: row.x + lx * cos, y: row.y + lx * sin }
-  })
+  return chairPositions(row)
 }
 
 /** Seat centers of a table or row on the canvas, in seat order. */

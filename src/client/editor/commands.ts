@@ -26,10 +26,19 @@ import {
   MIN_TABLE_CM,
   wellFormedText,
   type Canvas,
+  type ChairRow,
   type Item,
   type Shape,
   type Table,
 } from '@/domain/canvas-schema'
+import {
+  addRowBehind as addRowBehindDomain,
+  blockRows,
+  generateSeatingBlock,
+  setChairCount as setChairCountDomain,
+  setRowSpacing as setRowSpacingDomain,
+  type SeatingBlockOptions,
+} from '@/domain/ceremony'
 import { alignItems as alignDomain, distributeItems as distributeDomain, type AlignMode, type DistributeAxis } from '@/domain/align'
 import { boxCenter, itemBox, itemsBox, normalizeDegrees, type Point } from '@/domain/geometry'
 import { copyItems, defaultTableName, makeItem, type PresetId } from '@/domain/presets'
@@ -384,6 +393,8 @@ function seatChange(canvas: Canvas, table: Table, count: number, options: SeatCh
  * lower count than the number of guests is refused unless allowUnseat.
  */
 export function setSeatCount(canvas: Canvas, id: string, count: number, options: SeatChangeOptions = {}): SeatChange {
+  const row = findItem(canvas, id)
+  if (row?.kind === 'chairRow') return setChairCount(canvas, row, count, options)
   const table = findTable(canvas, id)
   if (!table || !Number.isFinite(count)) return { canvas, unseated: [], refused: false }
   return seatChange(canvas, table, count, options)
@@ -422,6 +433,58 @@ export function setSeatSides(canvas: Canvas, id: string, seatSides: Table['seatS
     const next: Table = { ...item, seatSides }
     return { ...next, seats: remapSeats(item, next).canvasSeats }
   })
+}
+
+// ---------------------------------------------------------------- ceremony chair rows
+
+/** A chair row's chair count (spec section 8): same unseat question as tables. */
+function setChairCount(canvas: Canvas, row: ChairRow, count: number, options: SeatChangeOptions): SeatChange {
+  if (!Number.isFinite(count)) return { canvas, unseated: [], refused: false }
+  const plan = setChairCountDomain(row, count)
+  if (plan.row === row) return { canvas, unseated: [], refused: false }
+  if (plan.unseated.length > 0 && !options.allowUnseat) return { canvas, unseated: plan.unseated, refused: true }
+  return { canvas: updateItem(canvas, row.id, () => plan.row), unseated: plan.unseated, refused: false }
+}
+
+export type ChairRowPatch = Partial<{ rowLabel: string; reservedFor: string | null; spacing: number }>
+
+/** A row's label, its "reserved for" text (blank clears it) and the spacing from chair to chair. */
+export function setChairRow(canvas: Canvas, id: string, patch: ChairRowPatch): Canvas {
+  return updateItem(canvas, id, (item) => {
+    if (item.kind !== 'chairRow') return item
+    let next: ChairRow = item
+    if (patch.rowLabel !== undefined) {
+      const label = cleanName(patch.rowLabel, 100)
+      if (label !== next.rowLabel) next = { ...next, rowLabel: label }
+    }
+    if (patch.reservedFor !== undefined) {
+      const text = patch.reservedFor === null ? '' : cleanName(patch.reservedFor, 200)
+      const reservedFor = text === '' ? null : text
+      if (reservedFor !== next.reservedFor) next = { ...next, reservedFor }
+    }
+    if (patch.spacing !== undefined && !item.locked) next = setRowSpacingDomain(next, patch.spacing)
+    return next
+  })
+}
+
+/** The seating block tool's rows, on top of everything. */
+export function addSeatingBlock(canvas: Canvas, options: SeatingBlockOptions, newId: () => string): AddedItems {
+  const rows = generateSeatingBlock(options, newId)
+  return { canvas: { ...canvas, items: [...canvas.items, ...rows] }, ids: rows.map((r) => r.id) }
+}
+
+/** One more row behind the row's block, with the next number. */
+export function addRowBehind(canvas: Canvas, rowId: string, id: string): AddedItems {
+  const row = findItem(canvas, rowId)
+  if (row?.kind !== 'chairRow') return { canvas, ids: [] }
+  const added = addRowBehindDomain(canvas.items, row, id)
+  return { canvas: { ...canvas, items: [...canvas.items, added] }, ids: [id] }
+}
+
+/** The ids of every row in the row's block, front to back. */
+export function blockRowIds(canvas: Canvas, rowId: string): string[] {
+  const row = findItem(canvas, rowId)
+  return row?.kind === 'chairRow' ? blockRows(canvas.items, row).map((r) => r.id) : []
 }
 
 // ---------------------------------------------------------------- fixtures and shapes

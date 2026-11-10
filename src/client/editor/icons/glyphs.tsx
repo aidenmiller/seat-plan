@@ -15,6 +15,8 @@ export type GlyphName =
   | 'tableRect'
   | 'tableHead'
   | 'tableSweetheart'
+  | 'chairRow'
+  | 'seatingBlock'
   | 'shapeRect'
   | 'shapeEllipse'
   | 'shapeLine'
@@ -201,6 +203,31 @@ const GLYPHS: Record<GlyphName, () => ReactElement> = {
       <Dot cx={12} cy={8} />
       <Dot cx={16} cy={8} />
       <Dot cx={20} cy={8} />
+    </>
+  ),
+  chairRow: () => (
+    <>
+      <circle cx={4} cy={12} r={2} />
+      <circle cx={9.3} cy={12} r={2} />
+      <circle cx={14.7} cy={12} r={2} />
+      <circle cx={20} cy={12} r={2} />
+    </>
+  ),
+  seatingBlock: () => (
+    <>
+      <circle cx={3.5} cy={7} r={1.5} />
+      <circle cx={7.5} cy={7} r={1.5} />
+      <circle cx={16.5} cy={7} r={1.5} />
+      <circle cx={20.5} cy={7} r={1.5} />
+      <circle cx={3.5} cy={12} r={1.5} />
+      <circle cx={7.5} cy={12} r={1.5} />
+      <circle cx={16.5} cy={12} r={1.5} />
+      <circle cx={20.5} cy={12} r={1.5} />
+      <circle cx={3.5} cy={17} r={1.5} />
+      <circle cx={7.5} cy={17} r={1.5} />
+      <circle cx={16.5} cy={17} r={1.5} />
+      <circle cx={20.5} cy={17} r={1.5} />
+      <path d="M12 4v16" strokeDasharray="2 2" />
     </>
   ),
   tableSweetheart: () => (

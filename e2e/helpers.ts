@@ -72,13 +72,13 @@ export async function apiCreateWedding(request: APIRequestContext, name: string)
 export async function apiCreateLayout(
   request: APIRequestContext,
   weddingId: string,
-  options: { name: string; venueTemplateId?: string | null; editedBy?: Author },
+  options: { name: string; kind?: 'reception' | 'ceremony'; venueTemplateId?: string | null; editedBy?: Author },
 ): Promise<LayoutDetail> {
   const res = await request.post(`/api/weddings/${weddingId}/layouts`, {
     data: {
       id: randomUUID(),
       name: options.name,
-      kind: 'reception',
+      kind: options.kind ?? 'reception',
       venueTemplateId: options.venueTemplateId ?? null,
       editedBy: options.editedBy ?? 'Noa',
     },

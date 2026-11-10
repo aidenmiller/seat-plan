@@ -4,16 +4,18 @@
  * Every size is in cm. Shape and note points are offsets from the item's
  * center in its own frame; style stroke widths are in cm too.
  */
-import type { Canvas, Fixture, Item, Shape, Table } from './canvas-schema'
-import type { Point } from './geometry'
-import { CHAIR_DEPTH_CM, emptySeats } from './seats'
+import type { Canvas, ChairRow, Fixture, Item, Shape, Table } from './canvas-schema'
+import { chairRowLength, type Point } from './geometry'
+import { CHAIR_DEPTH_CM, emptySeats, SEAT_DIAMETER_CM } from './seats'
 
 export type TablePresetId = 'round' | 'square' | 'rect' | 'head' | 'sweetheart'
-export type FixturePresetId = 'food' | 'bar' | 'dj' | 'danceFloor' | 'stage' | 'cake' | 'gifts' | 'photoBooth'
+export type ReceptionFixturePresetId = 'food' | 'bar' | 'dj' | 'danceFloor' | 'stage' | 'cake' | 'gifts' | 'photoBooth'
+export type CeremonyFixturePresetId = 'ceremonyStructure' | 'officiant' | 'aisleRunner' | 'musicians' | 'soundDesk' | 'welcomeSign' | 'entrance'
+export type FixturePresetId = ReceptionFixturePresetId | CeremonyFixturePresetId
 export type ShapePresetId = 'box' | 'circle' | 'line' | 'text'
 export type WallPresetId = 'wall' | 'room' | 'door' | 'window'
-export type PresetId = TablePresetId | FixturePresetId | ShapePresetId | WallPresetId
-export type PresetGroup = 'tables' | 'fixtures' | 'shapes' | 'walls'
+export type PresetId = TablePresetId | FixturePresetId | ShapePresetId | WallPresetId | 'chairRow'
+export type PresetGroup = 'tables' | 'fixtures' | 'shapes' | 'walls' | 'rows'
 
 export type TablePreset = {
   id: TablePresetId
@@ -47,7 +49,18 @@ export type ShapePreset = {
   style: Shape['style']
 }
 
-export type Preset = TablePreset | FixturePreset | ShapePreset
+/** A single ceremony chair row (spec section 8). */
+export type ChairRowPreset = {
+  id: 'chairRow'
+  group: 'rows'
+  label: string
+  chairCount: number
+  spacing: number
+  width: number
+  height: number
+}
+
+export type Preset = TablePreset | FixturePreset | ShapePreset | ChairRowPreset
 
 export const TABLE_PRESETS: readonly TablePreset[] = [
   { id: 'round', group: 'tables', label: 'Round', shape: 'round', width: 152.4, height: 152.4, seatCount: 8, seatSides: 'all' },
@@ -68,6 +81,28 @@ export const FIXTURE_PRESETS: readonly FixturePreset[] = [
   { id: 'gifts', group: 'fixtures', label: 'Gifts', type: 'gifts', width: 182.88, height: 76.2 },
   { id: 'photoBooth', group: 'fixtures', label: 'Photo booth', type: 'photoBooth', width: 243.84, height: 243.84 },
 ]
+
+/** Ceremony fixtures (spec section 8). The structure's label is editable: arch, chuppah, altar or anything else. */
+export const CEREMONY_FIXTURE_PRESETS: readonly FixturePreset[] = [
+  { id: 'ceremonyStructure', group: 'fixtures', label: 'Arch', type: 'ceremonyStructure', width: 243.84, height: 60.96 },
+  { id: 'officiant', group: 'fixtures', label: 'Officiant', type: 'officiant', width: 76.2, height: 76.2 },
+  { id: 'aisleRunner', group: 'fixtures', label: 'Aisle', type: 'aisleRunner', width: 91.44, height: 914.4 },
+  { id: 'musicians', group: 'fixtures', label: 'Musicians', type: 'musicians', width: 243.84, height: 182.88 },
+  { id: 'soundDesk', group: 'fixtures', label: 'Sound desk', type: 'soundDesk', width: 121.92, height: 60.96 },
+  { id: 'welcomeSign', group: 'fixtures', label: 'Welcome sign', type: 'welcomeSign', width: 121.92, height: 45.72 },
+  { id: 'entrance', group: 'fixtures', label: 'Entrance', type: 'entrance', width: 182.88, height: 45.72 },
+]
+
+/** 10 chairs, 20 in apart. */
+export const CHAIR_ROW_PRESET: ChairRowPreset = {
+  id: 'chairRow',
+  group: 'rows',
+  label: 'Chair row',
+  chairCount: 10,
+  spacing: 50.8,
+  width: chairRowLength({ chairCount: 10, spacing: 50.8 }),
+  height: SEAT_DIAMETER_CM,
+}
 
 const LINE_COLOR = '#374151'
 const SHAPE_STROKE = '#6b7280'
@@ -145,7 +180,14 @@ export const WALL_PRESETS: readonly ShapePreset[] = [
   },
 ]
 
-export const PRESETS: readonly Preset[] = [...TABLE_PRESETS, ...FIXTURE_PRESETS, ...SHAPE_PRESETS, ...WALL_PRESETS]
+export const PRESETS: readonly Preset[] = [
+  ...TABLE_PRESETS,
+  ...FIXTURE_PRESETS,
+  ...CEREMONY_FIXTURE_PRESETS,
+  CHAIR_ROW_PRESET,
+  ...SHAPE_PRESETS,
+  ...WALL_PRESETS,
+]
 
 const byId = new Map<string, Preset>(PRESETS.map((p) => [p.id, p]))
 
@@ -171,6 +213,13 @@ export function defaultTableName(number: number): string {
   return `Table ${number}`
 }
 
+/** The highest chair row number plus one, or 1 for the first row. */
+export function nextRowNumber(canvas: Pick<Canvas, 'items'>): number {
+  let max = 0
+  for (const item of canvas.items) if (item.kind === 'chairRow' && item.rowNumber > max) max = item.rowNumber
+  return Math.min(999, max + 1)
+}
+
 /** Width and height of what the preset puts on the floor, chairs included, for finding it a free spot. */
 export function presetFootprintSize(id: PresetId): { width: number; height: number } {
   const p = getPreset(id)
@@ -185,7 +234,8 @@ function copyPoints(points: readonly Point[] | undefined): Point[] | undefined {
 
 /**
  * A new item from a preset, centered at `at`, unrotated, unlocked. Tables get
- * the next table number, the name "Table N" and empty seats.
+ * the next table number, the name "Table N" and empty seats; a chair row gets
+ * the next row number and empty chairs.
  */
 export function makeItem(presetId: PresetId, at: Point, id: string, canvas: Pick<Canvas, 'items'>): Item {
   const p = getPreset(presetId)
@@ -207,6 +257,21 @@ export function makeItem(presetId: PresetId, at: Point, id: string, canvas: Pick
       }
       return table
     }
+    case 'rows': {
+      const row: ChairRow = {
+        ...base,
+        kind: 'chairRow',
+        chairCount: p.chairCount,
+        spacing: p.spacing,
+        blockId: null,
+        blockLabel: null,
+        rowNumber: nextRowNumber(canvas),
+        rowLabel: '',
+        reservedFor: null,
+        seats: emptySeats(p.chairCount),
+      }
+      return row
+    }
     case 'fixtures': {
       const fixture: Fixture = { ...base, kind: 'fixture', type: p.type, width: p.width, height: p.height, label: p.label }
       return fixture
@@ -226,11 +291,13 @@ export function makeItem(presetId: PresetId, at: Point, id: string, canvas: Pick
  * moved by `offset`, every seat empty, and tables numbered on from the
  * highest number in the canvas, in the order given. A table still called
  * "Table N" takes its new number's name; a renamed table keeps its name.
- * Notes attached to a copied item follow the copy.
+ * Notes attached to a copied item follow the copy. Copied chair rows get a
+ * new block id, shared by rows copied from the same block.
  */
 export function copyItems(items: readonly Item[], canvas: Pick<Canvas, 'items'>, newId: () => string, offset: Point = { x: 0, y: 0 }): Item[] {
   let number = nextTableNumber(canvas)
   const ids = new Map<string, string>()
+  const blocks = new Map<string, string>()
   for (const item of items) ids.set(item.id, newId())
   return items.map((item): Item => {
     const moved = { ...item, id: ids.get(item.id) as string, x: item.x + offset.x, y: item.y + offset.y }
@@ -240,8 +307,16 @@ export function copyItems(items: readonly Item[], canvas: Pick<Canvas, 'items'>,
         const renamed = moved.name.trim() !== '' && moved.name.trim() !== defaultTableName(moved.number)
         return { ...moved, number: n, name: renamed ? moved.name : defaultTableName(n), seats: emptySeats(moved.seatCount) }
       }
-      case 'chairRow':
-        return { ...moved, seats: emptySeats(moved.chairCount) }
+      case 'chairRow': {
+        // Copied rows make a block of their own, so Select block never mixes them with the originals.
+        let blockId = moved.blockId
+        if (blockId !== null) {
+          const known = blocks.get(blockId)
+          blockId = known ?? newId()
+          if (!known) blocks.set(moved.blockId as string, blockId)
+        }
+        return { ...moved, blockId, seats: emptySeats(moved.chairCount) }
+      }
       case 'shape':
         return moved.points ? { ...moved, points: copyPoints(moved.points), style: { ...moved.style } } : { ...moved, style: { ...moved.style } }
       case 'note': {

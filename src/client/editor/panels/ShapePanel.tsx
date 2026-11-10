@@ -18,10 +18,22 @@
  * drag's ghost or hides the phone drawer.
  */
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { FIXTURE_PRESETS, getPreset, SHAPE_PRESETS, TABLE_PRESETS, WALL_PRESETS, type Preset, type PresetId } from '@/domain/presets'
+import {
+  CEREMONY_FIXTURE_PRESETS,
+  CHAIR_ROW_PRESET,
+  FIXTURE_PRESETS,
+  getPreset,
+  SHAPE_PRESETS,
+  TABLE_PRESETS,
+  WALL_PRESETS,
+  type Preset,
+  type PresetId,
+} from '@/domain/presets'
 import { Icon, presetGlyph } from '../icons/glyphs'
 import type { EditorActions } from '../input/controller'
 import { useEditorState } from '../state/react'
+import type { LengthUnit } from '@/domain/units'
+import { SeatingBlockDialog } from './SeatingBlockDialog'
 
 /** What each tile adds, for screen readers and tests ("Add round table"). */
 export const PRESET_NAMES: Record<PresetId, string> = {
@@ -38,6 +50,14 @@ export const PRESET_NAMES: Record<PresetId, string> = {
   cake: 'Add cake table',
   gifts: 'Add gift table',
   photoBooth: 'Add photo booth',
+  ceremonyStructure: 'Add ceremony structure',
+  officiant: 'Add officiant spot',
+  aisleRunner: 'Add aisle runner',
+  musicians: 'Add musicians',
+  soundDesk: 'Add sound desk',
+  welcomeSign: 'Add welcome sign',
+  entrance: 'Add entrance',
+  chairRow: 'Add chair row',
   box: 'Add rectangle',
   circle: 'Add circle',
   line: 'Add line',
@@ -75,6 +95,10 @@ export const TILE_CLASS =
 export type ShapePanelProps = {
   /** A blank canvas also offers walls, rooms, doors and windows. */
   blank: boolean
+  /** Ceremony layouts offer the seating block tool, chair rows and ceremony fixtures instead of tables (spec section 8). */
+  ceremony?: boolean
+  /** The wedding's unit, for the seating block's aisle width. */
+  unit?: LengthUnit
   /** Editing is not possible right now (no author picked, a conflict open). */
   disabled: boolean
   /** The canvas viewport: drops count only over it. */
@@ -114,8 +138,9 @@ function overTarget(target: HTMLElement | null, x: number, y: number): boolean {
   return hit !== null && target.contains(hit)
 }
 
-export function ShapePanel({ blank, disabled, dropTarget, onAdded, onDragChange, columns = 2 }: ShapePanelProps) {
+export function ShapePanel({ blank, ceremony = false, unit = 'ft', disabled, dropTarget, onAdded, onDragChange, columns = 2 }: ShapePanelProps) {
   const editor = useEditorState()
+  const [blockOpen, setBlockOpen] = useState(false)
   const drag = useRef<DragState | null>(null)
   const suppressClick = useRef(false)
   const ghostRef = useRef<HTMLDivElement>(null)
@@ -207,44 +232,80 @@ export function ShapePanel({ blank, disabled, dropTarget, onAdded, onDragChange,
     add(presetId)
   }
 
+  const grid = `grid gap-2 ${columns === 3 ? 'grid-cols-3' : 'grid-cols-2'}`
+
   function tiles(presets: readonly Preset[]) {
-    return (
-      <div className={`grid gap-2 ${columns === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
-        {presets.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            aria-label={PRESET_NAMES[p.id]}
-            title={PRESET_NAMES[p.id]}
-            disabled={disabled}
-            data-preset={p.id}
-            onPointerDown={(e) => onPointerDown(e, p.id)}
-            onPointerUp={() => {
-              // A press that never became a drag: the click adds it.
-              if (drag.current && !drag.current.dragging) {
-                drag.current = null
-                cleanup.current?.()
-                cleanup.current = null
-              }
-            }}
-            onClick={() => onClick(p.id)}
-            className={TILE_CLASS}
-          >
-            <Icon name={presetGlyph(p.id)} className="h-7 w-7 text-stone-700" />
-            <span className="leading-tight">{p.label}</span>
-          </button>
-        ))}
-      </div>
-    )
+    return <div className={grid}>{tileButtons(presets)}</div>
+  }
+
+  function tileButtons(presets: readonly Preset[]) {
+    return presets.map((p) => (
+      <button
+        key={p.id}
+        type="button"
+        aria-label={PRESET_NAMES[p.id]}
+        title={PRESET_NAMES[p.id]}
+        disabled={disabled}
+        data-preset={p.id}
+        onPointerDown={(e) => onPointerDown(e, p.id)}
+        onPointerUp={() => {
+          // A press that never became a drag: the click adds it.
+          if (drag.current && !drag.current.dragging) {
+            drag.current = null
+            cleanup.current?.()
+            cleanup.current = null
+          }
+        }}
+        onClick={() => onClick(p.id)}
+        className={TILE_CLASS}
+      >
+        <Icon name={presetGlyph(p.id)} className="h-7 w-7 text-stone-700" />
+        <span className="leading-tight">{p.label}</span>
+      </button>
+    ))
   }
 
   return (
     <div className="select-none space-y-5 p-3" data-testid="shape-panel">
-      <PanelGroup title="Tables">{tiles(TABLE_PRESETS)}</PanelGroup>
-      <PanelGroup title="Fixtures">{tiles(FIXTURE_PRESETS)}</PanelGroup>
+      {ceremony ? (
+        <>
+          <PanelGroup title="Seating">
+            <div className={grid}>
+              <button
+                type="button"
+                className={TILE_CLASS}
+                disabled={disabled}
+                onClick={() => setBlockOpen(true)}
+                aria-label="Add seating block"
+                title="Add seating block"
+                data-testid="seating-block-tool"
+              >
+                <Icon name="seatingBlock" className="h-7 w-7 text-stone-700" />
+                <span className="leading-tight">Seating block</span>
+              </button>
+              {tileButtons([CHAIR_ROW_PRESET])}
+            </div>
+          </PanelGroup>
+          <PanelGroup title="Ceremony">{tiles(CEREMONY_FIXTURE_PRESETS)}</PanelGroup>
+        </>
+      ) : (
+        <>
+          <PanelGroup title="Tables">{tiles(TABLE_PRESETS)}</PanelGroup>
+          <PanelGroup title="Fixtures">{tiles(FIXTURE_PRESETS)}</PanelGroup>
+        </>
+      )}
       <PanelGroup title="Shapes">{tiles(SHAPE_PRESETS)}</PanelGroup>
       {blank && <PanelGroup title="Walls and rooms">{tiles(WALL_PRESETS)}</PanelGroup>}
       <p className="text-xs text-stone-500">Drag onto the plan, or tap to add in the middle.</p>
+      <SeatingBlockDialog
+        open={blockOpen}
+        unit={unit}
+        onCancel={() => setBlockOpen(false)}
+        onAdd={(choice) => {
+          setBlockOpen(false)
+          if (!disabled && editor.actions.addSeatingBlock(choice).length > 0) onAdded?.()
+        }}
+      />
       {ghost && (
         <div
           ref={ghostRef}

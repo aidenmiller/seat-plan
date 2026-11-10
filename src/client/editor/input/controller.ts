@@ -27,6 +27,7 @@ import {
   type Box,
   type Point,
 } from '@/domain/geometry'
+import { blockDepth, ROW_PITCH_CM, type SeatingBlockOptions } from '@/domain/ceremony'
 import { getPreset, type PresetId } from '@/domain/presets'
 import { handlePoint, type Handle } from '@/domain/resize'
 import { gridStepCm, snapMove } from '@/domain/snapping'
@@ -154,6 +155,12 @@ type BaseActions = {
   addPreset(presetId: PresetId, at?: Point | null, options?: PresetOptions): string | null
   /** A preset dropped from the shape panel at a pointer's clientX and clientY ({ free: true } with Alt held). */
   dropPreset(presetId: PresetId, clientX: number, clientY: number, options?: PresetOptions): string | null
+  /** The seating block tool: the block centered in the view, its rows selected. Returns their ids. */
+  addSeatingBlock(options: Omit<SeatingBlockOptions, 'origin' | 'facing'>): string[]
+  /** A new row behind the row's block, selected. Returns its id. */
+  addRowBehind(rowId: string): string | null
+  /** Selects every row of the row's block. */
+  selectBlock(rowId: string): void
   deleteSelection(): boolean
   duplicateSelection(): boolean
   /** Copies the selected items to the clipboard. False with no item selected. */
@@ -602,6 +609,31 @@ export function createEditorController(deps: ControllerDeps): EditorController {
       camera.measure()
       return actions.addPreset(presetId, toWorld(camera.clientToScreen(clientX, clientY)), options)
     },
+    addSeatingBlock(options) {
+      const center = viewportCenterWorld()
+      const depth = blockDepth(options.rows, options.rowPitchCm ?? ROW_PITCH_CM)
+      const origin = ui.getState().snap ? cmd.snapPoint({ x: center.x, y: center.y - depth / 2 }, gridStep()) : { x: center.x, y: center.y - depth / 2 }
+      let added: string[] = []
+      const out = edit('Add seating block', (c) => {
+        const r = cmd.addSeatingBlock(c, { ...options, origin, facing: 0 }, deps.newId)
+        added = r.ids
+        return r.canvas
+      })
+      if (!out) return []
+      ui.select(added)
+      return added
+    },
+    addRowBehind(rowId) {
+      const id = deps.newId()
+      const out = edit('Add row', (c) => cmd.addRowBehind(c, rowId, id).canvas)
+      if (!out) return null
+      ui.select([id])
+      return id
+    },
+    selectBlock(rowId) {
+      const ids = cmd.blockRowIds(doc.canvas(), rowId)
+      if (ids.length > 0) ui.select(ids)
+    },
     deleteSelection() {
       const ids = selection()
       if (ids.length === 0) return false
@@ -809,7 +841,8 @@ export function createEditorController(deps: ControllerDeps): EditorController {
    * otherwise an empty seat's + within 22 px (a 44 px target) is that seat,
    * marked plus, as long as the pointer is not on another item (a
    * neighbouring fixture or table keeps its presses); otherwise the item or
-   * seat hit.
+   * seat hit. A chair row is all chairs, with no body to click, so its +
+   * works only once the row is selected: the first click picks the row.
    */
   function targetAt(screen: Point): Target {
     const zoom = camera.get().zoom
@@ -820,6 +853,7 @@ export function createEditorController(deps: ControllerDeps): EditorController {
     if ((hit.kind === 'item' || hit.kind === 'seat') && hit.itemId !== plus.itemId) return hit
     const item = doc.canvas().items.find((i) => i.id === plus.itemId)
     if (!item || (item.kind !== 'table' && item.kind !== 'chairRow')) return hit
+    if (item.kind === 'chairRow' && !selection().includes(item.id)) return hit
     const target: Target = { kind: 'seat', itemId: plus.itemId, seatIndex: plus.seatIndex, guestId: null, locked: item.locked, plus: true }
     return item.kind === 'chairRow' ? { ...target, itemKind: 'chairRow' } : target
   }

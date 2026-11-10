@@ -7,6 +7,7 @@
  * drawer steps aside so the drop lands on the canvas.
  */
 import { useEffect, useRef, useState } from 'react'
+import type { LengthUnit } from '@/domain/units'
 import { Icon } from '../icons/glyphs'
 import { ShapePanel } from './ShapePanel'
 
@@ -14,16 +15,18 @@ export type ShapeDrawerProps = {
   open: boolean
   onClose(): void
   blank: boolean
+  ceremony?: boolean
+  unit?: LengthUnit
   disabled: boolean
   dropTarget(): HTMLElement | null
 }
 
-export function ShapeDrawer({ open, onClose, blank, disabled, dropTarget }: ShapeDrawerProps) {
+export function ShapeDrawer({ open, ...rest }: ShapeDrawerProps) {
   if (!open) return null
-  return <Drawer onClose={onClose} blank={blank} disabled={disabled} dropTarget={dropTarget} />
+  return <Drawer {...rest} />
 }
 
-function Drawer({ onClose, blank, disabled, dropTarget }: Omit<ShapeDrawerProps, 'open'>) {
+function Drawer({ onClose, blank, ceremony, unit, disabled, dropTarget }: Omit<ShapeDrawerProps, 'open'>) {
   const [dragging, setDragging] = useState(false)
   const closeRef = useRef<HTMLButtonElement>(null)
 
@@ -59,7 +62,16 @@ function Drawer({ onClose, blank, disabled, dropTarget }: Omit<ShapeDrawerProps,
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          <ShapePanel blank={blank} disabled={disabled} dropTarget={dropTarget} onAdded={onClose} onDragChange={setDragging} columns={3} />
+          <ShapePanel
+            blank={blank}
+            ceremony={ceremony}
+            unit={unit}
+            disabled={disabled}
+            dropTarget={dropTarget}
+            onAdded={onClose}
+            onDragChange={setDragging}
+            columns={3}
+          />
         </div>
       </div>
     </div>
