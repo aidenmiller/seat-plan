@@ -29,6 +29,11 @@
  * [data-seat-pulse], [data-seat-plus] with data-plus-for, and
  * data-wall-crossing="true" with the red outline data-wall-outline and the
  * badge data-wall-badge.
+ *
+ * Rules and groups (milestone 6, rule-marks.tsx): a red badge at the top
+ * left corner for a broken rule (grey when unfinished), rings round the
+ * seats involved, rings in the group color for picked groups, and fading
+ * for everything else (data-problem, data-faded).
  */
 import { memo, useMemo } from 'react'
 import type { Table } from '@/domain/canvas-schema'
@@ -53,6 +58,8 @@ import {
 } from './style'
 import { tableCenterLabels } from './text-fit'
 import { SeatPlus, SeatPulseRing } from './seat-marks'
+import { useItemMarks } from '../problems/analysis'
+import { FADED_OPACITY, ItemBadge, SeatRings } from './rule-marks'
 
 export function itemTransform(item: { x: number; y: number; rotation: number }): string {
   return item.rotation ? `translate(${item.x} ${item.y}) rotate(${item.rotation})` : `translate(${item.x} ${item.y})`
@@ -100,6 +107,7 @@ export const TableView = memo(function TableView({ table, selected, crossed = fa
   const pulse = useSeatPulse(table.id)
   const bodyFill = tinted ? TINT[tinted].fill : TABLE_FILL
   const bodyStroke = tinted ? TINT[tinted].stroke : TABLE_STROKE
+  const marks = useItemMarks(table)
 
   return (
     <g
@@ -111,6 +119,9 @@ export const TableView = memo(function TableView({ table, selected, crossed = fa
       data-locked={table.locked ? 'true' : undefined}
       data-drag-tint={tinted ?? undefined}
       data-wall-crossing={crossed ? 'true' : undefined}
+      data-problem={marks.badge ?? undefined}
+      data-faded={marks.faded ? 'true' : undefined}
+      opacity={marks.faded ? FADED_OPACITY : undefined}
       transform={itemTransform(table)}
     >
       <title>{crossed ? `${title} crosses a wall` : title}</title>
@@ -177,9 +188,13 @@ export const TableView = memo(function TableView({ table, selected, crossed = fa
             data-seat-index={p.index}
             data-seat-state={taken ? 'taken' : 'empty'}
             data-drop-target={grows ? '' : undefined}
+            opacity={!marks.faded && marks.seats[p.index]?.faded ? FADED_OPACITY : undefined}
           />
         )
       })}
+      {places.map((p) => (
+        <SeatRings key={p.index} x={p.x} y={p.y} mark={marks.seats[p.index]} />
+      ))}
       <g data-seat-marks="">
         {places.map((p) =>
           (table.seats[p.index]?.guestId ?? null) === null ? <SeatPlus key={p.index} x={p.x} y={p.y} index={p.index} /> : null,
@@ -194,6 +209,7 @@ export const TableView = memo(function TableView({ table, selected, crossed = fa
           </g>
         </g>
       )}
+      {marks.badge && <ItemBadge x={-width / 2} y={-height / 2} kind={marks.badge} />}
       <g transform={labels.rotation ? `rotate(${labels.rotation})` : undefined} textAnchor="middle" textRendering="geometricPrecision">
         <text y={labels.name.y} dominantBaseline="central" fontSize={labels.name.fontSize} fontWeight={600} fill={INK} data-table-name="">
           {labels.name.text}

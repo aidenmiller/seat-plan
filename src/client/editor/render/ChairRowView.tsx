@@ -18,6 +18,8 @@ import { useDragTint, useDropTargetSeat, useSeatPulse } from '../seating/react'
 import { SeatPlus, SeatPulseRing } from './seat-marks'
 import { DROP_TARGET_SCALE, DROP_TARGET_STROKE, DROP_TARGET_STROKE_CM, INK_SOFT, SEAT_EMPTY, SEAT_TAKEN, TINT } from './style'
 import { itemTransform } from './TableView'
+import { useItemMarks } from '../problems/analysis'
+import { FADED_OPACITY, ItemBadge, SeatRings } from './rule-marks'
 
 const ROW_LABEL_CM = 20
 
@@ -30,6 +32,7 @@ export const ChairRowView = memo(function ChairRowView({ row, selected }: { row:
   const target = useDropTargetSeat(row.id)
   const pulse = useSeatPulse(row.id)
   const xs = Array.from({ length: row.chairCount }, (_, i) => first + i * row.spacing)
+  const marks = useItemMarks(row)
   return (
     <g
       data-item-id={row.id}
@@ -37,6 +40,9 @@ export const ChairRowView = memo(function ChairRowView({ row, selected }: { row:
       data-selected={selected ? 'true' : undefined}
       data-locked={row.locked ? 'true' : undefined}
       data-drag-tint={tinted ?? undefined}
+      data-problem={marks.badge ?? undefined}
+      data-faded={marks.faded ? 'true' : undefined}
+      opacity={marks.faded ? FADED_OPACITY : undefined}
       transform={itemTransform(row)}
     >
       {tinted && (
@@ -66,9 +72,14 @@ export const ChairRowView = memo(function ChairRowView({ row, selected }: { row:
             data-seat-index={i}
             data-seat-state={taken ? 'taken' : 'empty'}
             data-drop-target={grows ? '' : undefined}
+            opacity={!marks.faded && marks.seats[i]?.faded ? FADED_OPACITY : undefined}
           />
         )
       })}
+      {xs.map((x, i) => (
+        <SeatRings key={i} x={x} y={0} mark={marks.seats[i]} />
+      ))}
+      {marks.badge && <ItemBadge x={-length / 2} y={-SEAT_RADIUS_CM} kind={marks.badge} />}
       <g data-seat-marks="">{xs.map((x, i) => ((row.seats[i]?.guestId ?? null) === null ? <SeatPlus key={i} x={x} y={0} index={i} /> : null))}</g>
       {pulse && xs[pulse.seatIndex] !== undefined && <SeatPulseRing key={pulse.id} x={xs[pulse.seatIndex]} y={0} />}
       <text

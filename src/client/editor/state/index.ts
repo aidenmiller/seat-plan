@@ -89,8 +89,8 @@
  * ## Seating (milestone 5, ../seating/)
  *
  *  - editor.setPeople({ guests, groups, rules }) whenever the page loads the
- *    guest list (EditorShell: from useEditorGuestList; rules arrive in
- *    milestone 6). The ghost, the "Tap a seat for Jane D." prompt, the
+ *    guest list (EditorShell: from useEditorGuestList, rules included,
+ *    fetched again on focus). The ghost, the "Tap a seat for Jane D." prompt, the
  *    unseat question's names and the drag tints read from it. Pass
  *    layoutKind in the options for ceremony layouts.
  *  - editor.actions: seatGuest, seatAtTable ('full' comes with "Table 4 is

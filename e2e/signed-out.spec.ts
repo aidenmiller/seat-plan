@@ -3,7 +3,8 @@
  * and the password never reaches the browser. New pages and routes join these
  * lists as each milestone adds them (milestone 4: the guest list, its import
  * page, the sample file, and the guest and group routes; milestone 7: the
- * template editor and every venue, image, import and revision route).
+ * template editor and every venue, image, import and revision route;
+ * milestone 6: the rule routes and the couple rule switch).
  */
 import { randomUUID } from 'node:crypto'
 import { expect, request as playwrightRequest, test } from '@playwright/test'
@@ -11,7 +12,7 @@ import { apiAddGuests, apiCreateGroup, apiListGroups, apiListGuests } from './gu
 import { makePlanPng } from './fixtures/floorplan-png'
 import { apiCreateLayout, apiCreateWedding, signIn, signInRequest, sitePassword } from './helpers'
 import { apiCreateVenue, apiGetVenue, apiSaveVenue, apiVenueRevisions } from './venues'
-import type { VenueImageInfo } from '../src/shared/api'
+import type { StoredRule, VenueImageInfo } from '../src/shared/api'
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -82,6 +83,12 @@ const API_ROUTES: { method: Method; path: string; body?: unknown }[] = [
   { method: 'DELETE', path: '/api/groups/:group' },
   { method: 'POST', path: '/api/groups/:group/members', body: { guestIds: [NO_ID] } },
   { method: 'DELETE', path: '/api/groups/:group/members/:guest' },
+  // Rules (milestone 6).
+  { method: 'GET', path: '/api/weddings/:wedding/rules' },
+  { method: 'POST', path: '/api/weddings/:wedding/rules', body: { kind: 'apart', guestIds: [NO_ID, NO_ID.replace(/0$/, '1')] } },
+  { method: 'PATCH', path: '/api/rules/:rule', body: { enabled: false } },
+  { method: 'DELETE', path: '/api/rules/:rule' },
+  { method: 'PATCH', path: '/api/rules/couple', body: { guestIds: [NO_ID, NO_ID.replace(/0$/, '1')], enabled: false } },
   // Seated guests across a wedding's layouts.
   { method: 'GET', path: '/api/weddings/:wedding/guests/seats' },
   // Venue templates (milestone 7).
@@ -107,11 +114,11 @@ const API_ROUTES: { method: Method; path: string; body?: unknown }[] = [
   },
 ]
 
-type Ids = { wedding: string; layout: string; guest: string; group: string; venue: string; image: string; revision: string }
-const NO_IDS: Ids = { wedding: NO_ID, layout: NO_ID, guest: NO_ID, group: NO_ID, venue: NO_ID, image: NO_ID, revision: NO_ID }
+type Ids = { wedding: string; layout: string; guest: string; group: string; rule: string; venue: string; image: string; revision: string }
+const NO_IDS: Ids = { wedding: NO_ID, layout: NO_ID, guest: NO_ID, group: NO_ID, rule: NO_ID, venue: NO_ID, image: NO_ID, revision: NO_ID }
 
 function fill(path: string, ids: Ids): string {
-  return path.replace(/:(wedding|layout|guest|group|venue|image|revision)\b/g, (_, key: keyof Ids) => ids[key])
+  return path.replace(/:(wedding|layout|guest|group|rule|venue|image|revision)\b/g, (_, key: keyof Ids) => ids[key])
 }
 
 test.describe('without the cookie', () => {
@@ -136,16 +143,23 @@ test.describe('without the cookie', () => {
     })
   }
 
-  test('real weddings, layouts, guests, groups and venues stay hidden, and nothing changes', async ({ request, baseURL }) => {
-    // Make a real wedding, layout, guest, group and venue (with a floor plan image) as a signed-in visitor.
+  test('real weddings, layouts, guests, groups, rules and venues stay hidden, and nothing changes', async ({ request, baseURL }) => {
+    // Make a real wedding, layout, guests, group, rule and venue (with a floor plan image) as a signed-in visitor.
     const owner = await playwrightRequest.newContext({ baseURL })
     try {
       await signInRequest(owner)
       const secret = `Hidden wedding ${Date.now()}`
       const wedding = await apiCreateWedding(owner, secret)
       const layout = await apiCreateLayout(owner, wedding.id, { name: `Hidden layout ${Date.now()}` })
-      const [guest] = await apiAddGuests(owner, wedding.id, [{ firstName: 'Hiddenfirst', lastName: `Hiddenlast${Date.now()}`, notes: 'Hidden note' }])
+      const [guest, other] = await apiAddGuests(owner, wedding.id, [
+        { firstName: 'Hiddenfirst', lastName: `Hiddenlast${Date.now()}`, notes: 'Hidden note' },
+        { firstName: 'Otherfirst', lastName: `Otherlast${Date.now()}` },
+      ])
       const group = await apiCreateGroup(owner, wedding.id, `Hidden group ${Date.now()}`, [guest.id])
+      const ruleNote = `Hidden rule note ${Date.now()}`
+      const made = await owner.post(`/api/weddings/${wedding.id}/rules`, { data: { kind: 'apart', guestIds: [guest.id, other.id], note: ruleNote } })
+      expect(made.status()).toBe(201)
+      const rule = (await made.json()) as StoredRule
       const venue = await apiCreateVenue(owner, `Hidden venue ${Date.now()}`)
       const wallName = `Hidden wall ${Date.now()}`
       await apiSaveVenue(owner, venue, [
@@ -155,8 +169,8 @@ test.describe('without the cookie', () => {
       expect(upload.status()).toBe(201)
       const image = (await upload.json()) as VenueImageInfo
       const [revision] = (await apiVenueRevisions(owner, venue.id)).revisions
-      const ids: Ids = { wedding: wedding.id, layout: layout.id, guest: guest.id, group: group.id, venue: venue.id, image: image.id, revision: revision.id }
-      const hidden = [secret, layout.name, guest.lastName, 'Hidden note', group.name, venue.name, wallName, image.sha256]
+      const ids: Ids = { wedding: wedding.id, layout: layout.id, guest: guest.id, group: group.id, rule: rule.id, venue: venue.id, image: image.id, revision: revision.id }
+      const hidden = [secret, layout.name, guest.lastName, other.lastName, 'Hidden note', group.name, ruleNote, venue.name, wallName, image.sha256]
 
       for (const path of PAGE_PATHS) {
         const res = await request.get(fill(path, ids), { maxRedirects: 0 })
@@ -180,9 +194,13 @@ test.describe('without the cookie', () => {
       expect(await layoutNow.json()).toMatchObject({ name: layout.name, version: 1 })
       // No guest added or removed, the guest and the group as they were.
       const guestsNow = await apiListGuests(owner, wedding.id)
-      expect(guestsNow.map((g) => [g.id, g.firstName, g.lastName])).toEqual([[guest.id, guest.firstName, guest.lastName]])
+      expect(guestsNow.map((g) => g.id).sort()).toEqual([guest.id, other.id].sort())
+      expect(guestsNow.find((g) => g.id === guest.id)).toMatchObject({ firstName: guest.firstName, lastName: guest.lastName, coupleRuleEnabled: true })
       const groupsNow = await apiListGroups(owner, wedding.id)
       expect(groupsNow.map((g) => [g.id, g.name, g.memberIds])).toEqual([[group.id, group.name, [guest.id]]])
+      // The rule as it was: still on, same guests and note, and no other rule made.
+      const rulesNow = (await (await owner.get(`/api/weddings/${wedding.id}/rules`)).json()) as StoredRule[]
+      expect(rulesNow.map((r) => [r.id, r.kind, r.enabled, r.note, [...r.guestIds].sort()])).toEqual([[rule.id, 'apart', true, ruleNote, [guest.id, other.id].sort()]])
       // The venue as it was: same name, version and wall, no reference image, not deleted, no copy made.
       const venueNow = await apiGetVenue(owner, venue.id)
       expect(venueNow).toMatchObject({ name: venue.name, version: 2, referenceImage: null })
@@ -231,6 +249,7 @@ test('no response the app loads contains the password', async ({ page }) => {
     `/w/${wedding.id}/guests`,
     `/w/${wedding.id}/guests/import`,
     `/w/${wedding.id}/groups`,
+    `/w/${wedding.id}/rules`,
     `/w/${wedding.id}/venues`,
     `/w/${wedding.id}/layouts/${layout.id}`,
     `/venues/${venue.id}?from=${wedding.id}`,

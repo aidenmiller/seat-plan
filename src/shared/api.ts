@@ -773,6 +773,102 @@ export type AddGroupMembersReply = {
   added: string[]
 }
 
+// ---------- Rules ----------
+//
+// Stored rules (spec section 7, PLAN section 4). Couple rules have no rows
+// (PLAN change 8): they come from the guests' partner links and couple rule
+// switches, through coupleRules() in src/domain/rules.ts, and are switched
+// with PATCH /api/rules/couple. A StoredRule fits the domain's Rule, so a
+// list goes straight into evaluateRules, clashes and dragTint.
+
+export const ruleKinds = ['together', 'apart'] as const
+export const ruleAppliesToValues = ['reception', 'ceremony', 'both'] as const
+
+export type StoredRule = {
+  id: string
+  weddingId: string
+  kind: (typeof ruleKinds)[number]
+  /** Live guests only, by last name then first name. Removed guests' links stay in the database, hidden. */
+  guestIds: string[]
+  /** Only ever true on a together rule. */
+  nextToEachOther: boolean
+  appliesTo: (typeof ruleAppliesToValues)[number]
+  enabled: boolean
+  note: string | null
+  /** Fewer than two live guests are left (PLAN change 7): shown as "needs guests" and not checked. */
+  needsGuests: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export const RULE_NEEDS_TWO = 'A rule needs two or more guests'
+export const NEXT_TO_ONLY_TOGETHER = 'Next to each other is only for together rules'
+
+/**
+ * Two or more different guests. Repeats are dropped, so adding a whole group
+ * that holds someone already picked is fine. Adding a group copies its
+ * members as they are now; later group changes leave the rule alone (PLAN
+ * section 4).
+ */
+const ruleGuestIds = z
+  .array(uuid.overwrite((v) => v.toLowerCase()))
+  .max(MAX_GUEST_ROWS)
+  .overwrite((ids) => [...new Set(ids)])
+  .refine((ids) => ids.length >= 2, RULE_NEEDS_TWO)
+
+/** POST /api/weddings/:id/rules. Defaults: not next to each other, both layout kinds, on. */
+export const createRuleBody = z
+  .object({
+    /** The browser may choose the id, so a retried create is harmless. */
+    id: uuid.optional(),
+    kind: z.enum(ruleKinds),
+    guestIds: ruleGuestIds,
+    nextToEachOther: z.boolean().optional(),
+    appliesTo: z.enum(ruleAppliesToValues).optional(),
+    enabled: z.boolean().optional(),
+    note: optionalNotes.optional(),
+  })
+  .refine((b) => b.kind === 'together' || !b.nextToEachOther, { path: ['nextToEachOther'], message: NEXT_TO_ONLY_TOGETHER })
+export type CreateRuleBody = z.input<typeof createRuleBody>
+
+/**
+ * PATCH /api/rules/:id with only the changed fields. guestIds replaces the
+ * rule's guest list. Turning a rule into an apart rule turns next to each
+ * other off; asking for next to each other on an apart rule is refused (422).
+ */
+export const updateRuleBody = z
+  .object({
+    kind: z.enum(ruleKinds).optional(),
+    guestIds: ruleGuestIds.optional(),
+    nextToEachOther: z.boolean().optional(),
+    appliesTo: z.enum(ruleAppliesToValues).optional(),
+    enabled: z.boolean().optional(),
+    note: optionalNotes.optional(),
+  })
+  .refine((b) => Object.keys(b).length > 0, 'Nothing to change')
+  .refine((b) => !(b.kind === 'apart' && b.nextToEachOther === true), {
+    path: ['nextToEachOther'],
+    message: NEXT_TO_ONLY_TOGETHER,
+  })
+export type UpdateRuleBody = z.input<typeof updateRuleBody>
+
+/**
+ * PATCH /api/rules/couple: switches a couple rule on or off (PLAN change 8).
+ * The switch is set on both partners in one transaction. The two guests must
+ * still be linked to each other; otherwise the reply is 409 GuestConflict and
+ * nothing changes.
+ */
+export const coupleRuleBody = z.object({
+  guestIds: z
+    .tuple([uuid.overwrite((v) => v.toLowerCase()), uuid.overwrite((v) => v.toLowerCase())])
+    .refine(([a, b]) => a !== b, 'A couple is two different guests'),
+  enabled: z.boolean(),
+})
+export type CoupleRuleBody = z.input<typeof coupleRuleBody>
+
+/** 200 reply to PATCH /api/rules/couple: both partners as they are now, in the order sent. */
+export type CoupleRuleReply = { guests: Guest[] }
+
 // ---------- Errors ----------
 
 /**

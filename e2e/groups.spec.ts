@@ -4,11 +4,16 @@
  * case, rename it in place, recolor it from the palette, add members by
  * searching (accents ignored), take one out, and delete the group, which
  * leaves its guests on the list (DECISIONS 31).
+ *
+ * The editor's Groups tab (milestone 6): acceptance check 16, closeness
+ * lines sorted loosest first with their tooltips, and group highlighting.
  */
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import type { Group } from '../src/shared/api'
-import { apiAddGuests, apiListGroups, apiListGuests, expectRowsSaved, groupsPath, guestEntry, guestsPath, waitForGroupsPage, waitForGuestList } from './guest-list'
+import { isPhoneLayout, itemLocator, sheetAtRest } from './canvas'
+import { apiAddGuests, apiCreateGroup, apiListGroups, apiListGuests, expectRowsSaved, groupsPath, guestEntry, guestsPath, waitForGroupsPage, waitForGuestList } from './guest-list'
 import { apiCreateWedding, presetAuthor, signIn, uniqueName } from './helpers'
+import { openEditor, seatCircle, setupSeating } from './seating'
 
 test.beforeEach(async ({ context }) => {
   await presetAuthor(context, 'Noa')
@@ -125,4 +130,84 @@ test('make, rename, recolor, add members by search, take one out, and delete a g
   await page.reload()
   await waitForGroupsPage(page)
   await expect(page.getByTestId('groups-empty')).toBeVisible()
+})
+
+// ---------- Closeness and highlighting in the editor (milestone 6) ----------
+
+/** The Groups tab: the right panel's on a laptop, the bottom sheet's (raised to half) on a phone. */
+async function openGroupsTab(page: Page): Promise<Locator> {
+  if (await isPhoneLayout(page)) {
+    const sheet = page.getByTestId('bottom-sheet')
+    const tab = sheet.getByRole('tab', { name: 'Groups' })
+    if ((await sheet.getAttribute('data-snap')) === 'strip' || (await tab.getAttribute('aria-selected')) !== 'true') await tab.click()
+    await expect(tab).toHaveAttribute('aria-selected', 'true')
+    await expect(sheet).not.toHaveAttribute('data-snap', 'strip')
+    await sheetAtRest(page)
+    return sheet.getByTestId('groups-panel')
+  }
+  const panel = page.getByTestId('right-panel')
+  await panel.getByRole('tab', { name: 'Groups' }).click()
+  await expect(panel.getByRole('tab', { name: 'Groups' })).toHaveAttribute('aria-selected', 'true')
+  return panel.getByTestId('groups-panel')
+}
+
+const MEMBERS = Array.from({ length: 12 }, (_, i) => ({ firstName: `Friend${i + 1}`, lastName: 'Hs' }))
+
+test('no table over 10 seats: a group of 12 at two tables scores 100% tight, sorted after a looser group, and picking groups rings their seats and fades the rest (check 16)', async ({ page }, testInfo) => {
+  test.setTimeout(45_000)
+  const s = await setupSeating(page, testInfo, {
+    guests: [...MEMBERS, { firstName: 'Ava', lastName: 'Cohen' }, { firstName: 'Zoë', lastName: 'Adler' }],
+    tables: [
+      { at: { x: 0, y: 0 }, seats: 10, guests: MEMBERS.slice(0, 10).map((m) => m.firstName) },
+      { at: { x: 420, y: 0 }, seats: 10, guests: ['Friend11', 'Friend12', 'Ava'] },
+      { at: { x: 0, y: 420 }, seats: 8, guests: ['Zoë'] },
+      { at: { x: 420, y: 420 }, seats: 10 },
+    ],
+  })
+  const [t1, t2, t3, t4] = s.tables
+  const friends = await apiCreateGroup(page.request, s.weddingId, 'Aiden HS Friends', MEMBERS.map((m) => s.byName(m.firstName).id))
+  const family = await apiCreateGroup(page.request, s.weddingId, 'Noa Family', [s.byName('Ava').id, s.byName('Zoë').id])
+  await openEditor(page, s)
+  const panel = await openGroupsTab(page)
+
+  // Loosest first: Noa Family (2 tables where 1 would do), then the 12 friends at 2 tables of 10.
+  const lines = panel.getByTestId('group-closeness')
+  await expect(lines).toHaveCount(2)
+  await expect(lines.nth(0)).toHaveAttribute('data-group-id', family.id)
+  await expect(lines.nth(1)).toHaveAttribute('data-group-id', friends.id)
+  // 20 of the 66 pairs sit 420 cm (13′ 9″) apart, the rest at one table: about 4 ft on average.
+  const friendsLine = lines.nth(1).getByTestId('closeness-line')
+  await expect(friendsLine).toHaveAttribute('aria-label', 'Aiden HS Friends · 12 of 12 seated · 2 tables (2 possible) · 100% tight · 4 ft spread')
+  await expect(lines.nth(0).getByTestId('closeness-line')).toHaveAttribute('aria-label', 'Noa Family · 2 of 2 seated · 2 tables (1 possible) · 50% tight · 19 ft spread')
+  // Each number explains itself in plain words.
+  await expect(friendsLine.locator('[data-part="tight"]')).toHaveAttribute('title', '2 tables possible out of 2 tables used. 100% means they could not sit any closer.')
+  for (const part of ['seated', 'tables', 'spread']) await expect(friendsLine.locator(`[data-part="${part}"]`)).toHaveAttribute('title', /\w/)
+
+  // Show the friends: their 12 seats get rings in the group color; tables without them fade, and so does Ava's seat.
+  const pick = (line: Locator) => line.locator('button[aria-pressed]')
+  await pick(lines.nth(1)).click()
+  await expect(pick(lines.nth(1))).toHaveAttribute('aria-pressed', 'true')
+  const rings = page.getByTestId('canvas').locator('[data-group-ring]')
+  await expect(rings).toHaveCount(12)
+  await expect(itemLocator(page, t1).locator('[data-group-ring]')).toHaveCount(10)
+  await expect(itemLocator(page, t2).locator('[data-group-ring]')).toHaveCount(2)
+  for (const color of await rings.evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-ring-color') ?? '')))
+    expect(color.toLowerCase()).toBe(friends.color.toLowerCase())
+  for (const t of [t3, t4]) await expect(itemLocator(page, t)).toHaveAttribute('data-faded', 'true')
+  for (const t of [t1, t2]) await expect(itemLocator(page, t)).not.toHaveAttribute('data-faded', /.+/)
+  await expect(seatCircle(page, t2, 2)).toHaveAttribute('opacity', '0.25')
+  await expect(seatCircle(page, t2, 0)).not.toHaveAttribute('opacity', /.+/)
+
+  // Show Noa Family too: Ava's and Zoë's seats ring in its color, and Table 3 comes back.
+  await pick(lines.nth(0)).click()
+  await expect(rings).toHaveCount(14)
+  await expect(seatCircle(page, t2, 2)).not.toHaveAttribute('opacity', /.+/)
+  await expect(itemLocator(page, t3).locator('[data-group-ring]')).toHaveAttribute('data-ring-color', new RegExp(`^${family.color}$`, 'i'))
+  await expect(itemLocator(page, t3)).not.toHaveAttribute('data-faded', /.+/)
+  await expect(itemLocator(page, t4)).toHaveAttribute('data-faded', 'true')
+
+  // Show all clears it.
+  await panel.getByTestId('groups-clear').click()
+  await expect(rings).toHaveCount(0)
+  await expect(page.getByTestId('canvas').locator('[data-faded]')).toHaveCount(0)
 })

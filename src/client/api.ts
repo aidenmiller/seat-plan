@@ -51,6 +51,11 @@ import type {
   VenueWallCheck,
   WeddingDeleteSummary,
   WeddingSummary,
+  CoupleRuleBody,
+  CoupleRuleReply,
+  CreateRuleBody,
+  StoredRule,
+  UpdateRuleBody,
 } from '@/shared/api'
 
 export class ApiRequestError extends Error {
@@ -382,3 +387,18 @@ export const addGroupMembers = (groupId: string, body: AddGroupMembersBody) =>
 
 export const removeGroupMember = (groupId: string, guestId: string) =>
   request<Group>('DELETE', `/api/groups/${enc(groupId)}/members/${enc(guestId)}`)
+
+// ---------- Rules ----------
+
+export const listRules = (weddingId: string) => request<StoredRule[]>('GET', `/api/weddings/${enc(weddingId)}/rules`)
+
+export const createRule = (weddingId: string, body: CreateRuleBody) =>
+  request<StoredRule>('POST', `/api/weddings/${enc(weddingId)}/rules`, body)
+
+/** Only the changed fields. guestIds replaces the rule's guests. */
+export const updateRule = (id: string, body: UpdateRuleBody) => request<StoredRule>('PATCH', `/api/rules/${enc(id)}`, body)
+
+export const deleteRule = (id: string) => request<{ ok: true }>('DELETE', `/api/rules/${enc(id)}`)
+
+/** Switches a couple rule on both partners. 409 when they are no longer partners. */
+export const setCoupleRule = (body: CoupleRuleBody) => request<CoupleRuleReply>('PATCH', '/api/rules/couple', body)

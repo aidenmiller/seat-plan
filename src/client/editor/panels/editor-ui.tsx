@@ -6,6 +6,7 @@
  * answers to a seat change that needs a yes first and to "show details".
  */
 import { createContext, useContext, useSyncExternalStore } from 'react'
+import type { LayoutKind } from '@/domain/rules'
 import type { LengthUnit } from '@/domain/units'
 import type { FixedItem } from '@/domain/venue-schema'
 import type { SeatRequest } from '../input/controller'
@@ -27,6 +28,8 @@ export type EditorUi = {
   venue?: readonly FixedItem[]
   /** Opens the venue picker (another venue template, or Blank canvas). Absent where the venue cannot change. */
   onPickVenue?: () => void
+  /** Reception (default) or ceremony: rows stand in for tables in the Groups tab. */
+  layoutKind?: LayoutKind
 }
 
 const EditorUiContext = createContext<EditorUi | null>(null)

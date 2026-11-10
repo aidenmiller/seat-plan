@@ -4,6 +4,7 @@ import { getDb } from '@/server/db/client'
 import { listGroups } from '@/server/repo/groups'
 import { listGuests } from '@/server/repo/guests'
 import { getLayoutDetail } from '@/server/repo/layouts'
+import { listRules } from '@/server/repo/rules'
 import { getWedding } from '@/server/repo/weddings'
 import { uuid } from '@/shared/api'
 import { EditorShell } from '@/client/editor/EditorShell'
@@ -14,7 +15,7 @@ export const metadata = { title: 'Layout · Seat Plan' }
  * The layout editor. A missing or deleted layout, one from another wedding,
  * or one whose wedding was deleted is a 404. The wedding gives the editor its
  * unit (the grid and every length) and the narrowest gap between tables; its
- * guests and groups fill the Guests tab.
+ * guests, groups and rules fill the Guests and Groups tabs and the rules check.
  */
 export default async function LayoutEditorPage({ params }: PageProps<'/w/[weddingId]/layouts/[layoutId]'>) {
   const { weddingId, layoutId } = await params
@@ -22,13 +23,14 @@ export default async function LayoutEditorPage({ params }: PageProps<'/w/[weddin
   if (!uuid.safeParse(weddingId).success || !uuid.safeParse(layoutId).success) notFound()
   const db = getDb()
   const id = weddingId.toLowerCase()
-  const [layout, wedding, guests, groups] = await Promise.all([
+  const [layout, wedding, guests, groups, rules] = await Promise.all([
     getLayoutDetail(db, layoutId.toLowerCase()),
     getWedding(db, id),
     listGuests(db, id),
     listGroups(db, id),
+    listRules(db, id),
   ])
-  if (!layout || !wedding || layout.weddingId !== wedding.id || !guests || !groups) notFound()
+  if (!layout || !wedding || layout.weddingId !== wedding.id || !guests || !groups || !rules) notFound()
   return (
     <EditorShell
       key={layout.id}
@@ -36,6 +38,7 @@ export default async function LayoutEditorPage({ params }: PageProps<'/w/[weddin
       wedding={{ unit: wedding.unit, minGapCm: wedding.minGapCm }}
       guests={guests}
       groups={groups}
+      rules={rules}
     />
   )
 }

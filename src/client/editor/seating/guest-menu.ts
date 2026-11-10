@@ -1,9 +1,8 @@
 /**
  * The menu for guests selected on the canvas (PLAN section 6, "Selection"):
- * right click, a long press or the More button beside selected seats. In
- * milestone 5 it offers Add to group and Unseat; milestone 6 puts Keep
- * together and Keep apart in front of them through `extensions`, without
- * changing this file. Edit mode only: in View mode nothing on the plan
+ * right click, a long press or the More button beside selected seats: Keep
+ * together and Keep apart (EditorShell, through `extensions`; two or more
+ * guests), Add to group and Unseat. Edit mode only: in View mode nothing on the plan
  * changes, so there is no guest menu.
  *
  * Items match ContextMenuItem (src/client/ui/ContextMenu.tsx), so the page

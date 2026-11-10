@@ -5,6 +5,7 @@ import { makeItem } from '@/domain/presets'
 import type { FixedItem } from '@/domain/venue-schema'
 import { createDocStore } from '../doc-store'
 import { ProblemsPanel } from '../panels/ProblemsPanel'
+import { AnalysisProvider, createAnalysis } from '../problems/analysis'
 import { createEditorState, EditorStateProvider } from '../state'
 import { TableView } from './TableView'
 import { crossedTables } from './wall-crossings'
@@ -79,7 +80,9 @@ describe('ProblemsPanel', () => {
     const editor = editorState()
     return renderToStaticMarkup(
       <EditorStateProvider state={editor}>
-        <ProblemsPanel venue={venue} />
+        <AnalysisProvider value={createAnalysis(editor.store, { venue })}>
+          <ProblemsPanel />
+        </AnalysisProvider>
       </EditorStateProvider>,
     )
   }

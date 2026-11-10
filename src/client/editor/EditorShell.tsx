@@ -31,7 +31,9 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from 'react'
-import { errorMessage, updateLayout } from '@/client/api'
+import { createRule, errorMessage, updateLayout } from '@/client/api'
+import { AddToGroupDialog } from '@/client/guests/AddToGroupDialog'
+import { randomId } from '@/client/sync/random-id'
 import { getAuthor, useAuthor } from '@/client/author'
 import type { LayoutSaver, SaveStatus } from '@/client/sync/types'
 import { useUnloadGuard } from '@/client/sync/unload'
@@ -45,7 +47,7 @@ import type { FixedItem } from '@/domain/venue-schema'
 import { DEFAULT_MIN_GAP_CM } from '@/domain/spacing'
 import type { LengthUnit } from '@/domain/units'
 import { copyLayoutName } from '@/domain/wording'
-import type { Group, Guest, LayoutDetail } from '@/shared/api'
+import type { Group, Guest, LayoutDetail, StoredRule } from '@/shared/api'
 import { VenuePickerDialog } from '@/client/venues/VenuePicker'
 import { ConflictDialog } from './ConflictDialog'
 import { createDocStore, type DocStore } from './doc-store'
@@ -59,6 +61,8 @@ import { CanvasToolbar, PHONE_TOOLBAR_BOTTOM_PX } from './panels/CanvasToolbar'
 import { EditorUiProvider, usePhoneLayout, type EditorUi } from './panels/editor-ui'
 import { EditorGuestsProvider, useEditorGuestList } from './panels/guests-context'
 import { ModeSwitch } from './panels/ModeSwitch'
+import { ProblemCount } from './panels/ProblemCount'
+import { AnalysisProvider, createAnalysis } from './problems/analysis'
 import { PanelContent, PanelTabs, RightPanel, usePanelIds, type PanelTab } from './panels/RightPanel'
 import { ShapeDrawer } from './panels/ShapeDrawer'
 import { ShapePanel } from './panels/ShapePanel'
@@ -66,7 +70,7 @@ import { UnseatDialog, type UnseatAsk } from './panels/UnseatDialog'
 import { ZOOM_CONTROLS_PX, ZoomControls } from './panels/ZoomControls'
 import { CanvasViewport } from './render/CanvasViewport'
 import { LIST_ZONE_ATTR } from './seating/controller'
-import { guestIdsAtSeats, guestMenu } from './seating/guest-menu'
+import { guestIdsAtSeats, guestMenu, type GuestMenuExtension } from './seating/guest-menu'
 import { GuestGhost, PickStrip, SeatCard, SeatPicker } from './panels/SeatingOverlays'
 import { NotStoredBanner, SaveFailedBanner, SaveStatusSlot } from './SaveBanners'
 import { notStoredAlert } from './save-status'
@@ -143,16 +147,18 @@ function venueItemsOf(v: LayoutVenue): readonly FixedItem[] {
 
 const NO_GUESTS: Guest[] = []
 const NO_GROUPS: Group[] = []
+const NO_RULES: StoredRule[] = []
 
 export type EditorShellProps = {
   layout: LayoutDetail
   wedding?: EditorWedding
-  /** The wedding's guests and groups, for the Guests tab. Fetched again when the tab regains focus. */
+  /** The wedding's guests, groups and rules. Fetched again when the tab regains focus. */
   guests?: Guest[]
   groups?: Group[]
+  rules?: StoredRule[]
 }
 
-export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUESTS, groups = NO_GROUPS }: EditorShellProps) {
+export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUESTS, groups = NO_GROUPS, rules = NO_RULES }: EditorShellProps) {
   const router = useRouter()
   const pathname = usePathname()
   const author = useAuthor()
@@ -181,7 +187,8 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   const [unseat, setUnseat] = useState<UnseatAsk | null>(null)
   const phone = usePhoneLayout()
   const canvasAreaRef = useRef<HTMLDivElement>(null)
-  const guestList = useEditorGuestList(layout.weddingId, guests, groups)
+  const guestList = useEditorGuestList(layout.weddingId, guests, groups, rules)
+  const [addToGroup, setAddToGroup] = useState<readonly string[] | null>(null)
 
   const canEdit = saver !== null && author !== null && conflict === null && !leaving
   const venue = useMemo(() => venueItemsOf(venueInfo), [venueInfo])
@@ -211,10 +218,25 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
     }),
   )
 
-  // The seating tools read names, partners and groups from the guest list.
+  // The seating tools read names, partners, groups and rules from the guest list.
   useEffect(() => {
-    editor.setPeople({ guests: guestList.guests, groups: guestList.groups })
-  }, [editor, guestList.guests, guestList.groups])
+    editor.setPeople({ guests: guestList.guests, groups: guestList.groups, rules: guestList.rules })
+  }, [editor, guestList.guests, guestList.groups, guestList.rules])
+
+  // Rules, problems and group rings, worked out on every canvas change (problems/analysis.ts).
+  const [analysis] = useState(() =>
+    createAnalysis(store, { layoutKind: initial.kind, unit: wedding.unit, minGapCm: wedding.minGapCm, venue }),
+  )
+  useEffect(() => {
+    analysis.setInputs({
+      guests: guestList.guests,
+      groups: guestList.groups,
+      rules: guestList.rules,
+      unit: wedding.unit,
+      minGapCm: wedding.minGapCm,
+      venue,
+    })
+  }, [analysis, guestList.guests, guestList.groups, guestList.rules, wedding.unit, wedding.minGapCm, venue])
 
   // Name labels stop at walls, so another venue (Change venue) lays them out again.
   // The bridge already holds the new venue: its effect runs before this one.
@@ -352,6 +374,30 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
 
   const onConfirmUnseat = useCallback((request: UnseatConfirm) => setUnseat(request), [])
 
+  const openProblems = useCallback(() => {
+    setTab('problems')
+    if (phone) setSheet((s) => (s === 'strip' ? 'half' : s))
+  }, [phone])
+
+  /** Keep together and Keep apart for the selected guests: a new rule, saved at once (spec section 7). */
+  const putRule = guestList.putRule
+  const ruleItems: GuestMenuExtension = (ids) => {
+    const add = (kind: 'together' | 'apart') => async () => {
+      try {
+        const rule = await createRule(initial.weddingId, { id: randomId(), kind, guestIds: [...ids] })
+        putRule?.(rule)
+        setNotice(kind === 'together' ? 'Rule added: keep together.' : 'Rule added: keep apart.')
+      } catch (err) {
+        setNotice(`Could not add the rule. ${errorMessage(err)}`)
+      }
+    }
+    const few = ids.length < 2
+    return [
+      { id: 'keepTogether', label: 'Keep together', onSelect: () => void add('together')(), disabled: few },
+      { id: 'keepApart', label: 'Keep apart', onSelect: () => void add('apart')(), disabled: few },
+    ]
+  }
+
   const showDetails = useCallback(() => {
     setTab('properties')
     if (phone) setSheet((s) => (s === 'strip' ? 'half' : s))
@@ -370,6 +416,8 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
               guestIds: guestIdsAtSeats(editor.store.getState().canvas, ui.guestSeats),
               mode: ui.mode,
               unseat: (ids) => void editor.actions.unseatGuests(ids),
+              onAddToGroup: (ids) => setAddToGroup(ids),
+              extensions: [ruleItems],
             })
             if (forGuests) setMenu({ at, menu: forGuests })
             return
@@ -467,8 +515,8 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   const venueLabel = blank ? 'Blank canvas' : venueInfo.venueDeleted ? `${venueInfo.venueName ?? 'Venue'} (deleted)` : (venueInfo.venueName ?? 'Venue')
   const onPickVenue = useCallback(() => setPickingVenue(true), [])
   const editorUi = useMemo<EditorUi>(
-    () => ({ unit: wedding.unit, phone, layoutName: name, venueLabel, onSeatRequest, showDetails, venue, onPickVenue }),
-    [wedding.unit, phone, name, venueLabel, onSeatRequest, showDetails, venue, onPickVenue],
+    () => ({ unit: wedding.unit, phone, layoutName: name, venueLabel, onSeatRequest, showDetails, venue, onPickVenue, layoutKind: initial.kind }),
+    [wedding.unit, phone, name, venueLabel, onSeatRequest, showDetails, venue, onPickVenue, initial.kind],
   )
   const venueGone = !blank && (venueInfo.venueDeleted || venueInfo.template?.deleted === true)
   const dropTarget = useCallback(() => canvasAreaRef.current?.querySelector<HTMLElement>('[data-editor-viewport]') ?? null, [])
@@ -477,6 +525,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
 
   return (
     <EditorStateProvider state={editor}>
+      <AnalysisProvider value={analysis}>
       <EditorUiProvider value={editorUi}>
         <EditorGuestsProvider value={guestList}>
           <div ref={rootRef} className="flex min-h-0 flex-1 flex-col" data-editor-root="" data-mode={deviceKnown ? mode : undefined} data-phone={phone ? 'true' : undefined}>
@@ -504,6 +553,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
                   }}
                 />
               </h1>
+              <ProblemCount compact={phone} onOpen={openProblems} />
               <SaveStatusSlot status={status} />
               <ModeSwitch compact={phone} />
               <AuthorSwitch compact />
@@ -602,6 +652,18 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
                 setNotice(updated.venueTemplateId ? `This layout now uses “${updated.venueName ?? 'the venue'}”.` : 'This layout is now a blank canvas.')
               }}
             />
+            <AddToGroupDialog
+              open={addToGroup !== null}
+              weddingId={initial.weddingId}
+              guestIds={addToGroup ?? []}
+              groups={guestList.groups}
+              onDone={(group, added) => {
+                guestList.putGroup?.(group)
+                setAddToGroup(null)
+                setNotice(added === 0 ? `Already in ${group.name}.` : `Added to ${group.name}.`)
+              }}
+              onClose={() => setAddToGroup(null)}
+            />
             <UnseatDialog ask={unseat} canvas={store.getState().canvas} onClose={() => setUnseat(null)} />
             <ContextMenu at={menu?.at ?? null} items={menu?.menu.items ?? []} label={menu?.menu.label ?? 'Menu'} onClose={() => setMenu(null)} testId="canvas-menu" />
             <SeatPicker />
@@ -610,6 +672,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
           </div>
         </EditorGuestsProvider>
       </EditorUiProvider>
+      </AnalysisProvider>
     </EditorStateProvider>
   )
 }

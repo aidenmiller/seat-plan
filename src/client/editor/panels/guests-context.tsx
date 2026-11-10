@@ -1,21 +1,26 @@
 'use client'
 
 /**
- * The wedding's guests and groups inside the editor, for the Guests tab (and
- * the seating tools of milestone 5). The page loads them on the server; the
+ * The wedding's guests, groups and rules inside the editor, for the Guests
+ * and Groups tabs, the seating tools and the rules check. The page loads them on the server; the
  * editor fetches them again once on mount, since browser Back and Forward
  * show the page from Next's client cache with the lists of the first visit,
  * and again whenever the tab regains focus, so a guest added on the Guests
  * page in another tab shows up here.
  */
-import { createContext, useContext, useEffect, useState } from 'react'
-import { listGroups, listGuests } from '@/client/api'
-import type { Group, Guest } from '@/shared/api'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { listGroups, listGuests, listRules } from '@/client/api'
+import type { Group, Guest, StoredRule } from '@/shared/api'
 
 export type EditorGuests = {
   weddingId: string
   guests: readonly Guest[]
   groups: readonly Group[]
+  /** The wedding's stored rules (couple rules come from partner links). */
+  rules?: readonly StoredRule[]
+  /** A rule or group the editor just made or changed, shown before the next load. */
+  putRule?(rule: StoredRule): void
+  putGroup?(group: Group): void
 }
 
 const EditorGuestsContext = createContext<EditorGuests>({ weddingId: '', guests: [], groups: [] })
@@ -27,14 +32,14 @@ export function useEditorGuests(): EditorGuests {
 }
 
 export type GuestListDeps = {
-  load?: (weddingId: string) => Promise<{ guests: Guest[]; groups: Group[] }>
+  load?: (weddingId: string) => Promise<{ guests: Guest[]; groups: Group[]; rules: StoredRule[] }>
   windowTarget?: EventTarget | null
   documentTarget?: (EventTarget & { visibilityState?: string }) | null
 }
 
-const loadBoth = async (weddingId: string) => {
-  const [guests, groups] = await Promise.all([listGuests(weddingId), listGroups(weddingId)])
-  return { guests, groups }
+const loadAll = async (weddingId: string) => {
+  const [guests, groups, rules] = await Promise.all([listGuests(weddingId), listGroups(weddingId), listRules(weddingId)])
+  return { guests, groups, rules }
 }
 
 /**
@@ -68,18 +73,32 @@ export function refreshOnFocus(
   }
 }
 
+const NO_RULES: StoredRule[] = []
+
+function put<T extends { id: string }>(list: readonly T[], next: T): T[] {
+  return list.some((x) => x.id === next.id) ? list.map((x) => (x.id === next.id ? next : x)) : [...list, next]
+}
+
 /** The guest list for the editor: the page's copy first, then a fresh copy on mount and on focus. */
-export function useEditorGuestList(weddingId: string, guests: Guest[], groups: Group[], deps: GuestListDeps = {}): EditorGuests {
-  const [state, setState] = useState(() => ({ guests, groups, fromGuests: guests, fromGroups: groups }))
-  if (state.fromGuests !== guests || state.fromGroups !== groups) setState({ guests, groups, fromGuests: guests, fromGroups: groups })
-  const { load = loadBoth, windowTarget, documentTarget } = deps
+export function useEditorGuestList(
+  weddingId: string,
+  guests: Guest[],
+  groups: Group[],
+  rules: StoredRule[] = NO_RULES,
+  deps: GuestListDeps = {},
+): EditorGuests & { rules: readonly StoredRule[] } {
+  const [state, setState] = useState(() => ({ guests, groups, rules, fromGuests: guests, fromGroups: groups, fromRules: rules }))
+  if (state.fromGuests !== guests || state.fromGroups !== groups || state.fromRules !== rules) {
+    setState({ guests, groups, rules, fromGuests: guests, fromGroups: groups, fromRules: rules })
+  }
+  const { load = loadAll, windowTarget, documentTarget } = deps
 
   useEffect(() => {
     let live = true
     const refresh = async () => {
       try {
         const next = await load(weddingId)
-        if (live) setState((s) => ({ ...s, guests: next.guests, groups: next.groups }))
+        if (live) setState((s) => ({ ...s, guests: next.guests, groups: next.groups, rules: next.rules }))
       } catch {
         // Keep the list shown; the next focus tries again.
       }
@@ -91,5 +110,10 @@ export function useEditorGuestList(weddingId: string, guests: Guest[], groups: G
     }
   }, [weddingId, load, windowTarget, documentTarget])
 
-  return { weddingId, guests: state.guests, groups: state.groups }
+  const putRule = useCallback((rule: StoredRule) => setState((s) => ({ ...s, rules: put(s.rules, rule) })), [])
+  const putGroup = useCallback((group: Group) => setState((s) => ({ ...s, groups: put(s.groups, group) })), [])
+  return useMemo(
+    () => ({ weddingId, guests: state.guests, groups: state.groups, rules: state.rules, putRule, putGroup }),
+    [weddingId, state.guests, state.groups, state.rules, putRule, putGroup],
+  )
 }

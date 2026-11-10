@@ -4,11 +4,11 @@
  * The right panel's tabs (PLAN section 6, "Right panel"): Properties, Guests,
  * Groups, Problems and Notes. Desktops show it right of the canvas; phones
  * put the same tabs and contents in the bottom sheet. Groups, Problems and
- * Notes fill in with later milestones.
+ * Notes fill in with a later milestone.
  */
 import { useId, type KeyboardEvent, type ReactNode } from 'react'
-import { useEditorUi } from './editor-ui'
 import { GuestsPanel } from './GuestsPanel'
+import { GroupsPanel } from './GroupsPanel'
 import { ProblemsPanel } from './ProblemsPanel'
 import { PropertiesPanel } from './PropertiesPanel'
 
@@ -22,8 +22,7 @@ export const PANEL_TABS: readonly { id: PanelTab; label: string }[] = [
   { id: 'notes', label: 'Notes' },
 ]
 
-const EMPTY_TEXT: Record<Exclude<PanelTab, 'properties' | 'guests' | 'problems'>, string> = {
-  groups: 'Groups show here once the guest list is in.',
+const EMPTY_TEXT: Record<Exclude<PanelTab, 'properties' | 'guests' | 'problems' | 'groups'>, string> = {
   notes: 'Notes on the plan show here.',
 }
 
@@ -90,11 +89,11 @@ export function PanelTabs({
 }
 
 export function PanelContent({ tab, ids }: { tab: PanelTab; ids: (tab: PanelTab) => { tab: string; panel: string } }) {
-  const { venue } = useEditorUi()
   let body: ReactNode
   if (tab === 'properties') body = <PropertiesPanel />
   else if (tab === 'guests') body = <GuestsPanel />
-  else if (tab === 'problems') body = <ProblemsPanel venue={venue} />
+  else if (tab === 'problems') body = <ProblemsPanel />
+  else if (tab === 'groups') body = <GroupsPanel />
   else
     body = (
       <p className="px-4 py-6 text-sm text-stone-600" data-testid={`${tab}-empty`}>

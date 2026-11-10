@@ -35,6 +35,13 @@ import { shallowEqual } from '../state/store'
 import { SeatInitials } from './seat-marks'
 import { INITIALS_FONT_CM, NAME_INK } from './style'
 import { itemTransform } from './TableView'
+import { useAnalysis, type Analysis } from '../problems/analysis'
+import { FADED_OPACITY } from './rule-marks'
+
+/** True while groups are picked and nobody at this table or row is in one (the names fade with it). */
+function useNamesFaded(id: string): boolean {
+  return useAnalysis(useCallback((a: Analysis) => a.highlight.fade && !a.highlight.itemIds.has(id), [id]))
+}
 
 /** True while the view is drawn at a different zoom from the one the SVG holds: a zoom gesture or glide under way. */
 export function isZooming(camera: Pick<CameraController, 'get' | 'drawn'>): boolean {
@@ -145,9 +152,10 @@ const ItemInitials = memo(function ItemInitials({ id }: { id: string }) {
   const item = found?.kind === 'table' || found?.kind === 'chairRow' ? found : null
   const places = useLocalSeats(item)
   const initials = useSeatInitials(item?.seats ?? NO_SEATS)
+  const faded = useNamesFaded(id)
   if (!item) return null
   return (
-    <g transform={itemTransform(item)} data-names-for={id}>
+    <g transform={itemTransform(item)} data-names-for={id} opacity={faded ? FADED_OPACITY : undefined}>
       {places.map((p, i) => {
         const text = initials[i]
         return text ? <SeatInitials key={i} x={p.x} y={p.y} index={i} text={text} rotation={-item.rotation} /> : null
@@ -162,11 +170,12 @@ const TableNames = memo(function TableNames({ id }: { id: string }) {
   const table = found?.kind === 'table' ? found : null
   const labels = useSeatLabels(id)
   const places = useLocalSeats(table)
+  const faded = useNamesFaded(id)
   if (!table) return null
   // A seat whose guest changed since the labels were worked out shows nothing until they are again.
   const shown = labels.filter((l) => table.seats[l.seatIndex]?.guestId === l.guestId)
   return (
-    <g transform={itemTransform(table)} data-names-for={id}>
+    <g transform={itemTransform(table)} data-names-for={id} opacity={faded ? FADED_OPACITY : undefined}>
       {shown.map((l) =>
         l.form === 'initials' ? null : (
           <text
