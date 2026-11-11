@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
 import { requireWeddingPage } from '@/server/auth/pages'
-import { AdminViewBanner, WeddingAccessProvider, weddingAccessValue } from '@/client/wedding-access'
+import { AdminViewBanner, WeddingAccessProvider } from '@/client/wedding-access'
+import { weddingAccessValue } from '@/client/wedding-access-value'
 import { getDb } from '@/server/db/client'
 import { listGroups } from '@/server/repo/groups'
 import { listGuests } from '@/server/repo/guests'

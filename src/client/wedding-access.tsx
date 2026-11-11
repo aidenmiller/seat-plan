@@ -1,25 +1,14 @@
 'use client'
 
 import { createContext, useContext, type ReactNode } from 'react'
+import type { WeddingAccessValue } from './wedding-access-value'
+
+export type { WeddingAccessValue } from './wedding-access-value'
 
 /**
- * What the signed-in person may do in the wedding they have open, as the
- * wedding layouts hand it down. This only decides what the screens show: the
- * server refuses an owner-only change from an editor on its own (403).
+ * The role and admin flag for the wedding that is open, handed down by the
+ * wedding layouts (see wedding-access-value.ts for how they are worked out).
  */
-export type WeddingAccessValue = { role: 'owner' | 'editor'; viaAdmin: boolean }
-
-/** The check the wedding layouts ran (requireWeddingPage), cut to what the screens need. */
-export type WeddingAccessSource = { role: 'owner' | 'editor' | null; viaAdmin: boolean; user: { isAdmin: boolean } }
-
-/**
- * An admin acts as an owner in every wedding, member or not; a member acts
- * with their own role. Nobody else gets this far (they see the 404 page).
- */
-export function weddingAccessValue(access: WeddingAccessSource): WeddingAccessValue {
-  return { role: access.user.isAdmin ? 'owner' : (access.role ?? 'owner'), viaAdmin: access.viaAdmin }
-}
-
 const WeddingAccessContext = createContext<WeddingAccessValue | null>(null)
 
 /** Wraps a wedding's screens. */

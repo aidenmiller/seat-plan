@@ -6,9 +6,9 @@ import {
   useCanManageWedding,
   useWeddingAccess,
   WeddingAccessProvider,
-  weddingAccessValue,
   type WeddingAccessValue,
 } from './wedding-access'
+import { weddingAccessValue } from './wedding-access-value'
 
 function Probe() {
   const { role, viaAdmin } = useWeddingAccess()
