@@ -68,7 +68,7 @@ describe('template autosave', () => {
     expect(saveVenueBody.safeParse(call.body).success).toBe(true)
     expect(call.body).toMatchObject({ baseVersion: 4, editedBy: 'Aiden', reference: null })
     expect(call.body).not.toHaveProperty('canvas')
-    const reply: SaveVenueOk = { status: 'saved', version: 5, updatedAt: '2026-11-09T12:00:00.000Z', editedBy: 'Aiden' }
+    const reply: SaveVenueOk = { status: 'saved', version: 5, updatedAt: '2026-11-09T12:00:00.000Z', editedBy: 'Aiden', editedById: null }
     call.respond(200, reply)
     await settle()
     expect(saver.getBaseVersion()).toBe(5)
@@ -85,6 +85,7 @@ describe('template autosave', () => {
       version: 6,
       updatedAt: '2026-11-09T12:00:00.000Z',
       editedBy: 'Noa',
+      editedById: null,
       lastSaveId: null,
     }
     fetch.calls[0].respond(409, conflict)

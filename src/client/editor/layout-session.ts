@@ -34,7 +34,7 @@ import { findOrphanDrafts, pickRecovery } from '@/client/sync/recovery'
 import { watchRemoteVersion, type RemoteVersionWatch, type WatchRemoteVersionOptions } from '@/client/sync/remote-version'
 import { claimTab, isTabAlive } from '@/client/sync/tab-lock'
 import type { DraftSnapshot, DraftStore, LayoutSaver, LayoutSaverOptions, SaveStatus } from '@/client/sync/types'
-import type { Author, Canvas } from '@/domain/canvas-schema'
+import { asAuthor, type Author, type Canvas } from '@/domain/canvas-schema'
 import { loadedChangesMessage } from '@/domain/wording'
 import type { DuplicateLayoutBody, LayoutDetail } from '@/shared/api'
 import { clearDroppedSeats, type DocStore } from './doc-store'
@@ -44,7 +44,7 @@ export type ConflictInfo = {
   source: 'save' | 'recovery'
   /** For 'recovery': the closed tab's last save landed, so only the edits after it are at stake. */
   partlySaved: boolean
-  server: { version: number; editedBy: Author | null; updatedAt: string }
+  server: { version: number; editedBy: string | null; updatedAt: string }
   /** For 'recovery', the closed tab's draft, whose canvas is "mine". */
   draft: DraftSnapshot | null
 }
@@ -144,7 +144,7 @@ export function openLayoutSession({ layout, store, getAuthor, events, deps }: Op
   /** A copy was made and the page is about to open it: no edit may reach this layout any more. */
   let leaving = false
   /** Whose name saves carry if nobody has picked on this device yet (a recovered draft's, or the last editor's). */
-  let fallbackAuthor: Author = layout.editedBy ?? 'Noa'
+  let fallbackAuthor: Author = asAuthor(layout.editedBy) ?? 'Noa'
   const editedBy = () => getAuthor() ?? fallbackAuthor
 
   function setConflict(next: ConflictInfo | null) {
@@ -201,7 +201,8 @@ export function openLayoutSession({ layout, store, getAuthor, events, deps }: Op
     }
 
     const next = plan.next
-    if (next) fallbackAuthor = next.draft.editedBy
+    // A draft saved under another name falls back to the one already in hand: the save request takes only Noa or Aiden.
+    if (next) fallbackAuthor = asAuthor(next.draft.editedBy) ?? fallbackAuthor
     const baseVersion = next?.decision.kind === 'apply' ? next.decision.baseVersion : server.version
     const ownTab = tabId
     saver = d.createSaver({

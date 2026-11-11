@@ -158,7 +158,9 @@ export const noteSchema = z.object({
   points: z.array(point).max(2000).optional(),
   text: cleanText(5000),
   color: z.enum(noteColors),
-  author: z.enum(authors),
+  /** Display name of whoever made the note; any name, not only the two in `authors`. */
+  author: cleanText(80).refine((v) => v.trim().length > 0, 'Name is empty'),
+  authorId: z.uuid().optional(),
   done: z.boolean(),
   createdAt: z.iso.datetime(),
   attachedTo: z.object({ start: itemId.nullable(), end: itemId.nullable() }),
@@ -226,6 +228,11 @@ export type Note = z.infer<typeof noteSchema>
 export type Item = z.infer<typeof itemSchema>
 export type Canvas = z.infer<typeof canvasSchema>
 export type Author = (typeof authors)[number]
+
+/** The value as one of the two names the save requests still accept, or null for anything else. */
+export function asAuthor(value: unknown): Author | null {
+  return (authors as readonly unknown[]).includes(value) ? (value as Author) : null
+}
 
 export function emptyCanvas(): Canvas {
   return { schemaVersion: CANVAS_SCHEMA_VERSION, items: [] }

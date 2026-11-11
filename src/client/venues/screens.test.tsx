@@ -28,6 +28,7 @@ function summary(over: Partial<VenueSummary> = {}): VenueSummary {
     usedBy: 2,
     version: 3,
     editedBy: 'Noa',
+    editedById: null,
     importedBy: 'hand',
     fixedItemCount: 0,
     hasReferenceImage: false,
@@ -59,6 +60,7 @@ const venue: VenueDetail = {
   version: 1,
   lastSaveId: null,
   editedBy: null,
+  editedById: null,
   updatedAt: '2026-11-09T15:42:00.000Z',
   importedBy: 'hand',
   fixedItems: [

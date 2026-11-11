@@ -16,6 +16,7 @@ import type {
 } from '@/shared/api'
 import { recentSavesOf, writeCanvas, type WriteCanvasResult } from '../canvas-write'
 import { layouts, venueTemplates, weddings } from '../db/schema'
+import { editorName } from '../editor-name'
 import type { Db, Tx } from '../locks'
 
 /**
@@ -37,7 +38,8 @@ const summaryColumns = {
   venueName: venueTemplates.name,
   venueDeletedAt: venueTemplates.deletedAt,
   version: layouts.version,
-  editedBy: layouts.editedBy,
+  editedBy: editorName(layouts),
+  editedById: layouts.editedByUserId,
   updatedAt: layouts.updatedAt,
   thumbSvg: layouts.thumbSvg,
 }
@@ -51,7 +53,8 @@ type SummaryRow = {
   venueName: string | null
   venueDeletedAt: Date | null
   version: number
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   updatedAt: Date
   thumbSvg: string
 }
@@ -68,6 +71,7 @@ function toSummary(row: SummaryRow): LayoutSummary {
     venueDeleted: row.venueTemplateId !== null && row.venueDeletedAt !== null,
     version: row.version,
     editedBy: row.editedBy,
+    editedById: row.editedById,
     updatedAt: row.updatedAt.toISOString(),
     thumbSvg: row.thumbSvg,
   }
@@ -376,7 +380,8 @@ export async function layoutVersion(db: Db, layoutId: string): Promise<LayoutVer
     .select({
       version: layouts.version,
       updatedAt: layouts.updatedAt,
-      editedBy: layouts.editedBy,
+      editedBy: editorName(layouts),
+      editedById: layouts.editedByUserId,
       lastSaveId: layouts.lastSaveId,
       recentSaves: layouts.recentSaves,
     })
@@ -388,6 +393,7 @@ export async function layoutVersion(db: Db, layoutId: string): Promise<LayoutVer
     version: row.version,
     updatedAt: row.updatedAt.toISOString(),
     editedBy: row.editedBy,
+    editedById: row.editedById,
     lastSaveId: row.lastSaveId,
     recentSaveIds: recentSaveIdsOf(row.recentSaves),
   }

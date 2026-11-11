@@ -35,7 +35,7 @@ export function revisionDetail(r: Pick<VenueRevision, 'fixedItemCount' | 'refere
   return r.referenceImageId ? `${items}, with the floor plan image` : items
 }
 
-type Who = 'Noa' | 'Aiden' | null
+type Who = string | null
 
 /** "Loaded Aiden's changes.", after this tab took a newer save of the venue. */
 export function loadedChangesText(who: Who): string {

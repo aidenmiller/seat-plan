@@ -311,6 +311,11 @@ describe('notes on the plan', () => {
     expect(html.slice(html.indexOf('data-layer="notes"'))).toContain('data-item-id="n1"')
   })
 
+  it('draws a whole emoji as the initial of a note by someone with another name', () => {
+    const html = itemMarkup(render([note('sticky', 'n1', { text: 'Hi', author: '🎂 Dayna' })]), 'n1')
+    expect(html).toMatch(/data-note-author="">🎂<\/text>/)
+  })
+
   it('draws a sticky note as a filled square with its wrapped text and the author initial', () => {
     const html = itemMarkup(render([note('sticky', 'n1', { text: 'Keep Uncle Bob away from the bar' })]), 'n1')
     const color = NOTE_COLOR_PRESETS.pink

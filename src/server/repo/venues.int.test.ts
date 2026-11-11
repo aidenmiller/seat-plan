@@ -12,7 +12,7 @@ import { makeTestDb, truncateAll } from '../../../test/db'
 import { makeGridPng } from '@/domain/floorplan/__fixtures__/plans'
 import type { FixedItem, ReferenceMeta } from '@/domain/venue-schema'
 import { MAX_VENUE_IMAGE_BYTES } from '@/shared/api'
-import { layouts, venueImages, venueTemplateRevisions, venueTemplates } from '../db/schema'
+import { layouts, users, venueImages, venueTemplateRevisions, venueTemplates } from '../db/schema'
 import { weddingLock } from '../locks'
 import { createLayout, softDeleteLayout, updateLayout } from './layouts'
 import {
@@ -146,6 +146,7 @@ describe('create, read, list, rename', () => {
       usedBy: 2,
       version: 2,
       editedBy: 'Aiden',
+      editedById: null,
       importedBy: 'hand',
       fixedItemCount: 2,
       hasReferenceImage: false,
@@ -227,6 +228,52 @@ describe('saveTemplate', () => {
     expect(after.version).toBe(before.version)
     expect(after.updatedAt).toEqual(before.updatedAt)
     expect((await layoutRow(db, blank)).thumbSvg).toBe(blankBefore.thumbSvg)
+  })
+})
+
+describe('who edited a template', () => {
+  const rowOf = async (id: string) => (await db.select().from(venueTemplates).where(eq(venueTemplates.id, id)))[0]!
+
+  it('create, duplicate and save write both edited_by and edited_by_name', async () => {
+    const t = await newTemplate()
+    expect(await rowOf(t.id)).toMatchObject({ editedBy: 'Noa', editedByName: 'Noa', editedByUserId: null })
+    expect(t).toMatchObject({ editedBy: 'Noa', editedById: null })
+
+    const saved = await saveTemplate(db, t.id, saveBody(1, []))
+    expect(saved).toMatchObject({ status: 'saved', editedBy: 'Aiden', editedById: null })
+    expect(await rowOf(t.id)).toMatchObject({ editedBy: 'Aiden', editedByName: 'Aiden', editedByUserId: null })
+
+    const copy = await duplicateTemplate(db, t.id, { id: randomUUID(), editedBy: 'Aiden' })
+    expect(copy.status).toBe('created')
+    if (copy.status === 'created') expect(await rowOf(copy.venue.id)).toMatchObject({ editedBy: 'Aiden', editedByName: 'Aiden' })
+  })
+
+  it('reads the name from edited_by_name when edited_by is null, in every reply', async () => {
+    const t = await newTemplate()
+    await db.update(venueTemplates).set({ editedBy: null, editedByName: 'Dayna K.' }).where(eq(venueTemplates.id, t.id))
+
+    expect(await getTemplate(db, t.id)).toMatchObject({ editedBy: 'Dayna K.', editedById: null })
+    expect((await listVenues(db)).find((v) => v.id === t.id)).toMatchObject({ editedBy: 'Dayna K.', editedById: null })
+    expect(await saveTemplate(db, t.id, saveBody(0, []))).toMatchObject({ status: 'conflict', editedBy: 'Dayna K.', editedById: null })
+  })
+
+  it('reads edited_by_user_id back as the id, and a save by name clears it', async () => {
+    const t = await newTemplate()
+    const [user] = await db
+      .insert(users)
+      .values({ email: `${randomUUID()}@example.com`, displayName: 'Dayna K.', passwordHash: 'x' })
+      .returning({ id: users.id })
+    await db
+      .update(venueTemplates)
+      .set({ editedBy: null, editedByName: 'Dayna K.', editedByUserId: user!.id })
+      .where(eq(venueTemplates.id, t.id))
+
+    expect(await getTemplate(db, t.id)).toMatchObject({ editedById: user!.id })
+    expect((await listVenues(db)).find((v) => v.id === t.id)).toMatchObject({ editedById: user!.id })
+    expect(await saveTemplate(db, t.id, saveBody(0, []))).toMatchObject({ status: 'conflict', editedById: user!.id })
+
+    expect(await saveTemplate(db, t.id, saveBody(1, []))).toMatchObject({ status: 'saved', editedBy: 'Aiden', editedById: null })
+    expect(await rowOf(t.id)).toMatchObject({ editedByName: 'Aiden', editedByUserId: null })
   })
 })
 

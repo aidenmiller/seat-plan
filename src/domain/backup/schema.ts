@@ -9,7 +9,7 @@
  * backupLayoutSchema, backupTemplateSchema), so both read the file the same way.
  */
 import { z } from 'zod'
-import { authors, canvasSchema, wellFormedText } from '../canvas-schema'
+import { canvasSchema, cleanText, wellFormedText } from '../canvas-schema'
 import { cleanNotes, cleanOneLine } from '../csv/columns'
 import { HEX_COLOR_RE } from '../group-colors'
 import { fixedItemsSchema, importedByValues, referenceMetaSchema } from '../venue-schema'
@@ -98,7 +98,8 @@ export const backupLayoutSchema = z.object({
   name,
   kind: z.enum(['reception', 'ceremony']),
   venueTemplateId: id.nullable(),
-  editedBy: z.enum(authors).nullable(),
+  // A display name, any string (a backup can name someone besides Noa and Aiden).
+  editedBy: cleanText(200).nullable(),
   canvas: canvasSchema,
 })
 

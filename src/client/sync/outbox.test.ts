@@ -79,7 +79,10 @@ describe('outbox', () => {
   it('checks the shape of a draft', () => {
     expect(isDraftSnapshot(draft(L1, 'a'))).toBe(true)
     expect(isDraftSnapshot(null)).toBe(false)
-    expect(isDraftSnapshot({ ...draft(L1, 'a'), editedBy: 'Bob' })).toBe(false)
+    // Any name is kept, so a draft from someone besides Noa and Aiden still opens.
+    expect(isDraftSnapshot({ ...draft(L1, 'a'), editedBy: 'Dayna K.' })).toBe(true)
+    expect(isDraftSnapshot({ ...draft(L1, 'a'), editedBy: 7 })).toBe(false)
+    expect(isDraftSnapshot({ ...draft(L1, 'a'), editedBy: null })).toBe(false)
     expect(isDraftSnapshot({ ...draft(L1, 'a'), inFlight: { saveId: 'x', baseVersion: 1 } })).toBe(false)
   })
 

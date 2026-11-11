@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto'
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { resolveArrow } from '../src/domain/arrows'
-import { emptyCanvas, type Canvas, type Item, type Note } from '../src/domain/canvas-schema'
+import { emptyCanvas, type Author, type Canvas, type Item, type Note } from '../src/domain/canvas-schema'
 import { generateSeatingBlock } from '../src/domain/ceremony'
 import { makeNote } from '../src/domain/notes'
 import { makeItem } from '../src/domain/presets'
@@ -62,7 +62,7 @@ function roundTables(...at: Point[]): Item[] {
   return items
 }
 
-function note(type: Note['type'], at: Point, author: Note['author'], text: string, createdAt: number): Note {
+function note(type: Note['type'], at: Point, author: Author, text: string, createdAt: number): Note {
   return { ...makeNote(type, at, author, 'yellow', createdAt, randomUUID()), text }
 }
 

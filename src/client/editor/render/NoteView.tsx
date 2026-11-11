@@ -111,7 +111,7 @@ export const NoteView = memo(function NoteView({ note, selected = false, editing
   switch (note.type) {
     case 'sticky': {
       const box = stickyTextBox(w, h)
-      const initial = note.author.slice(0, 1)
+      const initial = Array.from(note.author)[0] ?? ''
       const initialFont = Math.min(NOTE_INITIAL_FONT_CM, Math.max(4, Math.min(w, h) * 0.12))
       body = (
         <>

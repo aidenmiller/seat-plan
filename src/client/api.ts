@@ -226,7 +226,11 @@ export function venueConflictOf(error: unknown): SaveVenueConflict | null {
   if (!(error instanceof ApiRequestError) || error.status !== 409) return null
   const body = error.body as Partial<SaveVenueConflict> | null
   if (!body || typeof body !== 'object' || body.error !== 'conflict' || typeof body.version !== 'number') return null
-  return { ...body, editedBy: body.editedBy === 'Noa' || body.editedBy === 'Aiden' ? body.editedBy : null } as SaveVenueConflict
+  return {
+    ...body,
+    editedBy: typeof body.editedBy === 'string' ? body.editedBy : null,
+    editedById: typeof body.editedById === 'string' ? body.editedById : null,
+  } as SaveVenueConflict
 }
 
 /** Saves an import draft into the template in one go. Answers like saveVenue. */

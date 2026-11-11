@@ -105,6 +105,7 @@ describe('times', () => {
     const fiveMinutesAgo = new Date(now - 5 * 60_000).toISOString()
     expect(editedLine(fiveMinutesAgo, 'Noa', now)).toBe('Edited 5 minutes ago by Noa')
     expect(editedLine(fiveMinutesAgo, null, now)).toBe('Edited 5 minutes ago')
+    expect(editedLine(fiveMinutesAgo, 'Dayna K.', now)).toBe('Edited 5 minutes ago by Dayna K.')
   })
 })
 
@@ -155,6 +156,13 @@ describe('conflict wording', () => {
     expect(conflictMessage(null, updatedAt, 'Noa', now)).toBe('Someone changed this layout at 3:42 pm.')
   })
 
+  it('names anyone, not only Noa and Aiden', () => {
+    expect(conflictMessage('Dayna K.', updatedAt, 'Noa', now)).toBe('Dayna K. changed this layout at 3:42 pm.')
+    expect(conflictMessage('Dayna K.', updatedAt, 'Dayna K.', now)).toBe(
+      'Dayna K. changed this layout from another tab or device at 3:42 pm.',
+    )
+  })
+
   it('says plainly that Load their version drops the changes here', () => {
     expect(conflictChoiceMessage('save')).toBe(
       'Your latest changes are not saved yet. ' +
@@ -188,5 +196,7 @@ describe('conflict wording', () => {
     expect(loadedChangesMessage('Aiden', 'Noa')).toBe("Loaded Aiden's changes")
     expect(loadedChangesMessage('Noa', 'Noa')).toBe('Loaded changes from another tab or device')
     expect(loadedChangesMessage(null, 'Noa')).toBe('Loaded the latest changes')
+    expect(loadedChangesMessage('Dayna K.', 'Noa')).toBe("Loaded Dayna K.'s changes")
+    expect(copyLayoutName('Reception', 'Dayna K.')).toBe("Reception (Dayna K.'s copy)")
   })
 })

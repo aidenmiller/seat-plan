@@ -8,6 +8,7 @@ const info = (version: number): LayoutVersionInfo => ({
   version,
   updatedAt: '2026-11-09T15:42:00.000Z',
   editedBy: 'Aiden',
+  editedById: null,
   lastSaveId: 'aaaaaaaa-1111-4111-8111-111111111111',
   recentSaveIds: ['aaaaaaaa-1111-4111-8111-111111111111', 'bbbbbbbb-2222-4222-8222-222222222222'],
 })
@@ -124,6 +125,17 @@ describe('watchRemoteVersion', () => {
     expect(t.onChange).toHaveBeenCalledWith({ ...older, recentSaveIds: [] })
     expect(readLayoutVersionInfo({ ...older, recentSaveIds: [1] })).toBeNull()
     expect(readLayoutVersionInfo(info(8))).toEqual(info(8))
+  })
+
+  it('accepts a reply naming another person, with or without an id', () => {
+    const dayna = { ...info(9), editedBy: 'Dayna K.', editedById: '0b9f6a3e-6c1d-4c8e-9f57-2a1d6f1e7a10' }
+    expect(readLayoutVersionInfo(dayna)).toEqual(dayna)
+    // A server from before editedById existed (mid-deploy) reads as no id.
+    const { editedById: _omit, ...old } = dayna
+    void _omit
+    expect(readLayoutVersionInfo(old)).toEqual({ ...old, editedById: null })
+    expect(readLayoutVersionInfo({ ...dayna, editedById: 5 })).toBeNull()
+    expect(readLayoutVersionInfo({ ...dayna, editedBy: 5 })).toBeNull()
   })
 
   it('stops listening when stopped', async () => {

@@ -10,7 +10,6 @@ import { errorMessage } from '@/client/api'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { useNow } from '@/client/ui/clock'
 import { errorClass, primaryButton, secondaryButton } from '@/client/ui/styles'
-import type { Author } from '@/domain/canvas-schema'
 import { conflictChoiceMessage, conflictMessage, type ConflictSource } from '@/domain/wording'
 import type { ConflictInfo } from './layout-session'
 
@@ -27,7 +26,7 @@ export function ConflictDialog({
   onKeepMine,
 }: {
   conflict: ConflictInfo | null
-  me: Author | null
+  me: string | null
   onLoadTheirs: () => Promise<void>
   onKeepMine: () => Promise<void>
 }) {

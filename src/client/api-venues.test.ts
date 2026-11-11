@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiRequestError, errorMessage, runFloorplanImport, saveVenue, uploadVenueImage, venueImageUrl } from './api'
+import { ApiRequestError, errorMessage, runFloorplanImport, saveVenue, uploadVenueImage, venueConflictOf, venueImageUrl } from './api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -75,5 +75,20 @@ describe('venue api helpers', () => {
     vi.stubGlobal('fetch', async () => ndjson([`${JSON.stringify({ type: 'progress', elapsedMs: 0, outputTokens: 0 })}\n`]))
     const dropped = await runFloorplanImport('v1', { imageId: 'i', imageWidth: 1, imageHeight: 1 }).catch((e: unknown) => e)
     expect(dropped).toMatchObject({ status: 0 })
+  })
+})
+
+describe('venue conflict replies', () => {
+  const conflict = (over: Record<string, unknown>) =>
+    new ApiRequestError(409, { error: 'conflict', message: 'm', version: 6, updatedAt: 'x', lastSaveId: null, ...over }, 'x')
+
+  it('keeps a name besides Noa and Aiden, with its id', () => {
+    const id = '0b9f6a3e-6c1d-4c8e-9f57-2a1d6f1e7a10'
+    expect(venueConflictOf(conflict({ editedBy: 'Dayna K.', editedById: id }))).toMatchObject({ editedBy: 'Dayna K.', editedById: id })
+  })
+
+  it('reads a missing or malformed editor as nobody', () => {
+    expect(venueConflictOf(conflict({}))).toMatchObject({ editedBy: null, editedById: null })
+    expect(venueConflictOf(conflict({ editedBy: 4, editedById: 4 }))).toMatchObject({ editedBy: null, editedById: null })
   })
 })

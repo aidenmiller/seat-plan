@@ -21,7 +21,7 @@ export function RelativeTime({ iso, className }: { iso: string; className?: stri
 }
 
 /** "Edited 5 minutes ago by Noa". */
-export function EditedLine({ updatedAt, editedBy }: { updatedAt: string; editedBy: 'Noa' | 'Aiden' | null }) {
+export function EditedLine({ updatedAt, editedBy }: { updatedAt: string; editedBy: string | null }) {
   return (
     <>
       Edited <RelativeTime iso={updatedAt} />

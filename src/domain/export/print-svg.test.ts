@@ -5,6 +5,7 @@ import { addDemoNotes } from '../../../scripts/demo-notes'
 import { emptyCanvas, type Canvas, type ChairRow, type Item } from '../canvas-schema'
 import { generateSeatingBlock } from '../ceremony'
 import { labelsOverlap, type LabelName, type MeasureText } from '../labels'
+import { makeNote } from '../notes'
 import { makeItem } from '../presets'
 import { textWidthEm } from '../text-fit'
 import { escapeXml, MIN_PRINT_NAME_PT, PAPER, renderPrintPlan, type PrintPlanInput } from './print-svg'
@@ -136,6 +137,17 @@ describe('renderPrintPlan', () => {
     expect(off).not.toContain('#fef08a')
     expect(off).not.toContain('#fbcfe8')
     expect(off).not.toContain('mic')
+  })
+
+  it('draws the whole first character of a note author, even an emoji or an accent', () => {
+    const sticky = (author: string) => ({ ...makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', Date.UTC(2026, 10, 1), 'n1'), author })
+    const initialOf = (author: string) => {
+      const svg = renderPrintPlan(input({ canvas: { ...emptyCanvas(), items: [sticky(author)] }, names: new Map() })).svg
+      return /font-weight="700"[^>]*text-anchor="end"[^>]*>([^<]*)</.exec(svg)?.[1]
+    }
+    expect(initialOf('Noa')).toBe('N')
+    expect(initialOf('🎂 Dayna')).toBe('🎂')
+    expect(initialOf('Émile')).toBe('É')
   })
 
   it('escapes names and titles', () => {

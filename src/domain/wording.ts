@@ -5,7 +5,8 @@
  */
 import type { LayoutDeleteSummary, LayoutKind, WeddingDeleteSummary } from '@/shared/api'
 
-type Person = 'Noa' | 'Aiden'
+/** A person's display name. Any name, not only Noa and Aiden. */
+type Person = string
 
 const MONTHS = [
   'January',

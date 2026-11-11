@@ -51,7 +51,7 @@ import { BottomSheet, type SheetSnap } from '@/client/ui/BottomSheet'
 import { ContextMenu } from '@/client/ui/ContextMenu'
 import { InlineName } from '@/client/ui/InlineName'
 import { secondaryButton } from '@/client/ui/styles'
-import type { Item } from '@/domain/canvas-schema'
+import { asAuthor, type Item } from '@/domain/canvas-schema'
 import type { FixedItem } from '@/domain/venue-schema'
 import { DEFAULT_MIN_GAP_CM } from '@/domain/spacing'
 import type { LengthUnit } from '@/domain/units'
@@ -493,7 +493,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   async function keepMine() {
     const session = sessionRef.current
     if (!session || !conflict) return
-    const who = author ?? conflict.draft?.editedBy ?? initial.editedBy ?? 'Noa'
+    const who = author ?? asAuthor(conflict.draft?.editedBy) ?? asAuthor(initial.editedBy) ?? 'Noa'
     // Editing stays off from the moment the copy exists until the page has left.
     setLeaving(true)
     try {
@@ -509,7 +509,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   async function saveCopy() {
     const session = sessionRef.current
     if (!session || copying) return
-    const who = author ?? initial.editedBy ?? 'Noa'
+    const who = author ?? asAuthor(initial.editedBy) ?? 'Noa'
     setCopying(true)
     setCopyError(null)
     setLeaving(true)

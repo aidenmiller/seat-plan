@@ -78,7 +78,8 @@ export type LayoutSummary = {
   /** True when the layout's venue template was deleted (the name is then the old one). */
   venueDeleted: boolean
   version: number
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   updatedAt: string
   /** Small vector preview drawn by the server (an SVG document, no scripts). */
   thumbSvg: string
@@ -142,7 +143,8 @@ export type SaveLayoutOk = {
   status: 'saved' | 'already-saved'
   version: number
   updatedAt: string
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   /** Seats the server emptied. The editor applies the same change on screen. */
   droppedSeats: DroppedSeat[]
 }
@@ -152,7 +154,8 @@ export type SaveLayoutConflict = {
   error: 'conflict'
   version: number
   updatedAt: string
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   lastSaveId: string | null
   /** As in LayoutDetail. */
   recentSaveIds: string[]
@@ -164,7 +167,8 @@ export type SaveLayoutFailure = { error: 'gone' } | { error: 'invalid'; issues: 
 export type LayoutVersionInfo = {
   version: number
   updatedAt: string
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   lastSaveId: string | null
   /** As in LayoutDetail. */
   recentSaveIds: string[]
@@ -205,7 +209,8 @@ export type VenueSummary = {
   /** Live layouts in live weddings that use this template. */
   usedBy: number
   version: number
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   importedBy: VenueImportedBy
   fixedItemCount: number
   hasReferenceImage: boolean
@@ -234,7 +239,8 @@ export type VenueDetail = {
   name: string
   version: number
   lastSaveId: string | null
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   updatedAt: string
   importedBy: VenueImportedBy
   fixedItems: FixedItem[]
@@ -294,7 +300,8 @@ export type SaveVenueOk = {
   status: 'saved' | 'already-saved'
   version: number
   updatedAt: string
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
 }
 
 /** 409: someone saved the template since baseVersion. */
@@ -304,7 +311,8 @@ export type SaveVenueConflict = {
   message: string
   version: number
   updatedAt: string
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   lastSaveId: string | null
 }
 

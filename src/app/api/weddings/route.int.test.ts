@@ -118,7 +118,7 @@ describe('/api/venues', () => {
     expect(Array.isArray(res.body)).toBe(true)
     for (const v of res.body) {
       expect(Object.keys(v).sort()).toEqual(
-        ['editedBy', 'fixedItemCount', 'hasReferenceImage', 'id', 'importedBy', 'name', 'updatedAt', 'usedBy', 'version'].sort(),
+        ['editedBy', 'editedById', 'fixedItemCount', 'hasReferenceImage', 'id', 'importedBy', 'name', 'updatedAt', 'usedBy', 'version'].sort(),
       )
     }
   })
