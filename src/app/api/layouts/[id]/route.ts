@@ -42,6 +42,7 @@ export const PUT = withSiteAuth(async (req: NextRequest, ctx: IdContext) => {
         version: result.version,
         updatedAt: result.updatedAt.toISOString(),
         editedBy: result.editedBy,
+        editedById: result.editedById,
         droppedSeats: toDroppedSeats(result.dropped),
       }
       return json(reply)
@@ -52,6 +53,7 @@ export const PUT = withSiteAuth(async (req: NextRequest, ctx: IdContext) => {
         version: result.version,
         updatedAt: result.updatedAt.toISOString(),
         editedBy: result.editedBy,
+        editedById: result.editedById,
         lastSaveId: result.lastSaveId,
         recentSaveIds: result.recentSaveIds,
       }

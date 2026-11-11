@@ -91,6 +91,7 @@ describe('/api/layouts/[id]', () => {
     expect(Object.keys(listed.body[0]).sort()).toEqual(
       [
         'editedBy',
+        'editedById',
         'id',
         'kind',
         'name',
@@ -122,7 +123,7 @@ describe('/api/layouts/[id]', () => {
     const ok = saved.body as SaveLayoutOk
     expect(ok).toMatchObject({ status: 'saved', version: 2, editedBy: 'Aiden' })
     expect(ok.droppedSeats).toEqual([{ itemId: 't1', seatIndex: 1, guestId: ben, reason: 'removed-guest' }])
-    expect(Object.keys(ok).sort()).toEqual(['droppedSeats', 'editedBy', 'status', 'updatedAt', 'version'])
+    expect(Object.keys(ok).sort()).toEqual(['droppedSeats', 'editedBy', 'editedById', 'status', 'updatedAt', 'version'])
 
     // The same save again (a lost reply): already saved, nothing new.
     const retry = await call(one, 'PUT', id, body)
@@ -137,6 +138,7 @@ describe('/api/layouts/[id]', () => {
       version: 2,
       updatedAt: ok.updatedAt,
       editedBy: 'Aiden',
+      editedById: null,
       lastSaveId: saveId,
       recentSaveIds: [saveId],
     })
@@ -156,6 +158,7 @@ describe('/api/layouts/[id]', () => {
       version: 2,
       updatedAt: ok.updatedAt,
       editedBy: 'Aiden',
+      editedById: null,
       lastSaveId: saveId,
       recentSaveIds: [saveId],
     })

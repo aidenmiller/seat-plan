@@ -25,6 +25,7 @@ function detail(overrides: Partial<LayoutDetail> = {}): LayoutDetail {
     venueDeleted: false,
     version: 3,
     editedBy: 'Noa',
+    editedById: null,
     updatedAt: '2026-11-09T15:42:00.000Z',
     thumbSvg: '<svg/>',
     canvas: emptyCanvas(),
@@ -132,6 +133,7 @@ const saved = (version: number, status: SaveLayoutOk['status'] = 'saved'): SaveL
   version,
   updatedAt: '2026-11-09T15:50:00.000Z',
   editedBy: 'Noa',
+  editedById: null,
   droppedSeats: [],
 })
 
@@ -268,6 +270,14 @@ describe('opening a layout', () => {
     expect(t.saver().edits).toHaveLength(0)
   })
 
+  it('opens a draft saved under another name, and still saves as Noa or Aiden', async () => {
+    // Save requests take only the two names for now, so the other name is never sent back.
+    const t = setup({ drafts: [draft({ editedBy: 'Dayna K.' })], author: null })
+    await t.session.ready
+    expect(t.events.onConflict).not.toHaveBeenCalledWith(expect.objectContaining({ source: 'recovery' }))
+    expect(t.saver().options.editedBy()).toBe('Noa')
+  })
+
   it('reports a conflict for a draft made on an older version, and keeps it as a copy', async () => {
     const left = draft({ baseVersion: 2 })
     const t = setup({ drafts: [left] })
@@ -351,7 +361,7 @@ describe('while open', () => {
     await t.session.ready
     const theirs = detail({ version: 4, editedBy: 'Aiden', canvas: addRoundTable(emptyCanvas(), 'theirs') })
     t.setServer(theirs)
-    t.watch().onChange({ version: 4, updatedAt: theirs.updatedAt, editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] })
+    t.watch().onChange({ version: 4, updatedAt: theirs.updatedAt, editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] })
     await vi.waitFor(() => expect(t.events.onNotice).toHaveBeenCalledWith("Loaded Aiden's changes"))
     expect(t.store.getState().canvas).toEqual(theirs.canvas)
     expect(t.saver().resetTo).toHaveBeenCalledWith(4)
@@ -363,7 +373,7 @@ describe('while open', () => {
     const mine = t.store.edit('Add table', (c) => addRoundTable(c, 'mine'))!
     t.session.noteEdit(mine)
     t.setServer(detail({ version: 4, editedBy: 'Aiden', canvas: addRoundTable(emptyCanvas(), 'theirs') }))
-    t.watch().onChange({ version: 4, updatedAt: 'x', editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] })
+    t.watch().onChange({ version: 4, updatedAt: 'x', editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] })
     await new Promise((r) => setTimeout(r, 0))
     expect(t.store.getState().canvas).toBe(mine)
     expect(t.events.onNotice).not.toHaveBeenCalled()
@@ -375,7 +385,7 @@ describe('while open', () => {
     t.session.noteEdit(t.store.edit('Add table', (c) => addRoundTable(c, 'mine'))!)
     t.saver().setStatus({
       kind: 'conflict',
-      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] },
+      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] },
     })
     expect(t.events.onConflict).toHaveBeenLastCalledWith({
       source: 'save',
@@ -399,7 +409,7 @@ describe('while open', () => {
     t.session.noteEdit(mine)
     t.saver().setStatus({
       kind: 'conflict',
-      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] },
+      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] },
     })
     const theirs = detail({ version: 4, editedBy: 'Aiden', canvas: addRoundTable(emptyCanvas(), 'theirs') })
     t.setServer(theirs)
@@ -429,7 +439,7 @@ describe('while open', () => {
     t.session.noteEdit(mine)
     t.saver().setStatus({
       kind: 'conflict',
-      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] },
+      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] },
     })
     t.setServer(detail({ version: 4, editedBy: 'Aiden', canvas: addRoundTable(emptyCanvas(), 'theirs') }))
     await t.session.keepMineAsCopy("Reception plan (Noa's copy)", 'Noa')
@@ -476,7 +486,7 @@ describe('while open', () => {
     t.session.noteEdit(t.store.edit('Add table', (c) => addRoundTable(c, 'mine'))!)
     t.saver().setStatus({
       kind: 'conflict',
-      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] },
+      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] },
     })
     const made = detail({ id: '55555555-5555-4555-8555-555555555555', name: "Reception plan (Noa's copy)" })
     vi.mocked(t.deps.duplicateLayout!).mockRejectedValueOnce(

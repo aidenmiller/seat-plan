@@ -62,7 +62,7 @@ export function isDraftSnapshot(value: unknown): value is DraftSnapshot {
   const d = value as Record<string, unknown>
   if (typeof d.layoutId !== 'string' || typeof d.tabId !== 'string') return false
   if (typeof d.baseVersion !== 'number' || typeof d.dirty !== 'boolean') return false
-  if (typeof d.updatedAt !== 'string' || (d.editedBy !== 'Noa' && d.editedBy !== 'Aiden')) return false
+  if (typeof d.updatedAt !== 'string' || typeof d.editedBy !== 'string') return false
   if (!canvasSchema.safeParse(d.canvas).success) return false
   if (d.inFlight !== null) {
     if (!d.inFlight || typeof d.inFlight !== 'object') return false

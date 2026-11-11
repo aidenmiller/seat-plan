@@ -62,6 +62,7 @@ function ok(version: number, extra: Partial<SaveLayoutOk> = {}): SaveLayoutOk {
     version,
     updatedAt: `2026-11-09T12:00:${String(version).padStart(2, '0')}.000Z`,
     editedBy: 'Noa',
+    editedById: null,
     droppedSeats: [],
     ...extra,
   }
@@ -559,7 +560,8 @@ describe('replies that stop saving', () => {
       error: 'conflict',
       version: 6,
       updatedAt: '2026-11-09T11:42:00.000Z',
-      editedBy: 'Aiden',
+      editedBy: 'Dayna K.',
+      editedById: '0b9f6a3e-6c1d-4c8e-9f57-2a1d6f1e7a10',
       lastSaveId: '9d9d9d9d-1111-4111-8111-111111111111',
       recentSaveIds: ['9d9d9d9d-1111-4111-8111-111111111111'],
     })
@@ -569,7 +571,8 @@ describe('replies that stop saving', () => {
       server: {
         version: 6,
         updatedAt: '2026-11-09T11:42:00.000Z',
-        editedBy: 'Aiden',
+        editedBy: 'Dayna K.',
+        editedById: '0b9f6a3e-6c1d-4c8e-9f57-2a1d6f1e7a10',
         lastSaveId: '9d9d9d9d-1111-4111-8111-111111111111',
         recentSaveIds: ['9d9d9d9d-1111-4111-8111-111111111111'],
       },

@@ -24,10 +24,12 @@ export function saveReply(result: TemplateSaveResult): NextResponse {
         version: result.version,
         updatedAt: result.updatedAt.toISOString(),
         editedBy: result.editedBy,
+        editedById: result.editedById,
       }
       return json(reply)
     }
     case 'conflict': {
+      // editedBy is already the display name (edited_by_name, else edited_by).
       const who = result.editedBy ?? 'Someone'
       const reply: SaveVenueConflict = {
         error: 'conflict',
@@ -35,6 +37,7 @@ export function saveReply(result: TemplateSaveResult): NextResponse {
         version: result.version,
         updatedAt: result.updatedAt.toISOString(),
         editedBy: result.editedBy,
+        editedById: result.editedById,
         lastSaveId: result.lastSaveId,
       }
       return json(reply, 409)

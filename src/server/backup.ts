@@ -14,6 +14,7 @@ import { nameKey } from '@/domain/names'
 import { fixedItemsSchema, type FixedItem } from '@/domain/venue-schema'
 import type { RestoredLayout, RestoredTemplate, RestoreStarted } from '@/shared/api'
 import { writeCanvas } from './canvas-write'
+import { editorName } from './editor-name'
 import {
   groupMembers,
   groups,
@@ -138,7 +139,7 @@ async function backupHead(db: Db, weddingId: string): Promise<{ head: BackupHead
         name: layouts.name,
         kind: layouts.kind,
         venueTemplateId: layouts.venueTemplateId,
-        editedBy: layouts.editedBy,
+        editedBy: editorName(layouts),
         canvas: layouts.canvas,
       })
       .from(layouts)

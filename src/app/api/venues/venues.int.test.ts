@@ -115,7 +115,7 @@ describe('/api/venues', () => {
     const body = { baseVersion: 1, saveId, editedBy: 'Aiden', fixedItems: items, reference }
     const saved = await call(r.one, 'PUT', { id }, { body })
     expect(saved.status).toBe(200)
-    expect(saved.body as SaveVenueOk).toEqual({ status: 'saved', version: 2, updatedAt: expect.any(String), editedBy: 'Aiden' })
+    expect(saved.body as SaveVenueOk).toEqual({ status: 'saved', version: 2, updatedAt: expect.any(String), editedBy: 'Aiden', editedById: null })
     expect((await call(r.one, 'PUT', { id }, { body })).body).toMatchObject({ status: 'already-saved', version: 2 })
     const stale = await call(r.one, 'PUT', { id }, { body: { ...body, saveId: randomUUID(), editedBy: 'Noa' } })
     expect(stale.status).toBe(409)
@@ -125,6 +125,7 @@ describe('/api/venues', () => {
       version: 2,
       updatedAt: (saved.body as SaveVenueOk).updatedAt,
       editedBy: 'Aiden',
+      editedById: null,
       lastSaveId: saveId,
     })
     // Fixed items are checked with the fixed item schema.

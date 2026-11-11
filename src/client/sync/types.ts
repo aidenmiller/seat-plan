@@ -40,7 +40,12 @@ export type DraftSnapshot<T = Canvas> = {
   /** The version the latest local canvas starts from. */
   baseVersion: number
   canvas: T
-  editedBy: Author
+  /**
+   * Whoever the tab saved as. Any name is kept, not only Noa and Aiden, so a
+   * draft written under another name still opens. Save requests accept only the
+   * two names for now, so read it through asAuthor() before sending it back.
+   */
+  editedBy: string
   /** The snapshot and save id currently sent (or about to be resent), if any. */
   inFlight: { saveId: string; baseVersion: number; canvas: T } | null
   /** True while the canvas has edits the server has not confirmed. */

@@ -49,7 +49,7 @@ export type DraftState = {
   /** The same id for every try of one Accept. */
   saveId: string
   /** Someone saved the venue after this tab opened it: Accept asks, then goes over their save. */
-  over: { who: 'Noa' | 'Aiden' | null } | null
+  over: { who: string | null } | null
 }
 
 export type DraftPanelProps = {

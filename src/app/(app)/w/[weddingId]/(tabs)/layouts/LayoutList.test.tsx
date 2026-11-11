@@ -26,6 +26,7 @@ function summary(over: Partial<LayoutSummary>): LayoutSummary {
     venueDeleted: false,
     version: 3,
     editedBy: 'Noa',
+    editedById: null,
     updatedAt: '2026-11-09T15:42:00.000Z',
     thumbSvg: '<svg/>',
     ...over,

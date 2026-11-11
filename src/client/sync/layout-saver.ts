@@ -361,7 +361,8 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
     const server: LayoutVersionInfo = {
       version: typeof c.version === 'number' ? c.version : baseVersion,
       updatedAt: typeof c.updatedAt === 'string' ? c.updatedAt : new Date().toISOString(),
-      editedBy: c.editedBy === 'Noa' || c.editedBy === 'Aiden' ? c.editedBy : null,
+      editedBy: typeof c.editedBy === 'string' ? c.editedBy : null,
+      editedById: typeof c.editedById === 'string' ? c.editedById : null,
       lastSaveId: typeof c.lastSaveId === 'string' ? c.lastSaveId : null,
       recentSaveIds: Array.isArray(c.recentSaveIds) ? c.recentSaveIds.filter((id) => typeof id === 'string') : [],
     }

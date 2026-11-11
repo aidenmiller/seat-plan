@@ -8,7 +8,7 @@ import { eq, inArray } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 import { makeTestDb } from '../../../test/db'
 import { createWeddingBody } from '@/shared/api'
-import { groups, layouts, rules, shareLinks, venueTemplates } from '../db/schema'
+import { groups, layouts, rules, shareLinks, users, venueTemplates } from '../db/schema'
 import { removeGuests } from './guests'
 import {
   copyName,
@@ -340,6 +340,7 @@ describe('layouts', () => {
       version: 2,
       updatedAt: saved.status === 'saved' ? saved.updatedAt.toISOString() : '',
       editedBy: 'Noa',
+      editedById: null,
       lastSaveId,
       recentSaveIds: [lastSaveId],
     })
@@ -360,6 +361,64 @@ describe('layouts', () => {
     const detail = await getLayoutDetail(db, layoutId)
     expect(detail).toMatchObject({ venueName: 'Old Barn', venueDeleted: true, template: { id: t, deleted: true } })
     expect((await getLayoutDetail(db, blank))!.venueDeleted).toBe(false)
+  })
+})
+
+describe('who edited a layout', () => {
+  it('a save writes both edited_by and edited_by_name, and replies with the name and no id', async () => {
+    const w = await makeWedding(db)
+    const layoutId = await makeLayout(db, w, canvasOf())
+    expect(await layoutRow(db, layoutId)).toMatchObject({ editedBy: 'Noa', editedByName: 'Noa', editedByUserId: null })
+
+    const saved = await saveLayout(db, layoutId, { baseVersion: 1, saveId: randomUUID(), editedBy: 'Aiden', tabId: 'tab', canvas: canvasOf() })
+    expect(saved).toMatchObject({ status: 'saved', editedBy: 'Aiden', editedById: null })
+    expect(await layoutRow(db, layoutId)).toMatchObject({ editedBy: 'Aiden', editedByName: 'Aiden', editedByUserId: null })
+
+    const copy = await duplicateLayout(db, layoutId, { id: randomUUID(), editedBy: 'Noa' })
+    expect(copy.status).toBe('created')
+    if (copy.status === 'created') {
+      expect(await layoutRow(db, copy.layout.id)).toMatchObject({ editedBy: 'Noa', editedByName: 'Noa' })
+      expect(copy.layout).toMatchObject({ editedBy: 'Noa', editedById: null })
+    }
+  })
+
+  it('reads the name from edited_by_name when edited_by is null, in every reply', async () => {
+    const w = await makeWedding(db)
+    const layoutId = await makeLayout(db, w, canvasOf())
+    await db.update(layouts).set({ editedBy: null, editedByName: 'Dayna K.' }).where(eq(layouts.id, layoutId))
+
+    expect(await layoutVersion(db, layoutId)).toMatchObject({ editedBy: 'Dayna K.', editedById: null })
+    expect((await listLayouts(db, w))![0]).toMatchObject({ editedBy: 'Dayna K.', editedById: null })
+    expect(await getLayoutDetail(db, layoutId)).toMatchObject({ editedBy: 'Dayna K.', editedById: null })
+    // A stale save meets a conflict that names her.
+    expect(await save(layoutId, 0, canvasOf())).toMatchObject({ status: 'conflict', editedBy: 'Dayna K.', editedById: null })
+  })
+
+  it('falls back to edited_by for a row written before edited_by_name existed', async () => {
+    const w = await makeWedding(db)
+    const layoutId = await makeLayout(db, w, canvasOf())
+    await db.update(layouts).set({ editedBy: 'Aiden', editedByName: null }).where(eq(layouts.id, layoutId))
+    expect(await layoutVersion(db, layoutId)).toMatchObject({ editedBy: 'Aiden', editedById: null })
+  })
+
+  it('reads edited_by_user_id back as the id, and a save by name clears it', async () => {
+    const w = await makeWedding(db)
+    const layoutId = await makeLayout(db, w, canvasOf())
+    const [user] = await db
+      .insert(users)
+      .values({ email: `${randomUUID()}@example.com`, displayName: 'Dayna K.', passwordHash: 'x' })
+      .returning({ id: users.id })
+    await db.update(layouts).set({ editedBy: null, editedByName: 'Dayna K.', editedByUserId: user!.id }).where(eq(layouts.id, layoutId))
+
+    expect(await layoutVersion(db, layoutId)).toMatchObject({ editedBy: 'Dayna K.', editedById: user!.id })
+    expect((await listLayouts(db, w))![0]).toMatchObject({ editedBy: 'Dayna K.', editedById: user!.id })
+    expect(await getLayoutDetail(db, layoutId)).toMatchObject({ editedById: user!.id })
+    expect(await save(layoutId, 0, canvasOf())).toMatchObject({ status: 'conflict', editedById: user!.id })
+
+    // The old writers know only the name, so they do not leave her id beside theirs.
+    expect(await save(layoutId, 1, canvasOf())).toMatchObject({ status: 'saved', editedBy: 'Noa', editedById: null })
+    expect(await layoutRow(db, layoutId)).toMatchObject({ editedByName: 'Noa', editedByUserId: null })
+    await db.delete(users).where(eq(users.id, user!.id))
   })
 })
 

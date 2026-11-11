@@ -38,5 +38,8 @@ describe('venue wording', () => {
     expect(acceptOverText(null)).toBe('Someone changed this venue after you opened it. Accept your draft over it?')
     expect(restoreReloadedText('Noa', true)).toBe('Loaded Noa’s changes. Try Undo import again.')
     expect(restoreReloadedText(null, false)).toBe('Loaded the latest version of this venue. Try Put back again.')
+    expect(loadedChangesText('Dayna K.')).toBe('Loaded Dayna K.’s changes.')
+    expect(acceptOverText('Dayna K.')).toBe('Dayna K. changed this venue after you opened it. Accept your draft over it?')
+    expect(restoreReloadedText('Dayna K.', true)).toBe('Loaded Dayna K.’s changes. Try Undo import again.')
   })
 })

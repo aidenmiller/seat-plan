@@ -449,7 +449,7 @@ function noteSvg(note: Note): string {
       body =
         el('rect', { x: -w / 2, y: -h / 2, width: w, height: h, rx: 2, fill: color.fill, stroke: color.stroke, 'stroke-opacity': 0.45, 'stroke-width': 1.5 }) +
         noteTextSvg(note.text, box, color.text, note.done) +
-        el('text', { x: w / 2 - box.pad * 0.6, y: h / 2 - box.pad * 0.45, 'font-size': initialFont, 'font-weight': 700, 'text-anchor': 'end', fill: color.stroke }, escapeXml(note.author.slice(0, 1)))
+        el('text', { x: w / 2 - box.pad * 0.6, y: h / 2 - box.pad * 0.45, 'font-size': initialFont, 'font-weight': 700, 'text-anchor': 'end', fill: color.stroke }, escapeXml(Array.from(note.author)[0] ?? ''))
       break
     }
     case 'text':

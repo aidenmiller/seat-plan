@@ -345,6 +345,31 @@ describe('backup and restore', () => {
     expect(links).toEqual([])
   })
 
+  it('exports the editor name and restores another person’s name into edited_by_name only', async () => {
+    const source = await makeSource()
+    const database = await db()
+    // A layout last saved by someone besides Noa and Aiden: only the new column holds the name.
+    await database
+      .update(layouts)
+      .set({ editedBy: null, editedByName: 'Dayna K.' })
+      .where(and(eq(layouts.weddingId, source.weddingId), eq(layouts.name, 'Ceremony')))
+    const file = await downloadBackup(source.weddingId)
+    expect(file.layouts.map((l) => [l.name, l.editedBy])).toEqual([
+      ['Dinner', 'Noa'],
+      ['Ceremony', 'Dayna K.'],
+    ])
+
+    const restored = await restore(file)
+    const rows = await database
+      .select({ name: layouts.name, editedBy: layouts.editedBy, editedByName: layouts.editedByName, editedByUserId: layouts.editedByUserId })
+      .from(layouts)
+      .where(eq(layouts.weddingId, restored.started.weddingId))
+    expect(rows.sort((x, y) => x.name.localeCompare(y.name))).toEqual([
+      { name: 'Ceremony', editedBy: null, editedByName: 'Dayna K.', editedByUserId: null },
+      { name: 'Dinner', editedBy: 'Noa', editedByName: 'Noa', editedByUserId: null },
+    ])
+  })
+
   it('can send every step again without making anything twice', async () => {
     const source = await makeSource()
     const file = await downloadBackup(source.weddingId)

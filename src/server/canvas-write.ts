@@ -8,6 +8,7 @@ import { renderThumbnailSvg } from '@/domain/thumbnail'
 import { fixedItemsSchema, type FixedItem } from '@/domain/venue-schema'
 import type { DroppedSeat, LayoutKind } from '@/shared/api'
 import { guests, layoutSeats, layouts, venueTemplates, weddings, type RecentSave } from './db/schema'
+import { editorName } from './editor-name'
 import { weddingLock, type Tx } from './locks'
 
 /**
@@ -59,14 +60,15 @@ export type WriteCanvasArgs =
       name: string
       kind: LayoutKind
       venueTemplateId: string | null
-      editedBy: Author | null
+      /** A display name, any string (a restored backup can name someone else). */
+      editedBy: string | null
     }
   | { mode: 'rewrite'; weddingId: string; layoutId: string; canvas: unknown }
 
 /** A dropped seat plus the name of its table or row, for summaries. */
 export type DroppedSeatDetail = DroppedSeat & { itemLabel: string }
 
-export type SavedState = { version: number; updatedAt: Date; editedBy: Author | null }
+export type SavedState = { version: number; updatedAt: Date; editedBy: string | null; editedById: string | null }
 
 /** How many recent saves a layout remembers (layouts.recent_saves). */
 export const MAX_RECENT_SAVES = 20
@@ -133,6 +135,9 @@ async function save(
       lastSaveId: args.saveId,
       recentSaves,
       editedBy: args.editedBy,
+      editedByName: args.editedBy,
+      // This phase's writers only know the name, so clear an id a later writer left.
+      editedByUserId: null,
       updatedAt: sql`now()`,
       thumbSvg,
     })
@@ -145,7 +150,12 @@ async function save(
         sql`exists (select 1 from "weddings" w where w."id" = "layouts"."wedding_id" and w."deleted_at" is null)`,
       ),
     )
-    .returning({ version: layouts.version, updatedAt: layouts.updatedAt, editedBy: layouts.editedBy })
+    .returning({
+      version: layouts.version,
+      updatedAt: layouts.updatedAt,
+      editedBy: editorName(layouts),
+      editedById: layouts.editedByUserId,
+    })
 
   if (!row) {
     // Cannot happen while the row is locked; kept so a mistake answers safely.
@@ -180,7 +190,9 @@ async function insert(
       venueTemplateId: args.venueTemplateId,
       version: 1,
       lastSaveId: null,
-      editedBy: args.editedBy,
+      // The old column's check constraint only allows the two names.
+      editedBy: args.editedBy === 'Noa' || args.editedBy === 'Aiden' ? args.editedBy : null,
+      editedByName: args.editedBy,
       canvas: clean,
       thumbSvg,
     })
@@ -243,7 +255,8 @@ async function lockCurrentState(tx: Tx, layoutId: string, weddingId: string): Pr
     .select({
       version: layouts.version,
       updatedAt: layouts.updatedAt,
-      editedBy: layouts.editedBy,
+      editedBy: editorName(layouts),
+      editedById: layouts.editedByUserId,
       lastSaveId: layouts.lastSaveId,
       recentSaves: layouts.recentSaves,
       venueTemplateId: layouts.venueTemplateId,
@@ -276,7 +289,12 @@ function mismatch(
   args: Extract<WriteCanvasArgs, { mode: 'save' }>,
   dropped: DroppedSeatDetail[],
 ): WriteCanvasResult {
-  const state = { version: current.version, updatedAt: current.updatedAt, editedBy: current.editedBy }
+  const state = {
+    version: current.version,
+    updatedAt: current.updatedAt,
+    editedBy: current.editedBy,
+    editedById: current.editedById,
+  }
   // The same save landed before and its reply was lost, maybe with other saves
   // since. Answer with the version that save made, so the tab's next save
   // starts from there and meets any later save as a conflict. The seats it
@@ -284,7 +302,7 @@ function mismatch(
   const earlier = current.recentSaves.find((r) => r.saveId === args.saveId)
   if (earlier && earlier.version !== current.version) {
     // Only ids and versions are kept, so the time is the layout's last save.
-    return { status: 'already-saved', version: earlier.version, updatedAt: current.updatedAt, editedBy: args.editedBy, dropped }
+    return { status: 'already-saved', version: earlier.version, updatedAt: current.updatedAt, editedBy: args.editedBy, editedById: null, dropped }
   }
   if (earlier || current.lastSaveId === args.saveId) return { status: 'already-saved', ...state, dropped }
   return {

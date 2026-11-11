@@ -27,6 +27,7 @@ import {
 } from '@/shared/api'
 import { MAX_RECENT_SAVES, recentSavesOf } from '../canvas-write'
 import { layouts, venueImages, venueTemplateRevisions, venueTemplates, weddings, type RecentSave } from '../db/schema'
+import { editorName } from '../editor-name'
 import type { Db, Tx } from '../locks'
 
 /**
@@ -76,7 +77,8 @@ export async function listVenues(db: Db): Promise<VenueSummary[]> {
       name: venueTemplates.name,
       updatedAt: venueTemplates.updatedAt,
       version: venueTemplates.version,
-      editedBy: venueTemplates.editedBy,
+      editedBy: editorName(venueTemplates),
+      editedById: venueTemplates.editedByUserId,
       importedBy: venueTemplates.importedBy,
       referenceImageId: venueTemplates.referenceImageId,
       fixedItemCount: sql<number>`jsonb_array_length("venue_templates"."fixed_items")`,
@@ -94,6 +96,7 @@ export async function listVenues(db: Db): Promise<VenueSummary[]> {
     usedBy: Number(r.usedBy),
     version: r.version,
     editedBy: r.editedBy,
+    editedById: r.editedById,
     importedBy: r.importedBy,
     fixedItemCount: Number(r.fixedItemCount),
     hasReferenceImage: r.referenceImageId !== null,
@@ -150,7 +153,8 @@ export async function getTemplate(db: Db | Tx, id: string): Promise<VenueDetail 
       name: venueTemplates.name,
       version: venueTemplates.version,
       lastSaveId: venueTemplates.lastSaveId,
-      editedBy: venueTemplates.editedBy,
+      editedBy: editorName(venueTemplates),
+      editedById: venueTemplates.editedByUserId,
       updatedAt: venueTemplates.updatedAt,
       importedBy: venueTemplates.importedBy,
       fixedItems: venueTemplates.fixedItems,
@@ -172,6 +176,7 @@ export async function getTemplate(db: Db | Tx, id: string): Promise<VenueDetail 
     version: row.version,
     lastSaveId: row.lastSaveId,
     editedBy: row.editedBy,
+    editedById: row.editedById,
     updatedAt: row.updatedAt.toISOString(),
     importedBy: row.importedBy,
     fixedItems: storedItems(row.fixedItems),
@@ -309,7 +314,7 @@ export async function createTemplate(db: Db, body: CreateVenueBody): Promise<Cre
   const outcome = await db.transaction(async (tx): Promise<'created' | 'existed' | 'id-taken'> => {
     const inserted = await tx
       .insert(venueTemplates)
-      .values({ id, name: body.name, fixedItems: [], importedBy: 'hand', editedBy: body.editedBy ?? null })
+      .values({ id, name: body.name, fixedItems: [], importedBy: 'hand', editedBy: body.editedBy ?? null, editedByName: body.editedBy ?? null })
       .onConflictDoNothing({ target: venueTemplates.id })
       .returning({ id: venueTemplates.id })
     if (inserted.length === 0) {
@@ -369,6 +374,7 @@ export async function duplicateTemplate(db: Db, sourceId: string, body: Duplicat
         reference: source.reference,
         importedBy: source.importedBy,
         editedBy: body.editedBy ?? null,
+        editedByName: body.editedBy ?? null,
       })
       .onConflictDoNothing({ target: venueTemplates.id })
       .returning({ id: venueTemplates.id })
@@ -509,8 +515,8 @@ export async function templateImageHash(db: Db, templateId: string, imageId: str
 // ---------------------------------------------------------------- saves
 
 export type TemplateSaveResult =
-  | { status: 'saved' | 'already-saved'; version: number; updatedAt: Date; editedBy: 'Noa' | 'Aiden' | null }
-  | { status: 'conflict'; version: number; updatedAt: Date; editedBy: 'Noa' | 'Aiden' | null; lastSaveId: string | null }
+  | { status: 'saved' | 'already-saved'; version: number; updatedAt: Date; editedBy: string | null; editedById: string | null }
+  | { status: 'conflict'; version: number; updatedAt: Date; editedBy: string | null; editedById: string | null; lastSaveId: string | null }
   /** The template is missing or deleted. */
   | { status: 'gone' }
 
@@ -520,7 +526,8 @@ type LockedTemplate = TemplateState & {
   version: number
   lastSaveId: string | null
   recentSaves: RecentSave[]
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   updatedAt: Date
   importedBy: VenueImportedBy
 }
@@ -531,7 +538,8 @@ async function lockTemplate(tx: Tx, id: string): Promise<LockedTemplate | null> 
       version: venueTemplates.version,
       lastSaveId: venueTemplates.lastSaveId,
       recentSaves: venueTemplates.recentSaves,
-      editedBy: venueTemplates.editedBy,
+      editedBy: editorName(venueTemplates),
+      editedById: venueTemplates.editedByUserId,
       updatedAt: venueTemplates.updatedAt,
       importedBy: venueTemplates.importedBy,
       fixedItems: venueTemplates.fixedItems,
@@ -608,10 +616,15 @@ async function writeTemplate<Refusal extends { status: string }>(
     const current = await lockTemplate(tx, id)
     if (!current) return { status: 'gone' }
     if (current.version !== args.baseVersion) {
-      const state = { version: current.version, updatedAt: current.updatedAt, editedBy: current.editedBy }
+      const state = {
+        version: current.version,
+        updatedAt: current.updatedAt,
+        editedBy: current.editedBy,
+        editedById: current.editedById,
+      }
       const earlier = current.recentSaves.find((r) => r.saveId === args.saveId)
       // Only ids and versions are kept, so the time is the template's last save.
-      if (earlier && earlier.version !== current.version) return { status: 'already-saved', version: earlier.version, updatedAt: current.updatedAt, editedBy: args.editedBy }
+      if (earlier && earlier.version !== current.version) return { status: 'already-saved', version: earlier.version, updatedAt: current.updatedAt, editedBy: args.editedBy, editedById: null }
       if (earlier || current.lastSaveId === args.saveId) return { status: 'already-saved', ...state }
       return { status: 'conflict', ...state, lastSaveId: current.lastSaveId }
     }
@@ -633,10 +646,18 @@ async function writeTemplate<Refusal extends { status: string }>(
         lastSaveId: args.saveId,
         recentSaves,
         editedBy: args.editedBy,
+        editedByName: args.editedBy,
+        // This phase's writers only know the name, so clear an id a later writer left.
+        editedByUserId: null,
         updatedAt: sql`now()`,
       })
       .where(eq(venueTemplates.id, id))
-      .returning({ version: venueTemplates.version, updatedAt: venueTemplates.updatedAt, editedBy: venueTemplates.editedBy })
+      .returning({
+        version: venueTemplates.version,
+        updatedAt: venueTemplates.updatedAt,
+        editedBy: editorName(venueTemplates),
+        editedById: venueTemplates.editedByUserId,
+      })
     await addRevision(tx, id, state, reason)
     await redrawLayoutThumbs(tx, id, state.fixedItems)
     return { status: 'saved', ...row! }
