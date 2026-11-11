@@ -7,11 +7,14 @@ import { planImport, type ExistingGuest } from '@/domain/csv/import-diff'
 import { parseCsv } from '@/domain/csv/parse'
 import { SAMPLE_CSV_TEXT } from '@/domain/csv/sample'
 import type { Group, Guest, GuestSeatPlace } from '@/shared/api'
+import { GuestCards } from './GuestCards'
 import { GuestsScreen } from './GuestsScreen'
 import { ColumnStep } from './import/ColumnStep'
 import { ImportWizard } from './import/ImportWizard'
 import { ReviewStep } from './import/ReviewStep'
+import { PartnerNamesProvider } from './partners-context'
 import { rowsFromText } from './PasteNamesDialog'
+import type { GuestRowActions } from './row-actions'
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
@@ -38,7 +41,7 @@ function guest(first: string, last: string, over: Partial<Guest> = {}): Guest {
     partnerId: null,
     coupleRuleEnabled: true,
     household: null,
-    side: 'Both',
+    side: 'both',
     rsvp: 'pending',
     meal: null,
     isChild: false,
@@ -60,8 +63,8 @@ const family: Group = {
   updatedAt: '2026-11-09T12:00:00.000Z',
 }
 
-const zoe = guest('Zoë', 'Kowalczyk', { side: 'Noa', rsvp: 'yes', meal: 'Fish', groupIds: [family.id], nickname: 'Zozo' })
-const lukasz = guest('Łukasz', 'Kowalczyk', { side: 'Noa', rsvp: 'yes', meal: 'Beef', groupIds: [family.id] })
+const zoe = guest('Zoë', 'Kowalczyk', { side: 'partner1', rsvp: 'yes', meal: 'Fish', groupIds: [family.id], nickname: 'Zozo' })
+const lukasz = guest('Łukasz', 'Kowalczyk', { side: 'partner1', rsvp: 'yes', meal: 'Beef', groupIds: [family.id] })
 zoe.partnerId = lukasz.id
 lukasz.partnerId = zoe.id
 const jose = guest('José', 'García', { notes: 'Arrives late' })
@@ -106,6 +109,35 @@ describe('the Guests page', () => {
     const empty = renderToStaticMarkup(<GuestsScreen weddingId={W} guests={[]} groups={[]} seats={[]} />)
     expect(empty).toContain('data-testid="guests-empty"')
   })
+
+  it("labels sides with the wedding's partner names, in the cells and the side filter", () => {
+    const named = renderToStaticMarkup(
+      <PartnerNamesProvider partner1="Sam" partner2="Alex">
+        <GuestsScreen weddingId={W} guests={[zoe, lukasz, jose]} groups={[family]} seats={seats} />
+      </PartnerNamesProvider>,
+    )
+    // The option a select shows carries selected="".
+    const option = (value: string, label: string) => `<option value="${value}"(?: selected="")?>${label}</option>`
+    const choices = option('partner1', 'Sam') + option('partner2', 'Alex') + option('both', 'Both')
+    expect(named).toMatch(new RegExp(`data-testid="filter-side"[^>]*>${option('__any__', 'Any side')}${choices}`))
+    expect(named).toMatch(new RegExp(`data-testid="cell-side"[^>]*>${choices}`))
+    expect(named).not.toContain('Noa</option>')
+  })
+
+  it('reads Partner 1 and Partner 2 without names', () => {
+    expect(html).toMatch(/data-testid="filter-side"[^>]*><option value="__any__" selected="">Any side<\/option><option value="partner1">Partner 1<\/option><option value="partner2">Partner 2<\/option>/)
+  })
+
+  it("shows a guest's side by name on the phone cards", () => {
+    const actions = new Proxy({}, { get: () => () => undefined }) as GuestRowActions
+    const cards = renderToStaticMarkup(
+      <PartnerNamesProvider partner1="Sam" partner2="Alex">
+        <GuestCards guests={[zoe, jose]} selected={new Set()} guestById={new Map()} groupById={new Map()} seatText={new Map()} actions={actions} />
+      </PartnerNamesProvider>,
+    )
+    expect(text(cards)).toContain('Side: Sam')
+    expect(text(cards)).toContain('Side: Both')
+  })
 })
 
 describe('the Groups page', () => {
@@ -128,7 +160,7 @@ describe('the CSV import', () => {
   const parsed = parseCsv(SAMPLE_CSV_TEXT)
   const file = { fileName: 'guests-sample.csv', encoding: 'utf-8' as const, bytes: new ArrayBuffer(0), ...parsed }
   const mapping = guessMapping(parsed.headers)
-  const mapped = applyMapping(parsed.rows, mapping, parsed.rowNumbers)
+  const mapped = applyMapping(parsed.rows, mapping, { partner1: 'Noa', partner2: 'Aiden' }, parsed.rowNumbers)
 
   it('starts by asking for a file, with the sample to download', () => {
     const html = renderToStaticMarkup(<ImportWizard weddingId={W} guests={[]} />)
@@ -168,14 +200,15 @@ describe('the CSV import', () => {
 
   it('summarises a re-import: changed fields, needs review, missing guests and the seats removing them clears', () => {
     const existing: ExistingGuest[] = [
-      { id: zoe.id, firstName: 'Zoë', lastName: 'Kowalczyk', partnerId: null, household: 'Kowalczyk', side: 'Noa', rsvp: 'yes', meal: 'Beef', isChild: false, notes: null, groups: [] },
-      { id: 'b1', firstName: 'Sam', lastName: 'Lee', partnerId: null, household: null, side: 'Both', rsvp: 'pending', meal: null, isChild: false, notes: null, groups: [] },
-      { id: 'b2', firstName: 'Sam', lastName: 'Lee', partnerId: null, household: null, side: 'Both', rsvp: 'pending', meal: null, isChild: false, notes: null, groups: [] },
-      { id: 'gone', firstName: 'Old', lastName: 'Friend', partnerId: null, household: null, side: 'Both', rsvp: 'pending', meal: null, isChild: false, notes: null, groups: [] },
+      { id: zoe.id, firstName: 'Zoë', lastName: 'Kowalczyk', partnerId: null, household: 'Kowalczyk', side: 'partner2', rsvp: 'yes', meal: 'Beef', isChild: false, notes: null, groups: [] },
+      { id: 'b1', firstName: 'Sam', lastName: 'Lee', partnerId: null, household: null, side: 'both', rsvp: 'pending', meal: null, isChild: false, notes: null, groups: [] },
+      { id: 'b2', firstName: 'Sam', lastName: 'Lee', partnerId: null, household: null, side: 'both', rsvp: 'pending', meal: null, isChild: false, notes: null, groups: [] },
+      { id: 'gone', firstName: 'Old', lastName: 'Friend', partnerId: null, household: null, side: 'both', rsvp: 'pending', meal: null, isChild: false, notes: null, groups: [] },
     ]
     const plan = planImport(mapped.rows, existing)
     const missingSeats: GuestSeatPlace[] = [{ guestId: 'gone', layoutId: 'l1', layoutName: 'Reception plan', itemLabel: 'Table 4' }]
     const html = renderToStaticMarkup(
+      <PartnerNamesProvider partner1="Noa" partner2="Aiden">
       <ReviewStep
         preview={{ plan, missingSeats }}
         rows={mapped.rows}
@@ -193,12 +226,15 @@ describe('the CSV import', () => {
         error={null}
         onBack={() => undefined}
         onImport={() => undefined}
-      />,
+      />
+      </PartnerNamesProvider>,
     )
     const t = text(html)
     expect(html).toMatch(/data-testid="count-changed"[^>]*>1</)
     expect(html).toMatch(/data-testid="count-review"[^>]*>1</)
     expect(t).toContain('Meal: Beef to Fish')
+    // Sides travel as codes and read as the wedding's names.
+    expect(t).toContain('Side: Aiden to Noa')
     expect(t).toContain('Row 12: Needs a last name')
     expect(t).toContain('2 guests have this name')
     expect(html).toContain('<option value="new">Add as a new guest</option>')

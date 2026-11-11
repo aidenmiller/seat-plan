@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto'
 import { emptyCanvas, type Canvas, type Item } from '../src/domain/canvas-schema'
 import { blockDepth, generateSeatingBlock } from '../src/domain/ceremony'
+import { ceremonySideLabels } from '../src/domain/partners'
 import { makeItem, type PresetId } from '../src/domain/presets'
 import { addRoundTable } from '../src/domain/round-table'
 import { PLAN_A_TABLES } from './demo-guests'
@@ -63,7 +64,9 @@ export const CEREMONY_FAMILY_ROW = 'Family, row 1'
  * one row's worth).
  */
 export function ceremonyPlan(named: readonly string[] = [], newId: () => string = randomUUID): Canvas {
-  const rows = generateSeatingBlock({ rows: 8, chairsPerRow: 6, origin: { x: 0, y: 0 } }, newId)
+  // The labels the seating block dialog offers for Noa and Aiden's wedding.
+  const sides = ceremonySideLabels({ partner1: 'Noa', partner2: 'Aiden' })
+  const rows = generateSeatingBlock({ rows: 8, chairsPerRow: 6, leftLabel: sides.left, rightLabel: sides.right, origin: { x: 0, y: 0 } }, newId)
   const front = rows.filter((row) => row.rowNumber === 1)
   const seated = rows.map((row) => {
     if (row === front[0]) return { ...row, reservedFor: CEREMONY_FAMILY_ROW }

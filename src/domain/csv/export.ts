@@ -8,14 +8,8 @@
  * removes that one apostrophe again (unguardCell), so an export re-imports
  * with no changes.
  */
-import {
-  GUARDED_CELL_RE,
-  GUEST_ID_COLUMN,
-  NICKNAME_COLUMN,
-  SAMPLE_COLUMNS,
-  type GuestRsvp,
-  type GuestSide,
-} from './columns'
+import { sideKey, sideLabel, sideWordMap, type GuestSide, type PartnerNames } from '../partners'
+import { GUARDED_CELL_RE, GUEST_ID_COLUMN, NICKNAME_COLUMN, SAMPLE_COLUMNS, type GuestRsvp } from './columns'
 
 export const EXPORT_COLUMNS = [...SAMPLE_COLUMNS, GUEST_ID_COLUMN, NICKNAME_COLUMN] as const
 export const CSV_BOM = '﻿'
@@ -64,12 +58,29 @@ export function groupsCell(names: readonly string[]): string {
   return names.length === 1 && names[0]!.includes(',') ? `${cell};` : cell
 }
 
+const UNNAMED: PartnerNames = { partner1: null, partner2: null }
+
+/**
+ * The side cell: the wedding's name for it ("Sam", "Both"), which the import
+ * reads back. When it would not read back as the same side (two partners who
+ * share a first name), "Partner 1" or "Partner 2", which always does.
+ */
+function sideCellFor(partners: PartnerNames): (side: GuestSide) => string {
+  const words = sideWordMap(partners)
+  return (side) => {
+    const label = sideLabel(partners, side)
+    return words.get(sideKey(label)) === side ? label : sideLabel(UNNAMED, side)
+  }
+}
+
 /**
  * The guest list file, in the order given. Groups are listed in the order of
- * `groups` (see groupsCell). The partner is written as a full name.
+ * `groups` (see groupsCell). The partner is written as a full name, and the
+ * side as the wedding's name for it.
  */
-export function guestsToCsv(guests: readonly ExportGuest[], groups: readonly ExportGroup[]): string {
+export function guestsToCsv(guests: readonly ExportGuest[], groups: readonly ExportGroup[], partners: PartnerNames): string {
   const byId = new Map(guests.map((g) => [g.id, g]))
+  const sideCell = sideCellFor(partners)
   const lines: string[][] = [[...EXPORT_COLUMNS]]
   for (const g of guests) {
     const partner = g.partnerId ? byId.get(g.partnerId) : undefined
@@ -79,7 +90,7 @@ export function guestsToCsv(guests: readonly ExportGuest[], groups: readonly Exp
       g.lastName,
       partner ? `${partner.firstName} ${partner.lastName}` : '',
       g.household ?? '',
-      g.side,
+      sideCell(g.side),
       groupsCell(groups.filter((group) => mine.has(group.id)).map((group) => group.name)),
       g.rsvp,
       g.meal ?? '',

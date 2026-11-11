@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { guestsCsvFileName, guestsToCsv } from '@/domain/csv/export'
+import { partnersOf } from '@/domain/partners'
 import { attachmentDisposition, idParam, notFound, type IdContext } from '@/server/api-route'
 import { withSiteAuth } from '@/server/auth/require'
 import { getDb } from '@/server/db/client'
@@ -19,7 +20,7 @@ export const GET = withSiteAuth(async (_req: NextRequest, ctx: IdContext) => {
   if (!wedding) return notFound()
   const [guestList, groupList] = await Promise.all([listGuests(db, id), listGroups(db, id)])
   if (!guestList || !groupList) return notFound()
-  const csv = guestsToCsv(guestList, groupList)
+  const csv = guestsToCsv(guestList, groupList, partnersOf(wedding))
   return new Response(csv, {
     status: 200,
     headers: {

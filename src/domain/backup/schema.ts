@@ -7,15 +7,23 @@
  * The browser checks a file with backupFileSchema before restoring it, and
  * the server checks each restore step with the matching part (restoreStartSchema,
  * backupLayoutSchema, backupTemplateSchema), so both read the file the same way.
+ *
+ * Version 2 adds the partners' names to the wedding, stores guest sides as
+ * 'partner1' / 'partner2' / 'both' (migration 0007), and lists the wedding's
+ * members. A version 1 file (sides 'Noa' / 'Aiden' / 'Both') still reads: the
+ * two schemas upgrade it to version 2 (upgrade.ts), so nothing after them
+ * sees version 1. Members are for reading only; a restore never adds them.
  */
 import { z } from 'zod'
 import { canvasSchema, cleanText, wellFormedText } from '../canvas-schema'
 import { cleanNotes, cleanOneLine } from '../csv/columns'
 import { HEX_COLOR_RE } from '../group-colors'
+import { guestSides, PARTNER_NAME_MAX } from '../partners'
 import { fixedItemsSchema, importedByValues, referenceMetaSchema } from '../venue-schema'
+import { upgradeRestoreStartV1, upgradeV1 } from './upgrade'
 
 export const BACKUP_FORMAT = 'seat-plan-backup'
-export const BACKUP_VERSION = 1
+export const BACKUP_VERSION = 2
 
 /** The most rows of each kind a backup may hold. Guests match MAX_GUEST_ROWS in src/shared/api.ts. */
 export const BACKUP_LIMITS = {
@@ -26,6 +34,7 @@ export const BACKUP_LIMITS = {
   ruleGuests: 100_000,
   layouts: 200,
   templates: 200,
+  members: 100,
 } as const
 
 const id = z.uuid().overwrite((v) => v.toLowerCase())
@@ -43,7 +52,7 @@ const optionalNotes = z
   .nullable()
   .transform((v) => (v ? v : null))
 
-export const backupWeddingSchema = z.object({
+const backupWeddingV1Schema = z.object({
   id,
   name,
   date: z.iso.date().nullable(),
@@ -51,7 +60,12 @@ export const backupWeddingSchema = z.object({
   minGapCm: z.number().finite().positive().max(10_000),
 })
 
-export const backupGuestSchema = z.object({
+export const backupWeddingSchema = backupWeddingV1Schema.extend({
+  partner1Name: optionalLine(PARTNER_NAME_MAX),
+  partner2Name: optionalLine(PARTNER_NAME_MAX),
+})
+
+const backupGuestV1Schema = z.object({
   id,
   firstName: name,
   lastName: name,
@@ -64,6 +78,16 @@ export const backupGuestSchema = z.object({
   meal: optionalLine(200),
   isChild: z.boolean(),
   notes: optionalNotes,
+})
+
+export const backupGuestSchema = backupGuestV1Schema.extend({ side: z.enum(guestSides) })
+
+/** Who could open the wedding when it was backed up. For reading only: a restore never makes anyone a member. */
+export const backupMemberSchema = z.object({
+  userId: z.uuid(),
+  email: line(254),
+  displayName: line(200),
+  role: z.enum(['owner', 'editor']),
 })
 
 export const backupGroupSchema = z.object({
@@ -129,18 +153,34 @@ export const backupImageSchema = z.object({
     .regex(/^[A-Za-z0-9+/]*={0,2}$/, 'Image data must be base64'),
 })
 
-const header = {
-  format: z.literal(BACKUP_FORMAT),
-  version: z.literal(BACKUP_VERSION),
+const format = z.literal(BACKUP_FORMAT)
+
+/** Groups, rules and their links: the same in both versions. */
+const linkRows = {
+  groups: z.array(backupGroupSchema).max(BACKUP_LIMITS.groups),
+  groupMembers: z.array(z.object({ groupId: id, guestId: id })).max(BACKUP_LIMITS.groupMembers),
+  rules: z.array(backupRuleSchema).max(BACKUP_LIMITS.rules),
+  ruleGuests: z.array(z.object({ ruleId: id, guestId: id })).max(BACKUP_LIMITS.ruleGuests),
+}
+
+const weddingRowsV1 = {
+  wedding: backupWeddingV1Schema,
+  guests: z.array(backupGuestV1Schema).max(BACKUP_LIMITS.guests),
+  ...linkRows,
 }
 
 const weddingRows = {
   wedding: backupWeddingSchema,
   guests: z.array(backupGuestSchema).max(BACKUP_LIMITS.guests),
-  groups: z.array(backupGroupSchema).max(BACKUP_LIMITS.groups),
-  groupMembers: z.array(z.object({ groupId: id, guestId: id })).max(BACKUP_LIMITS.groupMembers),
-  rules: z.array(backupRuleSchema).max(BACKUP_LIMITS.rules),
-  ruleGuests: z.array(z.object({ ruleId: id, guestId: id })).max(BACKUP_LIMITS.ruleGuests),
+  ...linkRows,
+}
+
+/** What a file holds besides the wedding's rows and members. */
+const fileRows = {
+  exportedAt: z.iso.datetime({ offset: true }),
+  layouts: z.array(backupLayoutSchema).max(BACKUP_LIMITS.layouts),
+  templates: z.array(backupTemplateSchema).max(BACKUP_LIMITS.templates),
+  images: z.array(backupImageSchema).max(BACKUP_LIMITS.templates),
 }
 
 type WeddingRows = { guests: { id: string }[]; groups: { id: string; name: string }[]; rules: { id: string }[] }
@@ -170,48 +210,74 @@ function checkWeddingRows(rows: WeddingRows, ctx: z.RefinementCtx) {
   })
 }
 
+/** Every layout and every template id appears once. */
+function checkFileRows(file: { layouts: { id: string }[]; templates: { id: string }[] }, ctx: z.RefinementCtx) {
+  const layoutIds = new Set<string>()
+  file.layouts.forEach((layout, i) => {
+    if (layoutIds.has(layout.id)) ctx.addIssue({ code: 'custom', path: ['layouts', i, 'id'], message: `The layout ${layout.id} appears twice` })
+    layoutIds.add(layout.id)
+  })
+  const templateIds = new Set<string>()
+  file.templates.forEach((template, i) => {
+    if (templateIds.has(template.id)) ctx.addIssue({ code: 'custom', path: ['templates', i, 'id'], message: `The venue ${template.id} appears twice` })
+    templateIds.add(template.id)
+  })
+}
+
+const restoreStartV1Schema = z
+  .object({ format, version: z.literal(1), jobId: id.optional(), ...weddingRowsV1 })
+  .superRefine(checkWeddingRows)
+
+const restoreStartV2Schema = z
+  .object({ format, version: z.literal(BACKUP_VERSION), jobId: id.optional(), ...weddingRows })
+  .superRefine(checkWeddingRows)
+
 /**
  * The first restore step, POST /api/weddings/restore: the wedding and its
  * rows. `jobId` is chosen by the browser, so a retried first step finds the
- * wedding the first try made instead of making a second one.
+ * wedding the first try made instead of making a second one. A browser still
+ * running the page from before version 2 sends version 1, which is upgraded.
  */
-export const restoreStartSchema = z
-  .object({ ...header, jobId: id.optional(), ...weddingRows })
-  .superRefine(checkWeddingRows)
+export const restoreStartSchema = z.discriminatedUnion('version', [
+  restoreStartV1Schema.transform(upgradeRestoreStartV1),
+  restoreStartV2Schema,
+])
 
-/** A whole backup file. */
-export const backupFileSchema = z
+/** A version 1 file: sides 'Noa' / 'Aiden' / 'Both', no partner names, no members. */
+export const backupFileV1Schema = z
+  .object({ format, version: z.literal(1), ...weddingRowsV1, ...fileRows })
+  .superRefine(checkWeddingRows)
+  .superRefine(checkFileRows)
+
+/** A version 2 file. Members may be missing (an empty list). */
+export const backupFileV2Schema = z
   .object({
-    ...header,
-    exportedAt: z.iso.datetime({ offset: true }),
+    format,
+    version: z.literal(BACKUP_VERSION),
     ...weddingRows,
-    layouts: z.array(backupLayoutSchema).max(BACKUP_LIMITS.layouts),
-    templates: z.array(backupTemplateSchema).max(BACKUP_LIMITS.templates),
-    images: z.array(backupImageSchema).max(BACKUP_LIMITS.templates),
+    members: z.array(backupMemberSchema).max(BACKUP_LIMITS.members).default([]),
+    ...fileRows,
   })
   .superRefine(checkWeddingRows)
-  .superRefine((file, ctx) => {
-    const layoutIds = new Set<string>()
-    file.layouts.forEach((layout, i) => {
-      if (layoutIds.has(layout.id)) ctx.addIssue({ code: 'custom', path: ['layouts', i, 'id'], message: `The layout ${layout.id} appears twice` })
-      layoutIds.add(layout.id)
-    })
-    const templateIds = new Set<string>()
-    file.templates.forEach((template, i) => {
-      if (templateIds.has(template.id)) ctx.addIssue({ code: 'custom', path: ['templates', i, 'id'], message: `The venue ${template.id} appears twice` })
-      templateIds.add(template.id)
-    })
-  })
+  .superRefine(checkFileRows)
+
+/** A whole backup file of either version, read as version 2. */
+export const backupFileSchema = z.discriminatedUnion('version', [backupFileV1Schema.transform(upgradeV1), backupFileV2Schema])
 
 export type BackupWedding = z.output<typeof backupWeddingSchema>
 export type BackupGuest = z.output<typeof backupGuestSchema>
+export type BackupMember = z.output<typeof backupMemberSchema>
 export type BackupGroup = z.output<typeof backupGroupSchema>
 export type BackupRule = z.output<typeof backupRuleSchema>
 export type BackupLayout = z.output<typeof backupLayoutSchema>
 export type BackupTemplate = z.output<typeof backupTemplateSchema>
 export type BackupImage = z.output<typeof backupImageSchema>
-export type BackupFile = z.output<typeof backupFileSchema>
-export type RestoreStart = z.output<typeof restoreStartSchema>
+/** A file as version 2, whichever version it was written in (backupFileSchema's output). */
+export type BackupFile = z.output<typeof backupFileV2Schema>
+export type BackupFileV1 = z.output<typeof backupFileV1Schema>
+/** The first restore step as version 2 (restoreStartSchema's output). */
+export type RestoreStart = z.output<typeof restoreStartV2Schema>
+export type RestoreStartV1 = z.output<typeof restoreStartV1Schema>
 /** What the browser sends for the first step (before Zod fills in or cleans anything). */
 export type RestoreStartInput = z.input<typeof restoreStartSchema>
 export type BackupLayoutInput = z.input<typeof backupLayoutSchema>

@@ -177,7 +177,7 @@ test('a guest takes a chair by drag or by tap, then tap, and a together rule spl
   const [jane, bo] = guests
   const created = await apiCreateLayout(page.request, wedding.id, { name: 'Ceremony', kind: 'ceremony' })
   // Two rows of 4 a side; Bo in the aisle chair of Aiden's row 1 (seat 1 there; seat 4 on Noa's side).
-  const rows = generateSeatingBlock({ rows: 2, chairsPerRow: 4, origin: { x: 0, y: 0 } }, randomUUID)
+  const rows = generateSeatingBlock({ rows: 2, chairsPerRow: 4, leftLabel: "Noa's side", rightLabel: "Aiden's side", origin: { x: 0, y: 0 } }, randomUUID)
   const noa1 = rows.find((r) => r.blockLabel === "Noa's side" && r.rowNumber === 1)!
   const aiden1 = rows.find((r) => r.blockLabel === "Aiden's side" && r.rowNumber === 1)!
   const items = rows.map((r) => (r.id === aiden1.id ? { ...r, seats: r.seats.map((s) => (s.index === 0 ? { ...s, guestId: bo.id } : s)) } : r))

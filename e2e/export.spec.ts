@@ -214,7 +214,7 @@ test('exports a ceremony layout: escort cards give row and chair, and the ceremo
     { firstName: 'Mila', lastName: `Brandt${tag}` },
     { firstName: 'Omar', lastName: `Aziz${tag}` },
   ])
-  const rows = generateSeatingBlock({ rows: 2, chairsPerRow: 4, origin: { x: 0, y: 0 } }, () => randomUUID())
+  const rows = generateSeatingBlock({ rows: 2, chairsPerRow: 4, leftLabel: "Noa's side", rightLabel: "Aiden's side", origin: { x: 0, y: 0 } }, () => randomUUID())
   const items = rows.map((r) => {
     if (r.rowNumber === 1 && r.blockLabel === "Noa's side") return { ...r, reservedFor: 'Family, row 1' }
     if (r.rowNumber === 2 && r.blockLabel === "Aiden's side") return { ...r, seats: r.seats.map((s, i) => (i < 2 ? { ...s, guestId: guests[i]!.id } : s)) }

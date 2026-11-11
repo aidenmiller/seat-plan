@@ -14,7 +14,8 @@ import type { GuestSort, GuestSortKey } from '@/domain/guest-list'
 import { fullName } from '@/domain/guest-list'
 import type { Group, Guest, GuestRsvp, GuestSide } from '@/shared/api'
 import { CheckField, EditableText, GroupChip, SelectField } from './cells'
-import { GUEST_COLUMNS, RSVP_OPTIONS, SIDE_OPTIONS } from './options'
+import { GUEST_COLUMNS, RSVP_OPTIONS } from './options'
+import { useSideOptions } from './partners-context'
 import type { GuestRowActions } from './row-actions'
 
 export function GuestTable({
@@ -121,6 +122,7 @@ const GuestRow = memo(function GuestRow({
   actions: GuestRowActions
 }) {
   const name = fullName(guest)
+  const sideOptions = useSideOptions()
   const groups = guest.groupIds.map((id) => groupById.get(id)).filter((g): g is Group => g !== undefined)
   const cell = 'border-b border-stone-100 px-2 py-0 align-middle'
   // Sticky cells need their own background, or the scrolled cells show through.
@@ -157,7 +159,7 @@ const GuestRow = memo(function GuestRow({
         <EditableText value={guest.household} label={`Household of ${name}`} onSave={(v) => actions.edit(guest, { household: v })} testId="cell-household" />
       </td>
       <td className={`${cell} w-24`}>
-        <SelectField<GuestSide> value={guest.side} label={`Side of ${name}`} options={SIDE_OPTIONS} onChange={(v) => actions.edit(guest, { side: v })} testId="cell-side" />
+        <SelectField<GuestSide> value={guest.side} label={`Side of ${name}`} options={sideOptions} onChange={(v) => actions.edit(guest, { side: v })} testId="cell-side" />
       </td>
       <td className={`${cell} w-28`}>
         <SelectField<GuestRsvp> value={guest.rsvp} label={`RSVP of ${name}`} options={RSVP_OPTIONS} onChange={(v) => actions.edit(guest, { rsvp: v })} testId="cell-rsvp" />

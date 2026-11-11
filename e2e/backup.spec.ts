@@ -4,9 +4,11 @@
  * new wedding from it, with its guests, groups, partner links, layouts and
  * seats under new ids. The venue's walls change after the backup, so the
  * restore brings it back as "Name (restored)" with its floor plan image
- * (PLAN change 5), sent by the browser as raw bytes.
+ * (PLAN change 5), sent by the browser as raw bytes. A version 1 file, from
+ * before partner names, restores as Noa and Aiden's wedding.
  */
 import { randomBytes, randomUUID } from 'node:crypto'
+import { writeFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 import type { BackupFile } from '../src/domain/backup/schema'
 import type { LayoutSummary, VenueImageInfo } from '../src/shared/api'
@@ -48,6 +50,7 @@ function seatedIds(canvas: { items: readonly { kind: string; seats?: readonly { 
 }
 
 test('download a backup and restore it as a new wedding with its guests and layouts', async ({ page }, testInfo) => {
+  test.setTimeout(60_000)
   await signIn(page)
   const request = page.request
 
@@ -56,8 +59,8 @@ test('download a backup and restore it as a new wedding with its guests and layo
   const wedding = await apiCreateWedding(request, name)
   const last = `Backup${randomBytes(3).toString('hex')}`
   const guests = await apiAddGuests(request, wedding.id, [
-    { firstName: 'Mira', lastName: last },
-    { firstName: 'Theo', lastName: last },
+    { firstName: 'Mira', lastName: last, side: 'partner2' },
+    { firstName: 'Theo', lastName: last, side: 'partner1' },
     { firstName: 'Lena', lastName: last },
   ])
   await apiLinkPartners(request, guests[0]!.id, guests[1]!.id)
@@ -95,8 +98,11 @@ test('download a backup and restore it as a new wedding with its guests and layo
   const saved = await download(page, settings.getByRole('link', { name: 'Download backup' }), filePath)
   expect(saved.name).toMatch(new RegExp(`^${name} backup \\d{4}-\\d{2}-\\d{2}\\.json$`))
   const file = JSON.parse(saved.bytes.toString('utf8')) as BackupFile
-  expect(file).toMatchObject({ format: 'seat-plan-backup', wedding: { name } })
+  // Version 2: the partners' names, sides as codes, and the members (read only).
+  expect(file).toMatchObject({ format: 'seat-plan-backup', version: 2, wedding: { name, partner1Name: 'Noa', partner2Name: 'Aiden' } })
+  expect(Array.isArray(file.members)).toBe(true)
   expect(file.guests.map((g) => g.firstName).sort()).toEqual(['Lena', 'Mira', 'Theo'])
+  expect(Object.fromEntries(file.guests.map((g) => [g.firstName, g.side]))).toEqual({ Mira: 'partner2', Theo: 'partner1', Lena: 'both' })
   expect(file.layouts.map((l) => l.name).sort()).toEqual(['Dinner', 'Reception'])
   expect(file.templates.map((t) => t.name)).toEqual([venue.name])
   expect(file.images.map((i) => i.sha256)).toEqual([image.sha256])
@@ -130,6 +136,8 @@ test('download a backup and restore it as a new wedding with its guests and layo
   for (const g of restoredGuests) expect(guests.map((old) => old.id)).not.toContain(g.id)
   expect(byFirst.get('Mira')!.partnerId).toBe(byFirst.get('Theo')!.id)
   expect(byFirst.get('Theo')!.partnerId).toBe(byFirst.get('Mira')!.id)
+  expect(restoredGuests.map((g) => [g.firstName, g.side]).sort()).toEqual([['Lena', 'both'], ['Mira', 'partner2'], ['Theo', 'partner1']])
+  expect(await (await request.get(`/api/weddings/${restoredId}`)).json()).toMatchObject({ partner1Name: 'Noa', partner2Name: 'Aiden' })
   const [group] = await apiListGroups(request, restoredId)
   expect(group).toMatchObject({ name: 'Cousins' })
   expect([...group!.memberIds].sort()).toEqual([byFirst.get('Theo')!.id, byFirst.get('Lena')!.id].sort())
@@ -154,4 +162,32 @@ test('download a backup and restore it as a new wedding with its guests and layo
 
   // The original wedding is as it was.
   expect((await apiListGuests(request, wedding.id)).map((g) => g.id).sort()).toEqual(guests.map((g) => g.id).sort())
+
+  // A version 1 file, from before partner names, restores as Noa and Aiden's wedding with sides by place.
+  const words = { partner1: 'Noa', partner2: 'Aiden', both: 'Both' } as const
+  const { id, date, unit, minGapCm } = file.wedding
+  const v1: Record<string, unknown> = {
+    ...file,
+    version: 1,
+    wedding: { id, name: file.wedding.name, date, unit, minGapCm },
+    guests: file.guests.map((g) => ({ ...g, side: words[g.side] })),
+  }
+  delete v1.members
+  const v1Path = testInfo.outputPath('backup-v1.json')
+  writeFileSync(v1Path, JSON.stringify(v1))
+  await page.goto('/')
+  await expectHydrated(input)
+  await input.setInputFiles(v1Path)
+  const again = page.getByRole('dialog', { name: 'Restore from file' })
+  await again.getByRole('button', { name: 'Restore' }).click()
+  await expect(again.getByRole('status')).toHaveText(`Restored as ${name} (restored).`, { timeout: 15_000 })
+  await again.getByRole('button', { name: 'Open wedding' }).click()
+  await expect(page).toHaveURL(/\/w\/[0-9a-f-]{36}\/layouts$/)
+  const fromV1 = new URL(page.url()).pathname.split('/')[2]!
+  expect(fromV1).not.toBe(restoredId)
+  expect(await (await request.get(`/api/weddings/${fromV1}`)).json()).toMatchObject({ partner1Name: 'Noa', partner2Name: 'Aiden' })
+  expect((await apiListGuests(request, fromV1)).map((g) => [g.firstName, g.side]).sort()).toEqual([['Lena', 'both'], ['Mira', 'partner2'], ['Theo', 'partner1']])
+  await page.goto(guestsPath(fromV1))
+  await waitForGuestList(page)
+  await expect(page.getByTestId('filter-side').locator('option')).toHaveText(['Any side', 'Noa', 'Aiden', 'Both'])
 })

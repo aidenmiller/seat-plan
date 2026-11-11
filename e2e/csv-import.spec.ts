@@ -241,7 +241,7 @@ test('an edited copy reports one changed meal, one new guest and one missing gue
   expect(guests).toHaveLength(10)
   expect(guests.some((g) => g.id === theo.id)).toBe(false)
   expect(guests.find((g) => g.firstName === 'Sam')?.meal).toBe('Beef')
-  expect(guests.find((g) => g.firstName === 'Nadia')).toMatchObject({ lastName: 'Haddad', side: 'Both', rsvp: 'yes', meal: 'Vegan' })
+  expect(guests.find((g) => g.firstName === 'Nadia')).toMatchObject({ lastName: 'Haddad', side: 'both', rsvp: 'yes', meal: 'Vegan' })
 
   await page.getByTestId('import-back').click()
   await waitForGuestList(page)

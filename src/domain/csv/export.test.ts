@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { splitGroups, unguardCell } from './columns'
+import { applyMapping, guessMapping, splitGroups, unguardCell } from './columns'
 import { csvCell, groupsCell, guardCell, guestsCsvFileName, guestsToCsv, type ExportGuest } from './export'
 import { parseCsv } from './parse'
+
+const NOA_AIDEN = { partner1: 'Noa', partner2: 'Aiden' }
 
 const guest = (id: string, firstName: string, lastName: string, extra: Partial<ExportGuest> = {}): ExportGuest => ({
   id,
@@ -10,7 +12,7 @@ const guest = (id: string, firstName: string, lastName: string, extra: Partial<E
   nickname: null,
   partnerId: null,
   household: null,
-  side: 'Both',
+  side: 'both',
   rsvp: 'pending',
   meal: null,
   isChild: false,
@@ -54,7 +56,7 @@ describe('guestsToCsv', () => {
     guest('id-1', 'Zoë', 'Kowalczyk', {
       partnerId: 'id-2',
       household: 'Kowalczyk',
-      side: 'Noa',
+      side: 'partner1',
       rsvp: 'yes',
       meal: 'Fish',
       notes: 'Nuts\nTable wish: window',
@@ -62,7 +64,7 @@ describe('guestsToCsv', () => {
     }),
     guest('id-2', 'Łukasz', 'Kowalczyk', { partnerId: 'id-1', isChild: true, meal: '=cmd' }),
   ]
-  const csv = guestsToCsv(guests, groups)
+  const csv = guestsToCsv(guests, groups, NOA_AIDEN)
 
   it('starts with a byte order mark and uses CRLF line ends', () => {
     expect(csv.startsWith('﻿')).toBe(true)
@@ -114,22 +116,34 @@ describe('guestsToCsv', () => {
     for (const names of [['Mom side, cousins'], ['A, B', 'C, D'], ['Work'], []]) {
       expect(splitGroups(groupsCell(names))).toEqual(names)
     }
-    const one = guestsToCsv([guest('a', 'Ann', 'Lee', { groupIds: ['g'] })], [{ id: 'g', name: 'Mom side, cousins' }])
+    const one = guestsToCsv([guest('a', 'Ann', 'Lee', { groupIds: ['g'] })], [{ id: 'g', name: 'Mom side, cousins' }], NOA_AIDEN)
     expect(parseCsv(one).rows[0].groups).toBe('Mom side, cousins;')
   })
 
   it('writes the nickname last, after guest_id', () => {
-    const one = guestsToCsv([guest('a', 'Robert', 'Smith', { nickname: 'Bobby' })], [])
+    const one = guestsToCsv([guest('a', 'Robert', 'Smith', { nickname: 'Bobby' })], [], NOA_AIDEN)
     expect(parseCsv(one).rows[0]).toMatchObject({ guest_id: 'a', nickname: 'Bobby' })
   })
 
   it('leaves the partner blank when the partner is not in the list', () => {
-    const lone = guestsToCsv([guest('a', 'Ana', 'Ruiz', { partnerId: 'gone' })], [])
+    const lone = guestsToCsv([guest('a', 'Ana', 'Ruiz', { partnerId: 'gone' })], [], NOA_AIDEN)
     expect(parseCsv(lone).rows[0].partner).toBe('')
   })
 
+  it("writes sides as the wedding's names, which read back as the same sides", () => {
+    const three = [guest('a', 'Ann', 'Lee', { side: 'partner1' }), guest('b', 'Ben', 'Lee', { side: 'partner2' }), guest('c', 'Cy', 'Lee')]
+    const read = (partners: { partner1: string | null; partner2: string | null }) => {
+      const parsed = parseCsv(guestsToCsv(three, [], partners))
+      return { cells: parsed.rows.map((r) => r.side), sides: applyMapping(parsed.rows, guessMapping(parsed.headers), partners).rows.map((r) => r.side) }
+    }
+    expect(read({ partner1: 'Sam', partner2: 'Alex' })).toEqual({ cells: ['Sam', 'Alex', 'Both'], sides: ['partner1', 'partner2', 'both'] })
+    expect(read({ partner1: null, partner2: null })).toEqual({ cells: ['Partner 1', 'Partner 2', 'Both'], sides: ['partner1', 'partner2', 'both'] })
+    // Two partners called Sam: "Sam" would read as neither, so the file says Partner 1 and Partner 2.
+    expect(read({ partner1: 'Sam', partner2: 'Sam' })).toEqual({ cells: ['Partner 1', 'Partner 2', 'Both'], sides: ['partner1', 'partner2', 'both'] })
+  })
+
   it('writes a header only for no guests', () => {
-    expect(guestsToCsv([], [])).toBe('﻿first_name,last_name,partner,household,side,groups,rsvp,meal,child,notes,guest_id,nickname\r\n')
+    expect(guestsToCsv([], [], NOA_AIDEN)).toBe('﻿first_name,last_name,partner,household,side,groups,rsvp,meal,child,notes,guest_id,nickname\r\n')
   })
 })
 

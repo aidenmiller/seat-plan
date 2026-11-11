@@ -19,6 +19,7 @@ import { CSV_BOM, EXPORT_COLUMNS } from '@/domain/csv/export'
 import { MAX_IMPORT_ROWS, parseCsv } from '@/domain/csv/parse'
 import { SAMPLE_CSV_FILE } from '@/domain/csv/sample'
 import { GROUP_COLORS } from '@/domain/group-colors'
+import type { PartnerNames } from '@/domain/partners'
 import { MAX_GUEST_ROWS, type Guest, type ImportCommitResult, type ImportPreview } from '@/shared/api'
 
 /** A signed-in user's cookie: for now any signed-in user may use these routes. */
@@ -66,11 +67,13 @@ const routes = async () => ({
   guest: await import('../../../../guests/[id]/route'),
 })
 
-/** What the browser sends after the column matching step. */
-function rowsOf(text: string): ImportRow[] {
+const NOA_AIDEN: PartnerNames = { partner1: 'Noa', partner2: 'Aiden' }
+
+/** What the browser sends after the column matching step, reading sides with the wedding's names. */
+function rowsOf(text: string, partners: PartnerNames = NOA_AIDEN): ImportRow[] {
   const parsed = parseCsv(text)
   expect(parsed.errors).toEqual([])
-  const mapped = applyMapping(parsed.rows, guessMapping(parsed.headers), parsed.rowNumbers)
+  const mapped = applyMapping(parsed.rows, guessMapping(parsed.headers), partners, parsed.rowNumbers)
   expect(mapped.errors).toEqual([])
   return mapped.rows
 }
@@ -146,7 +149,7 @@ describe('guest CSV import', () => {
     expect(lukasz.partnerId).toBe(zoe.id)
     expect(zoe.coupleRuleEnabled && lukasz.coupleRuleEnabled).toBe(true)
     expect(zoe).toMatchObject({
-      side: 'Noa',
+      side: 'partner1',
       rsvp: 'yes',
       meal: 'Fish',
       household: 'Kowalczyk',
@@ -197,9 +200,9 @@ describe('guest CSV import', () => {
     expect(done).toMatchObject({ created: 9, updated: 1, unchanged: 0 })
     const list = await guestList(w)
     expect(list).toHaveLength(11)
-    expect(list.find((g) => g.id === samA)).toMatchObject({ side: 'Aiden', rsvp: 'yes', meal: 'Fish', groupIds: expect.any(Array) })
+    expect(list.find((g) => g.id === samA)).toMatchObject({ side: 'partner2', rsvp: 'yes', meal: 'Fish', groupIds: expect.any(Array) })
     expect(list.find((g) => g.id === samA)!.groupIds).toHaveLength(2)
-    expect(list.find((g) => g.id === samB)).toMatchObject({ side: 'Both', rsvp: 'pending', meal: null, groupIds: [] })
+    expect(list.find((g) => g.id === samB)).toMatchObject({ side: 'both', rsvp: 'pending', meal: null, groupIds: [] })
 
     // 'new' adds the row as another guest.
     const w2 = await makeWedding(d)
@@ -324,7 +327,10 @@ describe('guest CSV import', () => {
     const { exporter, guests: guestsRoute, guest: guestRoute, groups: groupsRoute } = await routes()
     const d = await db()
     const w = await makeWedding(d, 'Noa & Aiden: Zoë’s "list"')
-    await commit(w, { rows: rowsOf(SAMPLE_CSV_FILE) })
+    // Another couple's wedding: the file names sides after them, and reads back with their names.
+    const samAlex: PartnerNames = { partner1: 'Sam', partner2: 'Alex' }
+    await d.update(weddings).set({ partner1Name: 'Sam', partner2Name: 'Alex' }).where(eq(weddings.id, w))
+    await commit(w, { rows: rowsOf(SAMPLE_CSV_FILE, samAlex) })
     const list = await guestList(w)
     // Hand edits the CSV has to carry: formula-looking cells, commas, quotes,
     // line breaks, a second guest with the same name, a partner set by hand.
@@ -367,8 +373,11 @@ describe('guest CSV import', () => {
 
     expect(text).toContain(',"Mom side, cousins;",')
     expect(text).toContain("''=already quoted")
+    expect(text).toContain('Zoë,Kowalczyk,Łukasz Kowalczyk,Kowalczyk,Sam,')
+    expect(text).toContain("Daniel,O'Connor,Priya Raman,O'Connor and Raman,Alex,")
+    expect(text).toContain('José,García,,"García, Smith",Both,')
 
-    const rows = rowsOf(text)
+    const rows = rowsOf(text, samAlex)
     expect(rows).toHaveLength(14)
     expect(rows.every((r) => r.guestId)).toBe(true)
     expect(byName(list, 'José').id).toBe(rows.find((r) => r.nickname === 'Pepe')!.guestId)

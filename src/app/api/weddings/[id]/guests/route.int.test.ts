@@ -81,6 +81,8 @@ describe('/api/weddings/[id]/guests', () => {
     expect(blank.status).toBe(422)
     expect(blank.body.issues[0]).toMatch(/^firstName: /)
     expect((await call(list, 'POST', { id: w }, { firstName: 'A', lastName: 'B', side: 'Bride' })).status).toBe(422)
+    // Sides are codes; the old names are no longer taken (migration 0007).
+    expect((await call(list, 'POST', { id: w }, { firstName: 'A', lastName: 'B', side: 'Noa' })).status).toBe(422)
 
     const id = randomUUID()
     const made = await call(list, 'POST', { id: w }, {
@@ -99,7 +101,7 @@ describe('/api/weddings/[id]/guests', () => {
       lastName: 'Kowal czyk',
       nickname: null,
       household: null,
-      side: 'Both',
+      side: 'both',
       rsvp: 'pending',
       meal: null,
       isChild: false,
@@ -145,11 +147,27 @@ describe('/api/weddings/[id]/guests', () => {
     expect(reply.guest).toMatchObject({ firstName: 'Ann', lastName: 'Łee', rsvp: 'yes', meal: 'Fish', household: null })
     expect((await guestRow(ann.id)).nameKey).toBe('ann|lee')
 
-    const nick = await patch(ann.id, { nickname: 'Annie', isChild: true, side: 'Noa', notes: null })
-    expect(nick.body.guest).toMatchObject({ nickname: 'Annie', isChild: true, side: 'Noa', notes: null, lastName: 'Łee' })
+    const nick = await patch(ann.id, { nickname: 'Annie', isChild: true, side: 'partner1', notes: null })
+    expect(nick.body.guest).toMatchObject({ nickname: 'Annie', isChild: true, side: 'partner1', notes: null, lastName: 'Łee' })
 
     expect((await patch('nope', { rsvp: 'yes' })).status).toBe(404)
     expect((await patch(randomUUID(), { rsvp: 'yes' })).status).toBe(404)
+  })
+
+  it('reads the old side words an older deployment may still write during a build as codes', async () => {
+    const { makeWedding } = await import('@/server/repo/test-fixtures')
+    const { sql } = await import('drizzle-orm')
+    const { list } = await routes()
+    const w = await makeWedding(await db())
+    const [ann, ben, cy] = [await add(w, 'Ann'), await add(w, 'Ben'), await add(w, 'Cy')]
+    // The widened check still takes them for one release.
+    await (await db()).execute(sql`update guests set side = case id when ${ann.id}::uuid then 'Noa' when ${ben.id}::uuid then 'Aiden' else 'Both' end where id in (${ann.id}::uuid, ${ben.id}::uuid, ${cy.id}::uuid)`)
+    expect((await guestRow(ann.id)).side).toBe('Noa')
+    const all = (await call(list, 'GET', { id: w })).body as Guest[]
+    expect(Object.fromEntries(all.map((g) => [g.firstName, g.side]))).toEqual({ Ann: 'partner1', Ben: 'partner2', Cy: 'both' })
+    // A save writes the code back.
+    expect((await patch(ann.id, { side: 'partner2' })).body.guest.side).toBe('partner2')
+    expect((await guestRow(ann.id)).side).toBe('partner2')
   })
 
   it('links partners both ways, relinks, unlinks, and keeps the couple rule switch the same on both', async () => {

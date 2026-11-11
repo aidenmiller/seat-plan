@@ -62,7 +62,7 @@ describe('/api/weddings', () => {
     const created = await call(list, 'POST', '/api/weddings', undefined, { name: 'Noa & Aiden', date: '2027-06-12' })
     expect(created.status).toBe(201)
     expect(created.cache).toBe('no-store')
-    expect(created.body).toMatchObject({ name: 'Noa & Aiden', date: '2027-06-12', unit: 'ft', guestCount: 0, layoutCount: 0 })
+    expect(created.body).toMatchObject({ name: 'Noa & Aiden', date: '2027-06-12', unit: 'ft', partner1Name: null, partner2Name: null, guestCount: 0, layoutCount: 0 })
     const id = created.body.id as string
 
     const all = await call(list, 'GET', '/api/weddings')
@@ -108,6 +108,25 @@ describe('/api/weddings', () => {
     expect((await call(one, 'DELETE', `/api/weddings/${id}`, id, { confirm: 'delete' })).status).toBe(404)
     const layoutRoute = await import('../layouts/[id]/route')
     expect((await call(layoutRoute, 'GET', `/api/layouts/${madeLayout.body.id}`, madeLayout.body.id)).status).toBe(404)
+  })
+
+  it("keeps the partners' names: set at creation, changed or cleared in settings", async () => {
+    const list = await import('./route')
+    const one = await import('./[id]/route')
+    const created = await call(list, 'POST', '/api/weddings', undefined, { name: 'Sam & Alex', partner1Name: '  Sam ', partner2Name: 'Alex' })
+    expect(created.status).toBe(201)
+    expect(created.body).toMatchObject({ partner1Name: 'Sam', partner2Name: 'Alex' })
+    const id = created.body.id as string
+
+    const renamed = await call(one, 'PATCH', `/api/weddings/${id}`, id, { partner1Name: 'Samira' })
+    expect(renamed).toMatchObject({ status: 200, body: { partner1Name: 'Samira', partner2Name: 'Alex' } })
+    const cleared = await call(one, 'PATCH', `/api/weddings/${id}`, id, { partner2Name: '' })
+    expect(cleared.body).toMatchObject({ partner1Name: 'Samira', partner2Name: null })
+    expect((await call(one, 'GET', `/api/weddings/${id}`, id)).body).toMatchObject({ partner1Name: 'Samira', partner2Name: null })
+
+    const tooLong = await call(one, 'PATCH', `/api/weddings/${id}`, id, { partner1Name: 'x'.repeat(61) })
+    expect(tooLong.status).toBe(422)
+    expect(tooLong.body.issues[0]).toMatch(/^partner1Name: /)
   })
 
   it('a wedding id that is unknown gives 404', async () => {

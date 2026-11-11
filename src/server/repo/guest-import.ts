@@ -7,6 +7,7 @@ import { planImport, type ExistingGuest, type ImportOptions, type ImportPlan } f
 import type { PartnerRef } from '@/domain/csv/partner-match'
 import { nextGroupColors } from '@/domain/group-colors'
 import { nameKey } from '@/domain/names'
+import { legacySide } from '@/domain/partners'
 import type { ImportCommitResult, ImportPreview, importCommitBody, importPreviewBody } from '@/shared/api'
 import { groupMembers, groups, guests, weddings } from '../db/schema'
 import { weddingLock, type Db, type Tx } from '../locks'
@@ -62,7 +63,8 @@ async function loadForPlan(conn: Conn, weddingId: string, lockGuests: boolean) {
     nickname: g.nickname,
     partnerId: g.partnerId,
     household: g.household,
-    side: g.side,
+    // Old words an older deployment wrote during a build read as codes (migration 0007).
+    side: legacySide(g.side) ?? 'both',
     rsvp: g.rsvp,
     meal: g.meal,
     isChild: g.isChild,

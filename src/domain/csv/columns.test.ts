@@ -16,6 +16,10 @@ import {
   type ColumnMapping,
 } from './columns'
 
+const NOA_AIDEN = { partner1: 'Noa', partner2: 'Aiden' }
+const SAM_ALEX = { partner1: 'Sam Rivera', partner2: 'Alex Chen' }
+const UNNAMED = { partner1: null, partner2: null }
+
 describe('guessMapping', () => {
   it("maps the sample file's own headers and guest_id", () => {
     const mapping = guessMapping([...SAMPLE_COLUMNS, 'guest_id', 'Table wish'])
@@ -146,16 +150,34 @@ describe('mappingProblems', () => {
 })
 
 describe('values', () => {
-  it('side: Noa, Aiden or Both; bride and groom become Both and are reported', () => {
-    expect(normaliseSide('Noa')).toEqual({ value: 'Noa', understood: true })
-    expect(normaliseSide("noa's side")).toEqual({ value: 'Noa', understood: true })
-    expect(normaliseSide('AIDEN')).toEqual({ value: 'Aiden', understood: true })
-    expect(normaliseSide('Both')).toEqual({ value: 'Both', understood: true })
-    expect(normaliseSide('mutual')).toEqual({ value: 'Both', understood: true })
-    expect(normaliseSide('Bride')).toEqual({ value: 'Both', understood: false })
-    expect(normaliseSide('groom')).toEqual({ value: 'Both', understood: false })
-    expect(normaliseSide('xyz')).toEqual({ value: 'Both', understood: false })
-    expect(normaliseSide('  ')).toEqual({ value: undefined, understood: true })
+  it("side: the wedding's names, Partner 1 / 2 or Both; bride and groom become both and are reported", () => {
+    expect(normaliseSide('Noa', NOA_AIDEN)).toEqual({ value: 'partner1', understood: true })
+    expect(normaliseSide("noa's side", NOA_AIDEN)).toEqual({ value: 'partner1', understood: true })
+    expect(normaliseSide('AIDEN', NOA_AIDEN)).toEqual({ value: 'partner2', understood: true })
+    expect(normaliseSide('Both', NOA_AIDEN)).toEqual({ value: 'both', understood: true })
+    expect(normaliseSide('mutual', NOA_AIDEN)).toEqual({ value: 'both', understood: true })
+    expect(normaliseSide('Partner 2', NOA_AIDEN)).toEqual({ value: 'partner2', understood: true })
+    expect(normaliseSide('Bride', NOA_AIDEN)).toEqual({ value: 'both', understood: false })
+    expect(normaliseSide('groom', NOA_AIDEN)).toEqual({ value: 'both', understood: false })
+    expect(normaliseSide('xyz', NOA_AIDEN)).toEqual({ value: 'both', understood: false })
+    expect(normaliseSide('  ', NOA_AIDEN)).toEqual({ value: undefined, understood: true })
+  })
+
+  it("side: another wedding's names, first names and possessives; Noa and Aiden mean nothing there", () => {
+    expect(normaliseSide('Sam', SAM_ALEX)).toEqual({ value: 'partner1', understood: true })
+    expect(normaliseSide('Sam Rivera', SAM_ALEX)).toEqual({ value: 'partner1', understood: true })
+    expect(normaliseSide('Sams side', SAM_ALEX)).toEqual({ value: 'partner1', understood: true })
+    expect(normaliseSide('Alex’s Side', SAM_ALEX)).toEqual({ value: 'partner2', understood: true })
+    expect(normaliseSide('p1', SAM_ALEX)).toEqual({ value: 'partner1', understood: true })
+    expect(normaliseSide('Noa', SAM_ALEX)).toEqual({ value: 'both', understood: false })
+    expect(normaliseSide('Aiden', SAM_ALEX)).toEqual({ value: 'both', understood: false })
+  })
+
+  it('side: with no names, Partner 1, Partner 2 and Both only', () => {
+    expect(normaliseSide('Partner 1', UNNAMED)).toEqual({ value: 'partner1', understood: true })
+    expect(normaliseSide('partner2', UNNAMED)).toEqual({ value: 'partner2', understood: true })
+    expect(normaliseSide('Both sides', UNNAMED)).toEqual({ value: 'both', understood: true })
+    expect(normaliseSide('Noa', UNNAMED)).toEqual({ value: 'both', understood: false })
   })
 
   it('rsvp: yes, no or pending', () => {
@@ -191,7 +213,7 @@ describe('values', () => {
     }
     // The partner's nickname is not the guest's own, and not a partner name either.
     expect(guessMapping(['First', 'Last', 'Partner nickname'])['Partner nickname']).toBe('add_to_notes')
-    const mapped = applyMapping([{ First: 'Robert', Last: 'Smith', Nickname: ' Bobby ' }], guessMapping(['First', 'Last', 'Nickname']))
+    const mapped = applyMapping([{ First: 'Robert', Last: 'Smith', Nickname: ' Bobby ' }], guessMapping(['First', 'Last', 'Nickname']), NOA_AIDEN)
     expect(mapped.rows[0]).toMatchObject({ firstName: 'Robert', nickname: 'Bobby', extraNotes: [] })
   })
 
@@ -240,6 +262,7 @@ describe('applyMapping', () => {
         }),
       ],
       mapping,
+      NOA_AIDEN,
     )
     expect(result.errors).toEqual([])
     expect(result.warnings).toEqual([])
@@ -250,7 +273,7 @@ describe('applyMapping', () => {
         lastName: 'Kowalczyk',
         partnerName: 'Łukasz Kowalczyk',
         household: 'Kowalczyk',
-        side: 'Noa',
+        side: 'partner1',
         rsvp: 'yes',
         meal: 'Fish',
         isChild: false,
@@ -262,12 +285,12 @@ describe('applyMapping', () => {
   })
 
   it('leaves blank cells out, so they change nothing', () => {
-    const result = applyMapping([row({ first_name: 'Anna', last_name: 'Lee' })], mapping)
+    const result = applyMapping([row({ first_name: 'Anna', last_name: 'Lee' })], mapping, NOA_AIDEN)
     expect(result.rows).toEqual([{ rowNumber: 2, firstName: 'Anna', lastName: 'Lee', groups: [], extraNotes: [] }])
   })
 
   it('uses the row numbers given', () => {
-    const result = applyMapping([row({ first_name: 'Anna', last_name: 'Lee' })], mapping, [7])
+    const result = applyMapping([row({ first_name: 'Anna', last_name: 'Lee' })], mapping, NOA_AIDEN, [7])
     expect(result.rows[0].rowNumber).toBe(7)
   })
 
@@ -275,6 +298,7 @@ describe('applyMapping', () => {
     const result = applyMapping(
       [row({ first_name: 'Anna' }), row({ last_name: 'Lee' }), row({ notes: 'just a note' })],
       mapping,
+      NOA_AIDEN,
     )
     expect(result.rows).toEqual([])
     expect(result.errors).toEqual([
@@ -288,40 +312,54 @@ describe('applyMapping', () => {
     const result = applyMapping(
       [row({ first_name: 'Anna', last_name: 'Lee', side: 'Bride', rsvp: 'soon', child: 'teen' })],
       mapping,
+      NOA_AIDEN,
     )
-    expect(result.rows[0].side).toBe('Both')
+    expect(result.rows[0].side).toBe('both')
     expect(result.rows[0].rsvp).toBeUndefined()
     expect(result.rows[0].isChild).toBeUndefined()
     expect(result.warnings.map((w) => w.field)).toEqual(['side', 'rsvp', 'child'])
     expect(result.warnings[0].message).toBe('Side "Bride" is not Noa, Aiden or Both, so it is set to Both')
   })
 
+  it("reads sides with the wedding's names, and names them in the warning", () => {
+    const result = applyMapping(
+      [row({ first_name: 'Anna', last_name: 'Lee', side: "Alex's" }), row({ first_name: 'Ben', last_name: 'Lee', side: 'Noa' })],
+      mapping,
+      { partner1: 'Sam', partner2: 'Alex' },
+    )
+    expect(result.rows.map((r) => r.side)).toEqual(['partner2', 'both'])
+    expect(result.warnings.map((w) => w.message)).toEqual(['Side "Noa" is not Sam, Alex or Both, so it is set to Both'])
+    const unnamed = applyMapping([row({ first_name: 'Anna', last_name: 'Lee', side: 'Bride' })], mapping, UNNAMED)
+    expect(unnamed.warnings[0].message).toBe('Side "Bride" is not Partner 1, Partner 2 or Both, so it is set to Both')
+  })
+
   it('reads guest_id only when it is one of ours', () => {
     const m: ColumnMapping = { ...mapping, guest_id: 'guest_id' }
     const id = '3F2504E0-4F89-41D3-9A0C-0305E82C3301'
-    const ok = applyMapping([{ ...row({ first_name: 'Anna', last_name: 'Lee' }), guest_id: id }], m)
+    const ok = applyMapping([{ ...row({ first_name: 'Anna', last_name: 'Lee' }), guest_id: id }], m, NOA_AIDEN)
     expect(ok.rows[0].guestId).toBe(id.toLowerCase())
-    const bad = applyMapping([{ ...row({ first_name: 'Anna', last_name: 'Lee' }), guest_id: '1234' }], m)
+    const bad = applyMapping([{ ...row({ first_name: 'Anna', last_name: 'Lee' }), guest_id: '1234' }], m, NOA_AIDEN)
     expect(bad.rows[0].guestId).toBeUndefined()
     expect(bad.warnings[0].field).toBe('guest_id')
   })
 
   it('ignores Ignore columns and joins several notes columns', () => {
     const m: ColumnMapping = { First: 'first_name', Last: 'last_name', A: 'notes', B: 'notes', C: 'ignore' }
-    const result = applyMapping([{ First: 'Anna', Last: 'Lee', A: 'one', B: 'two', C: 'secret' }], m)
+    const result = applyMapping([{ First: 'Anna', Last: 'Lee', A: 'one', B: 'two', C: 'secret' }], m, NOA_AIDEN)
     expect(result.rows[0].notes).toBe('one\ntwo')
     expect(result.rows[0].extraNotes).toEqual([])
   })
 
   it('takes the first non-blank column when a field is picked twice', () => {
     const m: ColumnMapping = { First: 'first_name', Last: 'last_name', M1: 'meal', M2: 'meal' }
-    expect(applyMapping([{ First: 'A', Last: 'B', M1: '', M2: 'Fish' }], m).rows[0].meal).toBe('Fish')
+    expect(applyMapping([{ First: 'A', Last: 'B', M1: '', M2: 'Fish' }], m, NOA_AIDEN).rows[0].meal).toBe('Fish')
   })
 
   it('cleans text: NUL characters, line ends in notes, guarded cells', () => {
     const result = applyMapping(
       [row({ first_name: 'An\u0000na', last_name: 'Lee', notes: "'-likes dancing\r\n  second   line ", meal: "'=1+1" })],
       mapping,
+      NOA_AIDEN,
     )
     expect(result.rows[0]).toMatchObject({ firstName: 'Anna', notes: '-likes dancing\nsecond line', meal: '=1+1' })
   })

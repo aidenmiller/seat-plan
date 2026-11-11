@@ -9,10 +9,12 @@ import { memo, type ReactNode } from 'react'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { secondaryButton } from '@/client/ui/styles'
 import { fullName } from '@/domain/guest-list'
+import { sideLabel } from '@/domain/partners'
 import type { Group, Guest, GuestRsvp, GuestSide } from '@/shared/api'
 import { CheckField, EditableText, GroupChip, SelectField } from './cells'
 import { DeleteButton } from './GuestTable'
-import { RSVP_LABEL, RSVP_OPTIONS, SIDE_OPTIONS } from './options'
+import { RSVP_LABEL, RSVP_OPTIONS } from './options'
+import { usePartnerNames, useSideOptions } from './partners-context'
 import type { GuestRowActions } from './row-actions'
 
 export function GuestCards({
@@ -63,8 +65,9 @@ const GuestCard = memo(function GuestCard({
   actions: GuestRowActions
 }) {
   const name = fullName(guest)
+  const partners = usePartnerNames()
   const groups = guest.groupIds.map((id) => groupById.get(id)).filter((g): g is Group => g !== undefined)
-  const facts = [`Side: ${guest.side}`, `RSVP: ${RSVP_LABEL[guest.rsvp]}`, guest.meal ? `Meal: ${guest.meal}` : null, guest.isChild ? 'Child' : null].filter(Boolean)
+  const facts = [`Side: ${sideLabel(partners, guest.side)}`, `RSVP: ${RSVP_LABEL[guest.rsvp]}`, guest.meal ? `Meal: ${guest.meal}` : null, guest.isChild ? 'Child' : null].filter(Boolean)
   return (
     <li
       className={`rounded-xl border bg-white p-2 ${selected ? 'border-blue-800 bg-blue-50' : 'border-stone-200'}`}
@@ -125,6 +128,7 @@ export function GuestEditDialog({
   onClose(): void
 }) {
   const name = guest ? fullName(guest) : ''
+  const sideOptions = useSideOptions()
   const groups = guest ? guest.groupIds.map((id) => groupById.get(id)).filter((g): g is Group => g !== undefined) : []
   return (
     <Dialog open={guest !== null} onClose={onClose} title={guest ? name : 'Guest'} testId="guest-edit-dialog">
@@ -154,7 +158,7 @@ export function GuestEditDialog({
             <EditableText value={guest.household} label={`Household of ${name}`} placeholder="Add" onSave={(v) => actions.edit(guest, { household: v })} testId="edit-household" />
           </Field>
           <div className="grid grid-cols-2 gap-2">
-            <SelectField<GuestSide> showLabel value={guest.side} label="Side" options={SIDE_OPTIONS} onChange={(v) => actions.edit(guest, { side: v })} testId="edit-side" />
+            <SelectField<GuestSide> showLabel value={guest.side} label="Side" options={sideOptions} onChange={(v) => actions.edit(guest, { side: v })} testId="edit-side" />
             <SelectField<GuestRsvp> showLabel value={guest.rsvp} label="RSVP" options={RSVP_OPTIONS} onChange={(v) => actions.edit(guest, { rsvp: v })} testId="edit-rsvp" />
           </div>
           <Field label="Meal">

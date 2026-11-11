@@ -21,7 +21,8 @@ import Link from 'next/link'
 import { memo, useId, useMemo, useState } from 'react'
 import { CheckField, SelectField } from '@/client/guests/cells'
 import { SearchBox } from '@/client/guests/GuestFilters'
-import { RSVP_OPTIONS, SIDE_OPTIONS } from '@/client/guests/options'
+import { RSVP_OPTIONS } from '@/client/guests/options'
+import { useSideOptions } from '@/client/guests/partners-context'
 import {
   compareText,
   declinedShown,
@@ -43,6 +44,7 @@ const ANY = '__any__'
 export function GuestsPanel() {
   const { weddingId, guests, groups } = useEditorGuests()
   const { phone } = useEditorUi()
+  const sideOptions = useSideOptions()
   const items = useCanvas((c) => c.items)
   const seatLabels = useMemo(() => seatLabelsByGuest(items), [items])
   const [query, setQuery] = useState('')
@@ -102,7 +104,7 @@ export function GuestsPanel() {
           <SelectField<string>
             label="Side"
             value={side ?? ANY}
-            options={[{ value: ANY, label: 'Any side' }, ...SIDE_OPTIONS]}
+            options={[{ value: ANY, label: 'Any side' }, ...sideOptions]}
             onChange={(v) => setSide(v === ANY ? null : (v as ListSide))}
             testId="side-list-side"
           />

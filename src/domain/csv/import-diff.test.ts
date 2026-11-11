@@ -9,6 +9,8 @@ import { SAMPLE_CSV_FILE } from './sample'
 
 // --- Fixtures ----------------------------------------------------------------
 
+const NOA_AIDEN = { partner1: 'Noa', partner2: 'Aiden' }
+
 const guest = (id: string, name: string, extra: Partial<ExistingGuest> = {}): ExistingGuest => {
   const [firstName, ...rest] = name.split(' ')
   return {
@@ -18,7 +20,7 @@ const guest = (id: string, name: string, extra: Partial<ExistingGuest> = {}): Ex
     nickname: null,
     partnerId: null,
     household: null,
-    side: 'Both',
+    side: 'both',
     rsvp: 'pending',
     meal: null,
     isChild: false,
@@ -39,7 +41,7 @@ function rowsFromFile(text: string | Uint8Array): ImportRow[] {
   const decoded = typeof text === 'string' ? { text, delimiter: null } : decodeCsvBytes(text)
   const parsed = parseCsv(decoded.text, decoded.delimiter)
   expect(parsed.errors).toEqual([])
-  const mapped = applyMapping(parsed.rows, guessMapping(parsed.headers), parsed.rowNumbers)
+  const mapped = applyMapping(parsed.rows, guessMapping(parsed.headers), NOA_AIDEN, parsed.rowNumbers)
   expect(mapped.errors).toEqual([])
   return mapped.rows
 }
@@ -92,7 +94,7 @@ describe('importing the sample file', () => {
       lastName: 'Kowalczyk',
       nickname: null,
       household: 'Kowalczyk',
-      side: 'Noa',
+      side: 'partner1',
       rsvp: 'yes',
       meal: 'Fish',
       isChild: false,
@@ -241,7 +243,7 @@ describe('matching rows to guests', () => {
 describe('changed fields', () => {
   const base = guest('g1', 'Ana Ruiz', {
     household: 'Ruiz',
-    side: 'Noa',
+    side: 'partner1',
     rsvp: 'pending',
     meal: 'Fish',
     isChild: false,
@@ -256,17 +258,17 @@ describe('changed fields', () => {
 
   it('lists each changed field with before and after', () => {
     const plan = planImport(
-      [row('Ana Ruiz', { household: 'Ruiz-Lee', side: 'Aiden', rsvp: 'yes', meal: 'Beef', isChild: true })],
+      [row('Ana Ruiz', { household: 'Ruiz-Lee', side: 'partner2', rsvp: 'yes', meal: 'Beef', isChild: true })],
       [base],
     )
     expect(plan.changed[0].changes).toEqual([
       { field: 'household', before: 'Ruiz', after: 'Ruiz-Lee' },
       { field: 'meal', before: 'Fish', after: 'Beef' },
-      { field: 'side', before: 'Noa', after: 'Aiden' },
+      { field: 'side', before: 'partner1', after: 'partner2' },
       { field: 'rsvp', before: 'pending', after: 'yes' },
       { field: 'isChild', before: 'No', after: 'Yes' },
     ])
-    expect(plan.changed[0].patch).toEqual({ household: 'Ruiz-Lee', meal: 'Beef', side: 'Aiden', rsvp: 'yes', isChild: true })
+    expect(plan.changed[0].patch).toEqual({ household: 'Ruiz-Lee', meal: 'Beef', side: 'partner2', rsvp: 'yes', isChild: true })
     expect(plan.changed[0].name).toBe('Ana Ruiz')
   })
 
@@ -423,7 +425,7 @@ describe('re-importing our own export', () => {
       nickname: 'Sammy',
       partnerId: '22222222-2222-4222-8222-222222222222',
       household: 'Lee',
-      side: 'Aiden',
+      side: 'partner2',
       rsvp: 'yes',
       meal: '=Fish',
       isChild: false,
@@ -437,7 +439,7 @@ describe('re-importing our own export', () => {
       nickname: null,
       partnerId: '11111111-1111-4111-8111-111111111111',
       household: 'Lee',
-      side: 'Both',
+      side: 'both',
       rsvp: 'pending',
       meal: null,
       isChild: false,
@@ -452,7 +454,7 @@ describe('re-importing our own export', () => {
       nickname: null,
       partnerId: null,
       household: null,
-      side: 'Noa',
+      side: 'partner1',
       rsvp: 'no',
       meal: null,
       isChild: true,
@@ -466,7 +468,7 @@ describe('re-importing our own export', () => {
       nickname: null,
       partnerId: null,
       household: null,
-      side: 'Noa',
+      side: 'partner1',
       rsvp: 'pending',
       meal: null,
       isChild: false,
@@ -482,7 +484,7 @@ describe('re-importing our own export', () => {
       nickname: null,
       partnerId: '66666666-6666-4666-8666-666666666666',
       household: null,
-      side: 'Both',
+      side: 'both',
       rsvp: 'pending',
       meal: null,
       isChild: false,
@@ -496,7 +498,7 @@ describe('re-importing our own export', () => {
       nickname: null,
       partnerId: '55555555-5555-4555-8555-555555555555',
       household: null,
-      side: 'Both',
+      side: 'both',
       rsvp: 'pending',
       meal: null,
       isChild: false,
@@ -511,7 +513,7 @@ describe('re-importing our own export', () => {
       nickname: null,
       partnerId: null,
       household: 'Nowak, Ze\u0301lie',
-      side: 'Both',
+      side: 'both',
       rsvp: 'pending',
       meal: null,
       isChild: false,
@@ -535,7 +537,7 @@ describe('re-importing our own export', () => {
   }))
 
   it('matches every row by guest_id and changes nothing', () => {
-    const csv = guestsToCsv(exported, groups)
+    const csv = guestsToCsv(exported, groups, NOA_AIDEN)
     const rows = rowsFromFile(new TextEncoder().encode(csv))
     expect(rows.map((r) => r.guestId)).toEqual(exported.map((g) => g.id))
     const plan = planImport(rows, existing, { existingGroupNames: groups.map((x) => x.name) })
@@ -553,7 +555,7 @@ describe('re-importing our own export', () => {
   })
 
   it('matches the same file by name too, with no guest_id column', () => {
-    const csv = guestsToCsv(exported, groups)
+    const csv = guestsToCsv(exported, groups, NOA_AIDEN)
     const rows = rowsFromFile(new TextEncoder().encode(csv)).map((r) => ({ ...r, guestId: undefined }))
     const plan = planImport(rows, existing, { existingGroupNames: groups.map((x) => x.name) })
     // The two Sam Lees wait for a pick; everyone else, the couple with the
@@ -563,7 +565,7 @@ describe('re-importing our own export', () => {
   })
 
   it('an edit in the spreadsheet comes back as a change to that guest only', () => {
-    const csv = guestsToCsv(exported, groups).replace('Zoë,', 'Zoe,')
+    const csv = guestsToCsv(exported, groups, NOA_AIDEN).replace('Zoë,', 'Zoe,')
     const plan = planImport(rowsFromFile(csv), existing, { existingGroupNames: groups.map((x) => x.name) })
     expect(plan.changed).toMatchObject([
       { guestId: exported[3].id, changes: [{ field: 'firstName', before: 'Zoë', after: 'Zoe' }] },

@@ -14,6 +14,8 @@ function wedding(over: Partial<WeddingSummary> = {}): WeddingSummary {
     date: null,
     unit: 'ft',
     minGapCm: 152.4,
+    partner1Name: 'Noa',
+    partner2Name: 'Aiden',
     guestCount: 0,
     layoutCount: 0,
     updatedAt: '2026-11-09T15:42:00.000Z',
@@ -39,6 +41,12 @@ describe('newestWedding', () => {
     expect(newestWedding(refreshed, saved)).toBe(refreshed)
     const later = wedding({ unit: 'ft', updatedAt: '2026-11-09T15:44:00.000Z' })
     expect(newestWedding(later, saved)).toBe(later)
+  })
+
+  it('uses the saved copy for new partner names too', () => {
+    const page = wedding()
+    const saved = wedding({ partner1Name: 'Noah', partner2Name: null, updatedAt: '2026-11-09T15:43:00.000Z' })
+    expect(newestWedding(page, saved)).toMatchObject({ partner1Name: 'Noah', partner2Name: null })
   })
 
   it('ignores a saved copy of another wedding', () => {

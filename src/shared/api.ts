@@ -11,6 +11,7 @@ import { cleanNotes, cleanOneLine } from '@/domain/csv/columns'
 import type { ImportPlan } from '@/domain/csv/import-diff'
 import { HEX_COLOR_RE } from '@/domain/group-colors'
 import type { FloorplanDraft } from '@/domain/floorplan/draft-schema'
+import { guestSides, PARTNER_NAME_MAX, type GuestSide } from '@/domain/partners'
 import { fixedItemsSchema, importedByValues, referenceMetaSchema, type FixedItem, type ReferenceMeta } from '@/domain/venue-schema'
 
 export const uuid = z.uuid()
@@ -27,10 +28,21 @@ export type WeddingSummary = {
   date: string | null
   unit: 'ft' | 'm'
   minGapCm: number
+  /** The couple's names, which guest sides show. Null reads "Partner 1" / "Partner 2". */
+  partner1Name: string | null
+  partner2Name: string | null
   guestCount: number
   layoutCount: number
   updatedAt: string
 }
+
+/** A partner's name: one line, spaces collapsed and trimmed, at most 60 characters. Blank becomes null ("Partner 1"). */
+const partnerNameText = z
+  .string()
+  .overwrite(cleanOneLine)
+  .max(PARTNER_NAME_MAX)
+  .nullable()
+  .transform((v) => (v === '' ? null : v))
 
 export const createWeddingBody = z.object({
   /** The browser may choose the id, so a retried create is harmless. */
@@ -38,6 +50,8 @@ export const createWeddingBody = z.object({
   name,
   date: z.iso.date().nullable().optional(),
   unit: z.enum(['ft', 'm']).optional(),
+  partner1Name: partnerNameText.optional(),
+  partner2Name: partnerNameText.optional(),
 })
 export type CreateWeddingBody = z.infer<typeof createWeddingBody>
 
@@ -47,6 +61,8 @@ export const updateWeddingBody = z
     date: z.iso.date().nullable().optional(),
     unit: z.enum(['ft', 'm']).optional(),
     minGapCm: z.number().finite().positive().max(10_000).optional(),
+    partner1Name: partnerNameText.optional(),
+    partner2Name: partnerNameText.optional(),
   })
   .refine((b) => Object.keys(b).length > 0, 'Nothing to change')
 export type UpdateWeddingBody = z.infer<typeof updateWeddingBody>
@@ -451,9 +467,9 @@ export const IMPORT_NOT_CONFIGURED_MESSAGE = 'The floor plan import needs ANTHRO
 
 // ---------- Guests ----------
 
-export const guestSides = ['Noa', 'Aiden', 'Both'] as const
+/** Sides are positions ('partner1', 'partner2', 'both'); the wedding's names label them (domain/partners). */
+export { guestSides, type GuestSide }
 export const guestRsvps = ['yes', 'no', 'pending'] as const
-export type GuestSide = (typeof guestSides)[number]
 export type GuestRsvp = (typeof guestRsvps)[number]
 
 /**

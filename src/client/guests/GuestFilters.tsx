@@ -9,7 +9,8 @@ import { inputClass } from '@/client/ui/styles'
 import { compareText, hasFilters, NONE, NO_FILTERS, type GuestFilters, type ListRsvp, type ListSide } from '@/domain/guest-list'
 import type { Group } from '@/shared/api'
 import { SelectField } from './cells'
-import { RSVP_OPTIONS, SIDE_OPTIONS } from './options'
+import { RSVP_OPTIONS } from './options'
+import { useSideOptions } from './partners-context'
 
 const ANY = '__any__'
 
@@ -56,6 +57,7 @@ export function GuestFilterBar({
   groups: readonly Group[]
   meals: readonly string[]
 }) {
+  const sideOptions = useSideOptions()
   const groupOptions = [
     { value: ANY, label: 'Any group' },
     { value: NONE, label: 'No group' },
@@ -77,7 +79,7 @@ export function GuestFilterBar({
       <SelectField
         label="Side"
         value={filters.side ?? ANY}
-        options={[{ value: ANY, label: 'Any side' }, ...SIDE_OPTIONS]}
+        options={[{ value: ANY, label: 'Any side' }, ...sideOptions]}
         onChange={(v) => set({ side: orNull<ListSide>(v) })}
         testId="filter-side"
       />

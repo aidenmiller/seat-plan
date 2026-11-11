@@ -1,13 +1,14 @@
 /**
  * The column matching step: which CSV column fills which guest field, a
  * guess from the header names, and turning parsed rows into ImportRows with
- * every value normalised (side, RSVP, child, groups). Unknown columns go
- * into notes as "Header: value" lines (DECISIONS 24).
+ * every value normalised (side, RSVP, child, groups). Sides are read with
+ * the wedding's own partner names. Unknown columns go into notes as
+ * "Header: value" lines (DECISIONS 24).
  */
 import { wellFormedText } from '../canvas-schema'
 import { foldName } from '../names'
+import { sideKey, sideLabel, sideWordMap, type GuestSide, type PartnerNames } from '../partners'
 
-export type GuestSide = 'Noa' | 'Aiden' | 'Both'
 export type GuestRsvp = 'yes' | 'no' | 'pending'
 
 /** The sample file's columns, in the spec's order. */
@@ -175,30 +176,21 @@ export type Normalised<T> = { value: T | undefined; understood: boolean }
 
 const word = (value: string) => foldName(value).replace(/[^a-z0-9?' ]+/g, ' ').replace(/\s+/g, ' ').trim()
 
-const SIDE_WORDS: Record<string, GuestSide> = {
-  noa: 'Noa',
-  noas: 'Noa',
-  "noa's": 'Noa',
-  aiden: 'Aiden',
-  aidens: 'Aiden',
-  "aiden's": 'Aiden',
-  both: 'Both',
-  'both sides': 'Both',
-  mutual: 'Both',
-  shared: 'Both',
-  either: 'Both',
+function sideFrom(raw: string, words: ReadonlyMap<string, GuestSide>): Normalised<GuestSide> {
+  if (!raw.trim()) return { value: undefined, understood: true }
+  const side = words.get(sideKey(raw))
+  return side ? { value: side, understood: true } : { value: 'both', understood: false }
 }
 
 /**
- * Noa, Aiden or Both. "Bride" and "groom" cannot say which of the two is
- * meant, so they and anything else unrecognised become Both, reported as not
- * understood. Blank is undefined.
+ * Partner 1, partner 2 or both, by the wedding's names ("Sam", "Sam's
+ * side", "Partner 1", "Both"; see sideWordMap). "Bride" and "groom" cannot
+ * say which of the two is meant, so they, a first name both partners share,
+ * and anything else unrecognised become both, reported as not understood.
+ * Blank is undefined.
  */
-export function normaliseSide(raw: string): Normalised<GuestSide> {
-  const w = word(raw).replace(/\bside\b/g, '').trim()
-  if (!raw.trim()) return { value: undefined, understood: true }
-  const side = SIDE_WORDS[w]
-  return side ? { value: side, understood: true } : { value: 'Both', understood: false }
+export function normaliseSide(raw: string, partners: PartnerNames): Normalised<GuestSide> {
+  return sideFrom(raw, sideWordMap(partners))
 }
 
 const RSVP_WORDS: Record<string, GuestRsvp> = {
@@ -352,17 +344,21 @@ export type MappedRows = {
 }
 
 /**
- * Applies a mapping to parsed rows. `rowNumbers` gives each row's spreadsheet
- * row number (parseCsv returns them); without it, rows count from 2.
+ * Applies a mapping to parsed rows. Side cells are read with the wedding's
+ * partner names. `rowNumbers` gives each row's spreadsheet row number
+ * (parseCsv returns them); without it, rows count from 2.
  */
 export function applyMapping(
   rows: readonly Record<string, string>[],
   mapping: ColumnMapping,
+  partners: PartnerNames,
   rowNumbers?: readonly number[],
 ): MappedRows {
   const columns = Object.entries(mapping).filter(
     (entry): entry is [string, Exclude<ColumnTarget, 'ignore'>] => entry[1] !== 'ignore',
   )
+  const sideWords = sideWordMap(partners)
+  const sideChoices = `${sideLabel(partners, 'partner1')}, ${sideLabel(partners, 'partner2')} or ${sideLabel(partners, 'both')}`
   const out: ImportRow[] = []
   const errors: RowIssue[] = []
   const warnings: RowIssue[] = []
@@ -414,9 +410,9 @@ export function applyMapping(
 
     const sideRaw = values.get('side')
     if (sideRaw !== undefined) {
-      const side = normaliseSide(sideRaw)
+      const side = sideFrom(sideRaw, sideWords)
       if (side.value !== undefined) row.side = side.value
-      if (!side.understood) warn('side', `Side "${cleanOneLine(sideRaw)}" is not Noa, Aiden or Both, so it is set to Both`)
+      if (!side.understood) warn('side', `Side "${cleanOneLine(sideRaw)}" is not ${sideChoices}, so it is set to Both`)
     }
     const rsvpRaw = values.get('rsvp')
     if (rsvpRaw !== undefined) {

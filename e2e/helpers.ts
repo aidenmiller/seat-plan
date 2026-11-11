@@ -67,8 +67,15 @@ export function uniqueName(label: string, testInfo: TestInfo): string {
 
 // ---------- Data through the API (the page's cookies) ----------
 
-export async function apiCreateWedding(request: APIRequestContext, name: string): Promise<WeddingSummary> {
-  const res = await request.post('/api/weddings', { data: { id: randomUUID(), name } })
+/** The partners every wedding had before names were stored, so guest sides read Noa, Aiden and Both. */
+const NOA_AIDEN = { partner1Name: 'Noa', partner2Name: 'Aiden' }
+
+export async function apiCreateWedding(
+  request: APIRequestContext,
+  name: string,
+  partners: { partner1Name: string | null; partner2Name: string | null } = NOA_AIDEN,
+): Promise<WeddingSummary> {
+  const res = await request.post('/api/weddings', { data: { id: randomUUID(), name, ...partners } })
   expect(res.status(), await res.text()).toBe(201)
   return (await res.json()) as WeddingSummary
 }
