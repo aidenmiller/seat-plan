@@ -6,6 +6,7 @@ import type { Db } from '../locks'
 import { recordEvent } from '../repo/activity'
 import { assignOwnerlessWeddings } from '../repo/members'
 import { countUsers, insertUser, type UserDto } from '../repo/users'
+import { passwordsMatch } from './tokens'
 
 /**
  * First-run setup: while no account exists, whoever knows the old shared site
@@ -20,18 +21,27 @@ export async function setupOpen(db: Db = getDb()): Promise<boolean> {
   return (await countUsers(db)) === 0
 }
 
+/** The typed site password against SITE_PASSWORD, in constant time. False when SITE_PASSWORD is not set. */
+export function setupPasswordMatches(input: string, env: Readonly<Record<string, string | undefined>> = process.env): boolean {
+  const expected = env.SITE_PASSWORD
+  if (!expected) return false
+  return passwordsMatch(input, expected)
+}
+
 export type BootstrapEmailCheck = 'ok' | 'not-configured' | 'mismatch'
 
 /**
- * In production the first admin must be the person named in
+ * On Vercel (production and preview deployments alike: VERCEL is set on
+ * every one) the first admin must be the person named in
  * BOOTSTRAP_ADMIN_EMAIL, so someone who learned the old site password cannot
- * claim the site. Elsewhere (local runs, previews, tests) any email will do.
+ * claim the site, nor a preview deployment pointed at an empty database.
+ * Elsewhere (local runs, tests) any email will do.
  */
 export function checkBootstrapEmail(
   email: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): BootstrapEmailCheck {
-  if (env.VERCEL_ENV !== 'production') return 'ok'
+  if (!env.VERCEL) return 'ok'
   const expected = normalizeEmail(env.BOOTSTRAP_ADMIN_EMAIL ?? '')
   if (!expected) return 'not-configured'
   return normalizeEmail(email) === expected ? 'ok' : 'mismatch'
