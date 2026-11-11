@@ -21,4 +21,10 @@ describe('migrations', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]!.fixedItems).toEqual([])
   })
+
+  it('put the Toronto Beach Club in the shared library, owned by no one', async () => {
+    const [row] = await db.select().from(venueTemplates).where(eq(venueTemplates.name, 'Toronto Beach Club'))
+    expect(row!.isLibrary).toBe(true)
+    expect(row!.ownerUserId).toBeNull()
+  })
 })
