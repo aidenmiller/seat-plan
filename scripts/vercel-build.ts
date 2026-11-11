@@ -3,7 +3,8 @@
  *  1. Production builds check their settings, then apply database migrations.
  *     Preview builds never touch the database (PLAN change 29).
  *  2. next build.
- *  3. Fail the build if the site password appears in the build output.
+ *  3. Fail the build if a secret (AUTH_SECRET, or SITE_PASSWORD when set)
+ *     appears in the build output (scripts/check-secrets.ts).
  */
 import { spawnSync } from 'node:child_process'
 
@@ -13,10 +14,13 @@ function run(command: string, args: string[]) {
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
-/** Names what is wrong, never a value. */
-export function productionSettingsProblems(env: NodeJS.ProcessEnv): string[] {
+/**
+ * Names what is wrong, never a value. SITE_PASSWORD is no longer needed: it
+ * only opens first-run setup (/setup), and BOOTSTRAP_ADMIN_EMAIL is checked
+ * when someone uses that page.
+ */
+export function productionSettingsProblems(env: Readonly<Record<string, string | undefined>>): string[] {
   const problems: string[] = []
-  if (!env.SITE_PASSWORD) problems.push('SITE_PASSWORD is not set. Add it under Settings, Environment Variables.')
   if ((env.AUTH_SECRET ?? '').length < 32) {
     problems.push('AUTH_SECRET is missing or shorter than 32 characters. Make one with: openssl rand -base64 32')
   }

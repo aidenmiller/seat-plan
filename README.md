@@ -6,7 +6,7 @@ Next.js 16 (App Router, TypeScript), Postgres with Drizzle, Tailwind, Vitest and
 
 ## What it does
 
-- **One shared password** for the whole site, a 30 day cookie, and Log out. Search engines are told to skip it.
+- **Accounts.** Everyone signs in with their own email and password; a session lasts 30 days from its last use (a year at most), and Log out ends it. The first account is made once, at `/setup`. Search engines are told to skip the site.
 - **Weddings and layouts.** Each wedding holds its guests, groups and rules, and any number of reception or ceremony layouts. Rename in place, duplicate, and delete after typing `delete`.
 - **The plan editor.** Pan and zoom from 10% to 800%, a grid in feet or meters, tables and fixtures from the shape panel, handles to move, resize and turn them, align and distribute, undo and redo. Edit mode on laptops, View mode on phones, and a bottom sheet on phones.
 - **Seating.** Drag a name onto a seat or table, or tap the + on an empty seat. Names, initials or circles only, depending on the zoom. Search pans to a guest's seat.
@@ -27,7 +27,7 @@ You need Node 22 and a Postgres 16 server.
    ```bash
    createdb seating_dev
    ```
-2. Copy `env.example` to `.env.local` and fill in `DATABASE_URL`, `SITE_PASSWORD` and `AUTH_SECRET` (at least 32 characters: `openssl rand -base64 32`). The floor plan import also needs `ANTHROPIC_API_KEY`; without it everything else works and the import says the key is missing.
+2. Copy `env.example` to `.env.local` and fill in `DATABASE_URL`, `AUTH_SECRET` (at least 32 characters: `openssl rand -base64 32`) and, for first-run setup, `SITE_PASSWORD`. The floor plan import also needs `ANTHROPIC_API_KEY`; without it everything else works and the import says the key is missing.
 3. Install, migrate, add demo data and start:
    ```bash
    npm install
@@ -35,7 +35,7 @@ You need Node 22 and a Postgres 16 server.
    npm run seed
    npm run dev
    ```
-4. Open http://localhost:3000 and enter the site password.
+4. Open http://localhost:3000/setup, type the site password and make the first account (an admin, which takes over the weddings already there). After that, sign in at http://localhost:3000 with that email and password.
 
 ## Scripts
 
@@ -50,7 +50,7 @@ You need Node 22 and a Postgres 16 server.
 | `npm run db:migrate` | Apply migrations to `DATABASE_URL_UNPOOLED`, else `DATABASE_URL` (the seed uses the same order) |
 | `npm run seed` | Demo data: "Demo wedding" with three reception layouts, "Reception plan A" (blank canvas, five round tables), "Canvas tour" (blank canvas, one of every table preset and fixture) and "Beach Club reception" (Toronto Beach Club). Its guest list (`scripts/demo-guests.ts`, made up from a fixed random seed): 120 guests in households, a few with accents, on Noa's side, Aiden's or both, mostly RSVP yes with some pending and a few no, 10 children, some meals and notes; 8 groups with their members; 20 couples linked as partners; 5 rules (shown from milestone 6). About 80 of them sit at the tables of "Reception plan A" and "Canvas tour" (the sweetheart table stays free). "Canvas tour" also gets a few notes by Noa and Aiden (`scripts/demo-notes.ts`), one marked done, and an arrow attached to the bar and table 3. A fourth layout, "Ceremony", is a ceremony layout on a blank canvas: the seating block tool's 8 rows of 6 each side of the aisle, the chuppah, officiant and musicians in front, row 1 on Noa's side reserved as "Family, row 1", and a few of Aiden's family seated by name on row 1 of his side. "Canvas tour" also gets a share link labelled "Caterer", with names and notes on; its password is made up at random and not shown, so set one with Change password in the wedding's Links tab before you try it. Safe to run twice: guests match by name, and groups, couples, rules, seats, notes and the share link are only added where none are yet. It runs tsx with the `react-server` condition, so it writes through the app's own server code. |
 | `npm run seed:perf` | The speed test's layout, for trying pan and zoom by hand on a phone or laptop: a "Speed test" wedding with 400 made-up guests and one layout, "40 tables" (40 round tables of 10 seats, every seat taken, and 100 shapes). Safe to run twice. |
-| `npm run check:secrets` | Fails if the site password is in the built browser files or in git history |
+| `npm run check:secrets` | Fails if `AUTH_SECRET`, or the site password when set, is in the built browser files or in git history |
 
 Tests use local databases only and refuse any other host. Create them once:
 
@@ -86,13 +86,14 @@ CSV files start with a byte order mark so Excel reads accents, and a cell starti
 
 Wedding settings has Download backup: one JSON file with the guests, groups, rules, layouts and the venues they use, floor plan images included. Restore from file on the home screen checks the file and makes a new wedding, "Name (restored)", in steps (rows, then each venue and its image, then each layout), showing each step; if one fails, Try again picks up where it stopped. A venue that still has the same walls is reused, otherwise it comes back as "Name (restored)". Share links are not in the backup.
 
-Share in the layout editor makes a view-only link for the venue, with its own password and switches for guest names and notes. The wedding's Links tab lists the links that are on, when each was last opened, and lets you change a link's password, switch names or notes, or turn it off; a new password or turning it off signs out anyone using it. The link's page asks for its password; the site password opens every link too. After the password the venue sees that one layout in View mode, with the wedding's and the layout's names: pan, zoom, search a guest, and tap a seat for the guest's name, meal and Child flag (never their notes). With names off, seats show no names or initials and the search goes. Nothing else of the wedding is reachable. The open page checks the link every 60 seconds and whenever it regains focus, so a new password or turning the link off signs the viewer out within a minute.
+Share in the layout editor makes a view-only link for the venue, with its own password and switches for guest names and notes. The wedding's Links tab lists the links that are on, when each was last opened, and lets you change a link's password, switch names or notes, or turn it off; a new password or turning it off signs out anyone using it. The link's page asks for its password; anyone signed in who belongs to the wedding (or an admin) can open it without one, and that does not count as the venue opening it. After the password the venue sees that one layout in View mode, with the wedding's and the layout's names: pan, zoom, search a guest, and tap a seat for the guest's name, meal and Child flag (never their notes). With names off, seats show no names or initials and the search goes. Nothing else of the wedding is reachable. The open page checks the link every 60 seconds and whenever it regains focus, so a new password or turning the link off signs the viewer out within a minute.
 
 ## Deploy
 
-1. In Vercel, import the GitHub repo. `vercel.json` sets the build command. This first deployment fails, because there is no database or password yet. That is expected; step 4 redeploys it.
+1. In Vercel, import the GitHub repo. `vercel.json` sets the build command. This first deployment fails, because there is no database or secret yet. That is expected; step 4 redeploys it.
 2. Storage, then Marketplace, then Neon: create a database in **AWS us-east-1** (Vercel runs the app there by default, so queries stay fast) and connect it to **Production only**.
-3. Environment Variables for Production: `SITE_PASSWORD`, `AUTH_SECRET` (at least 32 characters: `openssl rand -base64 32`), and from milestone 7 `ANTHROPIC_API_KEY` for the floor plan import (optional `FLOORPLAN_MODEL` to try another Claude model).
-4. Redeploy. Production builds check those settings and name any that are missing, apply migrations, build, and fail if the password shows up in the build output. Preview builds skip the database.
+3. Environment Variables for Production: `AUTH_SECRET` (at least 32 characters: `openssl rand -base64 32`), and for first-run setup `SITE_PASSWORD` and `BOOTSTRAP_ADMIN_EMAIL` (the email the first account must use), and from milestone 7 `ANTHROPIC_API_KEY` for the floor plan import (optional `FLOORPLAN_MODEL` to try another Claude model).
+4. Redeploy. Production builds check those settings and name any that are missing, apply migrations, build, and fail if `AUTH_SECRET` or the site password shows up in the build output. Preview builds skip the database.
+5. Open `/setup` on the live site, type the site password and make the first account with the `BOOTSTRAP_ADMIN_EMAIL` address. Setup closes for good once an account exists; `SITE_PASSWORD` and `BOOTSTRAP_ADMIN_EMAIL` can then go.
 
-Signing out everywhere: change `AUTH_SECRET` (or `SITE_PASSWORD`) in Vercel and redeploy.
+Signing out everywhere: change `AUTH_SECRET` in Vercel and redeploy. That also signs out every share link viewer.
