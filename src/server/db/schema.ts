@@ -47,6 +47,30 @@ const deletedAt = () => timestamp({ withTimezone: true })
 /** One save that landed on a layout, kept in layouts.recent_saves. */
 export type RecentSave = { saveId: string; version: number }
 
+/** People who can sign in. Email is stored trimmed and lower case. */
+export const users = pgTable(
+  'users',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    email: text().notNull(),
+    displayName: text().notNull(),
+    passwordHash: text().notNull(),
+    isAdmin: boolean().notNull().default(false),
+    disabledAt: timestamp({ withTimezone: true }),
+    passwordChangedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    lastLoginAt: timestamp({ withTimezone: true }),
+    lastSeenAt: timestamp({ withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    unique('users_email_uq').on(t.email),
+    check('users_email_normalized', sql`${t.email} = lower(btrim(${t.email}))`),
+    check('users_display_name_length', sql`length(btrim(${t.displayName})) between 1 and 60`),
+    index('users_last_seen_idx').on(t.lastSeenAt),
+  ],
+)
+
 export const weddings = pgTable(
   'weddings',
   {
@@ -63,6 +87,132 @@ export const weddings = pgTable(
     check('weddings_name_not_blank', sql`length(btrim(${t.name})) > 0`),
     check('weddings_unit_valid', sql`${t.unit} in ('ft', 'm')`),
     check('weddings_min_gap_positive', sql`${t.minGapCm} > 0`),
+  ],
+)
+
+/** A sign-in. Only the hash of the cookie token is stored, and no IP address. */
+export const sessions = pgTable(
+  'sessions',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text().notNull(),
+    /** Cut to 200 characters by the app. */
+    userAgent: text(),
+    createdAt: createdAt(),
+    lastSeenAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique('sessions_token_hash_uq').on(t.tokenHash),
+    check('sessions_token_hash_length', sql`length(${t.tokenHash}) = 64`),
+    check('sessions_user_agent_length', sql`${t.userAgent} is null or length(${t.userAgent}) <= 200`),
+    index('sessions_user_idx').on(t.userId),
+    index('sessions_expires_idx').on(t.expiresAt),
+  ],
+)
+
+/**
+ * Who can open a wedding. A wedding that has members always keeps one owner:
+ * a trigger from migration 0006 refuses to commit otherwise (drizzle does not track triggers).
+ */
+export const weddingMembers = pgTable(
+  'wedding_members',
+  {
+    weddingId: uuid()
+      .notNull()
+      .references(() => weddings.id, { onDelete: 'cascade' }),
+    userId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    role: text({ enum: ['owner', 'editor'] }).notNull(),
+    addedByUserId: uuid().references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.weddingId, t.userId] }),
+    check('wedding_members_role_valid', sql`${t.role} in ('owner', 'editor')`),
+    index('wedding_members_user_idx').on(t.userId),
+  ],
+)
+
+/** A link that lets someone join a wedding, or (no wedding) become a new planner. Only the token hash is stored. */
+export const invites = pgTable(
+  'invites',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    tokenHash: text().notNull(),
+    weddingId: uuid().references(() => weddings.id, { onDelete: 'cascade' }),
+    role: text({ enum: ['owner', 'editor'] }),
+    email: text(),
+    note: text(),
+    invitedByUserId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    acceptedAt: timestamp({ withTimezone: true }),
+    acceptedByUserId: uuid().references(() => users.id, { onDelete: 'set null' }),
+    revokedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    unique('invites_token_hash_uq').on(t.tokenHash),
+    check('invites_token_hash_length', sql`length(${t.tokenHash}) = 64`),
+    check('invites_role_valid', sql`${t.role} is null or ${t.role} in ('owner', 'editor')`),
+    check('invites_email_normalized', sql`${t.email} is null or ${t.email} = lower(btrim(${t.email}))`),
+    check('invites_note_length', sql`${t.note} is null or length(${t.note}) <= 200`),
+    check('invites_wedding_and_role_together', sql`(${t.weddingId} is null) = (${t.role} is null)`),
+    index('invites_wedding_idx').on(t.weddingId),
+  ],
+)
+
+export const passwordResets = pgTable(
+  'password_resets',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    tokenHash: text().notNull(),
+    userId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdByUserId: uuid().references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    usedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    unique('password_resets_token_hash_uq').on(t.tokenHash),
+    check('password_resets_token_hash_length', sql`length(${t.tokenHash}) = 64`),
+  ],
+)
+
+/**
+ * A log of things that happened. wedding_id and subject_id have no foreign key,
+ * so events outlive the rows they mention. kind is checked in TypeScript, not here.
+ */
+export const activityEvents = pgTable(
+  'activity_events',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    occurredAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    kind: text().notNull(),
+    userId: uuid().references(() => users.id, { onDelete: 'set null' }),
+    weddingId: uuid(),
+    subjectId: uuid(),
+    detail: jsonb().$type<Record<string, unknown>>().notNull().default({}),
+    /** When set, a second event with the same key is refused, so a retry cannot log twice. */
+    dedupeKey: text(),
+  },
+  (t) => [
+    check('activity_events_detail_object', sql`jsonb_typeof(${t.detail}) = 'object'`),
+    uniqueIndex('activity_events_dedupe_uq')
+      .on(t.dedupeKey)
+      .where(sql`${t.dedupeKey} is not null`),
+    index('activity_events_occurred_idx').on(t.occurredAt),
+    index('activity_events_user_idx').on(t.userId, t.occurredAt),
+    index('activity_events_wedding_idx').on(t.weddingId, t.occurredAt),
   ],
 )
 
@@ -222,6 +372,13 @@ export const venueTemplates = pgTable(
     /** The newest saves that landed (newest first, up to 20), as on layouts: a retried save after a lost reply answers "already saved". */
     recentSaves: jsonb().$type<RecentSave[]>().notNull().default([]),
     editedBy: text({ enum: ['Noa', 'Aiden'] }),
+    editedByUserId: uuid().references(() => users.id, { onDelete: 'set null' }),
+    /** The editor's name as it was when they saved. */
+    editedByName: text(),
+    /** The planner who made it. Null for templates from before accounts. */
+    ownerUserId: uuid().references(() => users.id, { onDelete: 'set null' }),
+    /** In the shared library every planner can copy it. */
+    isLibrary: boolean().notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: deletedAt(),
@@ -233,6 +390,10 @@ export const venueTemplates = pgTable(
     check('venue_templates_imported_by_valid', sql`${t.importedBy} in ('hand', 'pdf vectors', 'ai')`),
     check('venue_templates_version_positive', sql`${t.version} >= 1`),
     check('venue_templates_edited_by_valid', sql`${t.editedBy} is null or ${t.editedBy} in ('Noa', 'Aiden')`),
+    check('venue_templates_edited_by_name_length', sql`${t.editedByName} is null or length(${t.editedByName}) <= 200`),
+    index('venue_templates_owner_idx')
+      .on(t.ownerUserId)
+      .where(sql`${t.deletedAt} is null`),
   ],
 )
 
@@ -294,6 +455,9 @@ export const layouts = pgTable(
      */
     recentSaves: jsonb().$type<RecentSave[]>().notNull().default([]),
     editedBy: text({ enum: ['Noa', 'Aiden'] }),
+    editedByUserId: uuid().references(() => users.id, { onDelete: 'set null' }),
+    /** The editor's name as it was when they saved. */
+    editedByName: text(),
     canvas: jsonb().$type<Canvas>().notNull(),
     thumbSvg: text().notNull().default(''),
     createdAt: createdAt(),
@@ -306,6 +470,7 @@ export const layouts = pgTable(
     check('layouts_kind_valid', sql`${t.kind} in ('reception', 'ceremony')`),
     check('layouts_version_positive', sql`${t.version} >= 1`),
     check('layouts_edited_by_valid', sql`${t.editedBy} is null or ${t.editedBy} in ('Noa', 'Aiden')`),
+    check('layouts_edited_by_name_length', sql`${t.editedByName} is null or length(${t.editedByName}) <= 200`),
     check('layouts_canvas_object', sql`jsonb_typeof(${t.canvas}) = 'object'`),
     check('layouts_recent_saves_array', sql`jsonb_typeof(${t.recentSaves}) = 'array'`),
     index('layouts_wedding_live_idx')

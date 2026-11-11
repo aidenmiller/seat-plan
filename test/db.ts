@@ -32,6 +32,12 @@ export function makeTestDb() {
 }
 
 export const ALL_TABLES = [
+  'activity_events',
+  'password_resets',
+  'invites',
+  'sessions',
+  'wedding_members',
+  'users',
   'login_attempts',
   'share_links',
   'layout_seats',
@@ -49,9 +55,14 @@ export const ALL_TABLES = [
 
 /**
  * Empties every table, then puts back the rows migrations own (the empty
- * Toronto Beach Club template), so tests see what production starts with.
+ * Toronto Beach Club template, in the shared library), so tests see what
+ * production starts with.
  */
 export async function truncateAll(pool: { query: (sql: string) => Promise<unknown> }): Promise<void> {
   await pool.query(`truncate ${ALL_TABLES.join(', ')} restart identity cascade`)
   await pool.query(readFileSync(path.resolve(process.cwd(), 'drizzle/0001_toronto_beach_club_template.sql'), 'utf8'))
+  // The same statement migration 0006 runs (the library flag is part of what migrations leave behind).
+  await pool.query(
+    `update venue_templates set is_library = true where name = 'Toronto Beach Club' and owner_user_id is null and deleted_at is null`,
+  )
 }
