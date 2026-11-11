@@ -5,7 +5,7 @@ import { listWeddings } from '@/server/repo/weddings'
 import { NewWeddingButton } from './_components/NewWeddingButton'
 import { WeddingCard } from './_components/WeddingCard'
 
-export const metadata = { title: 'Weddings · Seat Plan' }
+export const metadata = { title: 'Weddings' }
 
 export default async function HomePage() {
   await requireSiteSession()

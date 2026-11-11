@@ -1,6 +1,7 @@
 {
   "name": "seat-plan",
   "version": "0.1.0",
+  "description": "Something Blueprint. A private wedding guest list and seating planner.",
   "private": true,
   "engines": {
     "node": "22.x"

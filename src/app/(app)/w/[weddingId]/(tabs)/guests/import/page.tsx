@@ -6,7 +6,7 @@ import { listGuests } from '@/server/repo/guests'
 import { uuid } from '@/shared/api'
 import { TabPage } from '../../../_components/TabPage'
 
-export const metadata = { title: 'Import guests · Seat Plan' }
+export const metadata = { title: 'Import guests' }
 
 /** The CSV import. The guest list feeds the partner pickers; the server builds the summary itself. */
 export default async function ImportGuestsPage({ params }: PageProps<'/w/[weddingId]/guests/import'>) {

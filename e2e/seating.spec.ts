@@ -107,7 +107,7 @@ test('a name dragged from the side list onto a table takes a seat (dark blue), a
     await holdAndDrag(page, seat, { x: 195, y: Math.min(830, strip.y + 40) })
   }
   await expect(seatCircle(page, t2, 1)).toHaveAttribute('data-seat-state', 'empty')
-  await expect(seatCircle(page, t2, 1)).toHaveAttribute('fill', '#9ca3af')
+  await expect(seatCircle(page, t2, 1)).toHaveAttribute('fill', '#7b879a')
   await expectSaved(page)
   expect((await serverSeats(page, s.layout.id))[t2][1]).toBeNull()
   const again = await openGuestsTab(page)

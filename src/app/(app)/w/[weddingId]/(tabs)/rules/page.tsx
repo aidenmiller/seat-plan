@@ -8,7 +8,7 @@ import { listRules } from '@/server/repo/rules'
 import { uuid } from '@/shared/api'
 import { TabPage } from '../../_components/TabPage'
 
-export const metadata = { title: 'Rules · Seat Plan' }
+export const metadata = { title: 'Rules' }
 
 /** Couple rules and the wedding's other rules; guests and groups feed the guest picker. */
 export default async function RulesPage({ params }: PageProps<'/w/[weddingId]/rules'>) {

@@ -95,8 +95,8 @@ describe('runRestore', () => {
 
 describe('readBackupFile', () => {
   it('says plainly when a file is not a backup', async () => {
-    expect(await readBackupFile(new Blob(['not json']))).toEqual({ ok: false, message: 'This file is not a Seat Plan backup.' })
-    expect(await readBackupFile(new Blob(['{"format":"other"}']))).toEqual({ ok: false, message: 'This file is not a Seat Plan backup.' })
+    expect(await readBackupFile(new Blob(['not json']))).toEqual({ ok: false, message: 'This file is not a backup from Something Blueprint.' })
+    expect(await readBackupFile(new Blob(['{"format":"other"}']))).toEqual({ ok: false, message: 'This file is not a backup from Something Blueprint.' })
     const broken = await readBackupFile(new Blob([JSON.stringify({ ...file(), guests: [{ id: 'x' }] })]))
     expect(broken.ok).toBe(false)
     expect(!broken.ok && broken.message).toMatch(/^This backup file has a problem at guests\.0\./)

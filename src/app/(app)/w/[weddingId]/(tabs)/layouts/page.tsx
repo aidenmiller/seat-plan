@@ -8,7 +8,7 @@ import { TabPage } from '../../_components/TabPage'
 import { LayoutList } from './LayoutList'
 import { NewLayoutButton } from './NewLayoutButton'
 
-export const metadata = { title: 'Layouts · Seat Plan' }
+export const metadata = { title: 'Layouts' }
 
 export default async function LayoutsPage({ params }: PageProps<'/w/[weddingId]/layouts'>) {
   const { weddingId } = await params

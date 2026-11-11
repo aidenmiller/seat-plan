@@ -5,7 +5,7 @@ import { getTemplate } from '@/server/repo/venues'
 import { uuid } from '@/shared/api'
 import { TemplateEditorScreen } from '@/client/venues/editor/TemplateEditorScreen'
 
-export const metadata = { title: 'Venue · Seat Plan' }
+export const metadata = { title: 'Venue' }
 
 /**
  * The venue template editor and floor plan import (PLAN section 5, "Pages").

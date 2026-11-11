@@ -13,7 +13,12 @@ const WRONG = 'That email or password is wrong. Try again.'
 test('a new visitor sees the sign-in page', async ({ page }) => {
   await page.goto('/')
   await expect(page).toHaveURL(/\/login$/)
-  await expect(page.getByRole('heading', { name: 'Sign in to Seat Plan' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sign in', exact: true })).toBeVisible()
+  await expect(page).toHaveTitle('Sign in · Something Blueprint.')
+  // The logo loads without a session (its file is under /_next/static, which the sign-in gate lets through).
+  const logo = page.getByRole('img', { name: 'Something Blueprint.' })
+  await expect(logo).toBeVisible()
+  await expect.poll(() => logo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
   await expect(page.getByLabel('Email')).toBeVisible()
   await expect(page.getByLabel('Password')).toBeVisible()
   // Accounts exist, so there is no setup link.

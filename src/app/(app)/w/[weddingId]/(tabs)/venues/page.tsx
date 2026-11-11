@@ -6,7 +6,7 @@ import { uuid } from '@/shared/api'
 import { NewVenueButton, VenueList } from '@/client/venues/VenueList'
 import { TabPage } from '../../_components/TabPage'
 
-export const metadata = { title: 'Venues · Seat Plan' }
+export const metadata = { title: 'Venues' }
 
 /** Venue templates are shared by every wedding (PLAN change 5); each wedding's tab lists them all. */
 export default async function VenuesPage({ params }: PageProps<'/w/[weddingId]/venues'>) {

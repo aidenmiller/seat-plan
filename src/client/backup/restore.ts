@@ -23,10 +23,10 @@ export async function readBackupFile(file: Blob): Promise<ReadBackupResult> {
   try {
     raw = JSON.parse(await file.text())
   } catch {
-    return { ok: false, message: 'This file is not a Seat Plan backup.' }
+    return { ok: false, message: 'This file is not a backup from Something Blueprint.' }
   }
   if (typeof raw !== 'object' || raw === null || (raw as { format?: unknown }).format !== 'seat-plan-backup') {
-    return { ok: false, message: 'This file is not a Seat Plan backup.' }
+    return { ok: false, message: 'This file is not a backup from Something Blueprint.' }
   }
   const parsed = backupFileSchema.safeParse(raw)
   if (!parsed.success) {
