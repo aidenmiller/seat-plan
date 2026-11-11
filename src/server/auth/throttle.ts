@@ -93,10 +93,22 @@ async function countAttempt(db: AnyDb, scope: string, ipKey: string, windowMinut
   return { blocked: false, retryAfterSeconds: 0 }
 }
 
-/** Counts this attempt and says whether it may go ahead. Call before comparing. */
-export async function beginAttempt(db: AnyDb, scope: string, ipKey: string): Promise<AttemptVerdict> {
+/**
+ * Counts this attempt and says whether it may go ahead. Call before comparing.
+ *
+ * `scopeWide: false` skips the all-addresses count. Account sign-in uses it:
+ * there, a count across every address would let anyone lock every user (or,
+ * per account, any one user) out just by guessing.
+ */
+export async function beginAttempt(
+  db: AnyDb,
+  scope: string,
+  ipKey: string,
+  { scopeWide = true }: { scopeWide?: boolean } = {},
+): Promise<AttemptVerdict> {
   const perAddress = await countAttempt(db, scope, ipKey, PER_ADDRESS_WINDOW_MINUTES, PER_ADDRESS_LIMIT)
   if (perAddress.blocked) return { allowed: false, retryAfterSeconds: perAddress.retryAfterSeconds }
+  if (!scopeWide) return { allowed: true }
   const perScope = await countAttempt(db, scope, ALL_ADDRESSES, SCOPE_WINDOW_MINUTES, SCOPE_LIMIT)
   if (perScope.blocked) return { allowed: false, retryAfterSeconds: perScope.retryAfterSeconds }
   return { allowed: true }
