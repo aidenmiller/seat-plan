@@ -6,6 +6,7 @@ import { makeNote } from '@/domain/notes'
 import { makeItem } from '@/domain/presets'
 import type { LayoutDetail } from '@/shared/api'
 import { canvasInsets, EditorShell, refusalNotice } from './EditorShell'
+import { WeddingAccessProvider, type WeddingAccessValue } from '../wedding-access'
 import { projectOverlay, TAP_TARGET_PX } from './overlay/geometry'
 import { PHONE_TOOLBAR_BOTTOM_PX } from './panels/CanvasToolbar'
 import { ZOOM_CONTROLS_PX } from './panels/ZoomControls'
@@ -41,9 +42,22 @@ const layout: LayoutDetail = {
   template: null,
 }
 
+function renderShell(detail: LayoutDetail, access: WeddingAccessValue = { role: 'owner', viaAdmin: false }): string {
+  return renderToStaticMarkup(
+    <WeddingAccessProvider access={access}>
+      <EditorShell layout={detail} />
+    </WeddingAccessProvider>,
+  )
+}
+
 describe('EditorShell top bar', () => {
+  it('shows Share to an owner and hides it from an editor', () => {
+    expect(renderShell(layout)).toContain('data-testid="share-button"')
+    expect(renderShell(layout, { role: 'editor', viaAdmin: false })).not.toContain('data-testid="share-button"')
+  })
+
   it('never wraps: the name is cut short and the save status has a fixed slot', () => {
-    const markup = renderToStaticMarkup(<EditorShell layout={layout} />)
+    const markup = renderShell(layout)
     const header = /<header class="([^"]*)"/.exec(markup)![1].split(' ')
     expect(header).toContain('flex')
     expect(header.some((c) => c.includes('wrap'))).toBe(false)
@@ -112,7 +126,7 @@ describe('EditorShell notes', () => {
       items: [{ ...makeNote('sticky', { x: 0, y: 0 }, 'Aiden', 'green', Date.UTC(2026, 10, 10), 'n1'), text: 'Bar opens at 6' }],
     },
   }
-  const html = renderToStaticMarkup(<EditorShell layout={withNotes} />)
+  const html = renderShell(withNotes)
 
   it('draws notes on the plan and puts the notes switches on the canvas', () => {
     expect(html).toMatch(/data-item-id="n1" data-kind="note" data-note-type="sticky" data-note-color="green"/)

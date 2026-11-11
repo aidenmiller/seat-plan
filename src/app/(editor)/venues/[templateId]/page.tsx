@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireSiteSession } from '@/server/auth/require'
+import { requireVenuePage } from '@/server/auth/pages'
 import { getDb } from '@/server/db/client'
 import { getTemplate } from '@/server/repo/venues'
 import { uuid } from '@/shared/api'
@@ -17,7 +17,7 @@ export default async function TemplateEditorPage({ params, searchParams }: PageP
   const { templateId } = await params
   const query = await searchParams
   const from = typeof query.from === 'string' && uuid.safeParse(query.from).success ? query.from.toLowerCase() : null
-  await requireSiteSession(`/venues/${templateId}${from ? `?from=${from}` : ''}`)
+  await requireVenuePage(templateId, `/venues/${templateId}${from ? `?from=${from}` : ''}`)
   if (!uuid.safeParse(templateId).success) notFound()
   const venue = await getTemplate(getDb(), templateId.toLowerCase())
   if (!venue) notFound()

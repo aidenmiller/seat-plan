@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireSiteSession } from '@/server/auth/require'
+import { requireWeddingPage } from '@/server/auth/pages'
 import { getDb } from '@/server/db/client'
 import { listVenues } from '@/server/repo/venues'
 import { uuid } from '@/shared/api'
@@ -11,7 +11,7 @@ export const metadata = { title: 'Venues · Seat Plan' }
 /** Venue templates are shared by every wedding (PLAN change 5); each wedding's tab lists them all. */
 export default async function VenuesPage({ params }: PageProps<'/w/[weddingId]/venues'>) {
   const { weddingId } = await params
-  await requireSiteSession(`/w/${weddingId}/venues`)
+  await requireWeddingPage(weddingId, `/w/${weddingId}/venues`)
   if (!uuid.safeParse(weddingId).success) notFound()
   const id = weddingId.toLowerCase()
   const venues = await listVenues(getDb())

@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
-import { requireSiteSession } from '@/server/auth/require'
+import { requireWeddingPage } from '@/server/auth/pages'
+import { AdminViewBanner, WeddingAccessProvider, weddingAccessValue } from '@/client/wedding-access'
 import { getDb } from '@/server/db/client'
 import { listGroups } from '@/server/repo/groups'
 import { listGuests } from '@/server/repo/guests'
@@ -19,7 +20,7 @@ export const metadata = { title: 'Layout · Seat Plan' }
  */
 export default async function LayoutEditorPage({ params }: PageProps<'/w/[weddingId]/layouts/[layoutId]'>) {
   const { weddingId, layoutId } = await params
-  await requireSiteSession(`/w/${weddingId}/layouts/${layoutId}`)
+  const access = await requireWeddingPage(weddingId, `/w/${weddingId}/layouts/${layoutId}`)
   if (!uuid.safeParse(weddingId).success || !uuid.safeParse(layoutId).success) notFound()
   const db = getDb()
   const id = weddingId.toLowerCase()
@@ -32,20 +33,24 @@ export default async function LayoutEditorPage({ params }: PageProps<'/w/[weddin
   ])
   if (!layout || !wedding || layout.weddingId !== wedding.id || !guests || !groups || !rules) notFound()
   return (
-    <EditorShell
-      key={layout.id}
-      layout={layout}
-      wedding={{
-        unit: wedding.unit,
-        minGapCm: wedding.minGapCm,
-        name: wedding.name,
-        date: wedding.date,
-        partner1Name: wedding.partner1Name,
-        partner2Name: wedding.partner2Name,
-      }}
-      guests={guests}
-      groups={groups}
-      rules={rules}
-    />
+    <WeddingAccessProvider access={weddingAccessValue(access)}>
+      {/* A sibling above the shell in the editor's full-height column, so the shell simply gets that much less room. */}
+      <AdminViewBanner />
+      <EditorShell
+        key={layout.id}
+        layout={layout}
+        wedding={{
+          unit: wedding.unit,
+          minGapCm: wedding.minGapCm,
+          name: wedding.name,
+          date: wedding.date,
+          partner1Name: wedding.partner1Name,
+          partner2Name: wedding.partner2Name,
+        }}
+        guests={guests}
+        groups={groups}
+        rules={rules}
+      />
+    </WeddingAccessProvider>
   )
 }

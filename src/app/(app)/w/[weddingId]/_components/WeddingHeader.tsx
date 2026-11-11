@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { updateWedding } from '@/client/api'
 import { InlineName } from '@/client/ui/InlineName'
+import { useCanManageWedding } from '@/client/wedding-access'
 import { secondaryButton } from '@/client/ui/styles'
 import { formatWeddingDate } from '@/domain/wording'
 import type { WeddingSummary } from '@/shared/api'
@@ -23,6 +24,7 @@ export function newestWedding(fromPage: WeddingSummary, saved: WeddingSummary | 
 /** The wedding's name (rename in place), its date, and the Settings button. */
 export function WeddingHeader({ wedding: fromPage }: { wedding: WeddingSummary }) {
   const router = useRouter()
+  const canManage = useCanManageWedding()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [saved, setSaved] = useState<WeddingSummary | null>(null)
   const wedding = newestWedding(fromPage, saved)
@@ -31,35 +33,46 @@ export function WeddingHeader({ wedding: fromPage }: { wedding: WeddingSummary }
     <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
       <div className="min-w-0 flex-1">
         <h1 className="min-w-0 text-2xl tracking-tight">
-          <InlineName
-            value={wedding.name}
-            label="Wedding name"
-            textClassName="text-2xl font-semibold"
-            testId="wedding-title"
-            onSave={async (name) => {
-              setSaved(await updateWedding(wedding.id, { name }))
-              router.refresh()
-            }}
-          />
+          {canManage ? (
+            <InlineName
+              value={wedding.name}
+              label="Wedding name"
+              textClassName="text-2xl font-semibold"
+              testId="wedding-title"
+              onSave={async (name) => {
+                setSaved(await updateWedding(wedding.id, { name }))
+                router.refresh()
+              }}
+            />
+          ) : (
+            <span className="inline-block py-2 text-2xl font-semibold" data-testid="wedding-title">
+              {wedding.name}
+            </span>
+          )}
         </h1>
         <p className="text-sm text-stone-600">{wedding.date ? formatWeddingDate(wedding.date) : 'No date yet'}</p>
       </div>
-      <button type="button" className={secondaryButton} onClick={() => setSettingsOpen(true)}>
-        <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
-          <circle cx="10" cy="10" r="2.5" />
-          <path
-            d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"
-            strokeLinecap="round"
+      {/* Settings are for owners; an editor has nothing to change there. */}
+      {canManage && (
+        <>
+          <button type="button" className={secondaryButton} onClick={() => setSettingsOpen(true)}>
+            <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <circle cx="10" cy="10" r="2.5" />
+              <path
+                d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"
+                strokeLinecap="round"
+              />
+            </svg>
+            Settings
+          </button>
+          <WeddingSettingsDialog
+            wedding={wedding}
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            onSaved={setSaved}
           />
-        </svg>
-        Settings
-      </button>
-      <WeddingSettingsDialog
-        wedding={wedding}
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onSaved={setSaved}
-      />
+        </>
+      )}
     </div>
   )
 }

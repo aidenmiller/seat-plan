@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { LinksScreen } from '@/client/share/LinksScreen'
-import { requireSiteSession } from '@/server/auth/require'
+import { requireWeddingPage } from '@/server/auth/pages'
 import { getDb } from '@/server/db/client'
 import { listWeddingShareLinks } from '@/server/repo/share-links'
 import { uuid } from '@/shared/api'
@@ -11,7 +11,7 @@ export const metadata = { title: 'Links · Seat Plan' }
 /** The wedding's venue share links that are on (PLAN change 25). */
 export default async function LinksPage({ params }: PageProps<'/w/[weddingId]/links'>) {
   const { weddingId } = await params
-  await requireSiteSession(`/w/${weddingId}/links`)
+  await requireWeddingPage(weddingId, `/w/${weddingId}/links`)
   if (!uuid.safeParse(weddingId).success) notFound()
   const id = weddingId.toLowerCase()
   const links = await listWeddingShareLinks(getDb(), id)

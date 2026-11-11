@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { ImportWizard } from '@/client/guests/import/ImportWizard'
-import { requireSiteSession } from '@/server/auth/require'
+import { requireWeddingPage } from '@/server/auth/pages'
 import { getDb } from '@/server/db/client'
 import { listGuests } from '@/server/repo/guests'
 import { uuid } from '@/shared/api'
@@ -11,7 +11,7 @@ export const metadata = { title: 'Import guests · Seat Plan' }
 /** The CSV import. The guest list feeds the partner pickers; the server builds the summary itself. */
 export default async function ImportGuestsPage({ params }: PageProps<'/w/[weddingId]/guests/import'>) {
   const { weddingId } = await params
-  await requireSiteSession(`/w/${weddingId}/guests/import`)
+  await requireWeddingPage(weddingId, `/w/${weddingId}/guests/import`)
   if (!uuid.safeParse(weddingId).success) notFound()
   const id = weddingId.toLowerCase()
   const guests = await listGuests(getDb(), id)

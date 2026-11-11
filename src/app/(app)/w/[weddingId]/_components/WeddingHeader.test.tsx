@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import { WeddingAccessProvider } from '@/client/wedding-access'
 import type { WeddingSummary } from '@/shared/api'
 import { newestWedding, WeddingHeader } from './WeddingHeader'
 
@@ -56,10 +57,32 @@ describe('newestWedding', () => {
   })
 })
 
+function render(role: 'owner' | 'editor', over: Partial<WeddingSummary> = {}): string {
+  return renderToStaticMarkup(
+    <WeddingAccessProvider access={{ role, viaAdmin: false }}>
+      <WeddingHeader wedding={wedding(over)} />
+    </WeddingAccessProvider>,
+  )
+}
+
 describe('WeddingHeader', () => {
   it('shows the name and the date', () => {
-    const markup = renderToStaticMarkup(<WeddingHeader wedding={wedding({ date: '2027-06-12' })} />)
+    const markup = render('owner', { date: '2027-06-12' })
     expect(markup).toContain('Noa and Aiden')
     expect(markup).toContain('Saturday, June 12, 2027')
+  })
+
+  it('gives an owner Settings and a name to rename', () => {
+    const markup = render('owner')
+    expect(markup).toContain('Settings')
+    expect(markup).toContain('title="Click to rename"')
+  })
+
+  it('shows an editor the name and date only: no Settings, no rename', () => {
+    const markup = render('editor', { date: '2027-06-12' })
+    expect(markup).toContain('Noa and Aiden')
+    expect(markup).toContain('Saturday, June 12, 2027')
+    expect(markup).not.toContain('Settings')
+    expect(markup).not.toContain('title="Click to rename"')
   })
 })
