@@ -23,7 +23,7 @@ function guest(id: string, partnerId: string | null = null, coupleRuleEnabled = 
     partnerId,
     coupleRuleEnabled,
     household: null,
-    side: 'Both',
+    side: 'both',
     rsvp: 'pending',
     meal: null,
     isChild: false,
@@ -196,8 +196,8 @@ describe('restoredName', () => {
 describe('backup schemas', () => {
   const start = {
     format: 'seat-plan-backup',
-    version: 1,
-    wedding: { id: A, name: 'Noa & Aiden', date: null, unit: 'ft', minGapCm: 152.4 },
+    version: 2,
+    wedding: { id: A, name: 'Noa & Aiden', date: null, unit: 'ft', minGapCm: 152.4, partner1Name: 'Noa', partner2Name: 'Aiden' },
     guests: [],
     groups: [],
     groupMembers: [],

@@ -4,7 +4,8 @@
  *
  *  - generateSeatingBlock: rows of chairs either side of an aisle, one chair
  *    row item per side per row, numbered from the front. Each side is its
- *    own block (blockId), labelled with the side ("Noa's side").
+ *    own block (blockId), labelled with the side ("Noa's side"; the
+ *    dialog fills in the wedding's names, see ceremonySideLabels).
  *  - addRowBehind: one more row behind a block's back row, with the next
  *    number.
  *  - setChairCount and setRowSpacing: the aisle end of the row stays put;
@@ -31,8 +32,9 @@ export const CHAIR_PITCH_CM = 50.8
 export const ROW_PITCH_CM = 91.44
 /** 6 ft between the two blocks' inner chairs. */
 export const AISLE_WIDTH_CM = 182.88
-export const DEFAULT_LEFT_LABEL = "Noa's side"
-export const DEFAULT_RIGHT_LABEL = "Aiden's side"
+/** Labels for a block with none given. The dialog offers the partners' names first ("Noa's side"). */
+export const DEFAULT_LEFT_LABEL = 'Left side'
+export const DEFAULT_RIGHT_LABEL = 'Right side'
 export const MAX_BLOCK_ROWS = 60
 export const MAX_CHAIRS_PER_ROW = MAX_SEATS_RECT
 

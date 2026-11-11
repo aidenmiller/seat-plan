@@ -1,12 +1,6 @@
-/** Choices and column names shared by the guest screens. */
+/** Choices and column names shared by the guest screens. Side choices carry the wedding's names (useSideOptions). */
 import type { GuestSortKey } from '@/domain/guest-list'
-import type { GuestRsvp, GuestSide } from '@/shared/api'
-
-export const SIDE_OPTIONS: readonly { value: GuestSide; label: string }[] = [
-  { value: 'Noa', label: 'Noa' },
-  { value: 'Aiden', label: 'Aiden' },
-  { value: 'Both', label: 'Both' },
-]
+import type { GuestRsvp } from '@/shared/api'
 
 export const RSVP_OPTIONS: readonly { value: GuestRsvp; label: string }[] = [
   { value: 'yes', label: 'Yes' },

@@ -26,6 +26,8 @@ const summaryColumns = {
   date: weddings.date,
   unit: weddings.unit,
   minGapCm: weddings.minGapCm,
+  partner1Name: weddings.partner1Name,
+  partner2Name: weddings.partner2Name,
   updatedAt: weddings.updatedAt,
   guestCount: liveGuestCount,
   layoutCount: liveLayoutCount,
@@ -37,6 +39,8 @@ type SummaryRow = {
   date: string | null
   unit: 'ft' | 'm'
   minGapCm: number
+  partner1Name: string | null
+  partner2Name: string | null
   updatedAt: Date
   guestCount: number
   layoutCount: number
@@ -49,6 +53,8 @@ function toSummary(row: SummaryRow): WeddingSummary {
     date: row.date,
     unit: row.unit,
     minGapCm: row.minGapCm,
+    partner1Name: row.partner1Name,
+    partner2Name: row.partner2Name,
     guestCount: Number(row.guestCount),
     layoutCount: Number(row.layoutCount),
     updatedAt: row.updatedAt.toISOString(),
@@ -94,19 +100,21 @@ export async function createWedding(
   const id = body.id ?? randomUUID()
   await db
     .insert(weddings)
-    .values({ id, name: body.name, date: body.date ?? null, unit: body.unit ?? 'ft' })
+    .values({ id, name: body.name, date: body.date ?? null, unit: body.unit ?? 'ft', partner1Name: body.partner1Name ?? null, partner2Name: body.partner2Name ?? null })
     .onConflictDoNothing({ target: weddings.id })
   const wedding = await getWedding(db, id)
   return wedding ? { status: 'created', wedding } : { status: 'id-taken' }
 }
 
-/** Name, date, unit and minimum gap. Null when the wedding is missing or deleted. */
+/** Name, date, unit, minimum gap and the partners' names. Null when the wedding is missing or deleted. */
 export async function updateWedding(db: Db, id: string, body: UpdateWeddingBody): Promise<WeddingSummary | null> {
   const set: Partial<typeof weddings.$inferInsert> = {}
   if (body.name !== undefined) set.name = body.name
   if (body.date !== undefined) set.date = body.date
   if (body.unit !== undefined) set.unit = body.unit
   if (body.minGapCm !== undefined) set.minGapCm = body.minGapCm
+  if (body.partner1Name !== undefined) set.partner1Name = body.partner1Name
+  if (body.partner2Name !== undefined) set.partner2Name = body.partner2Name
   const updated = await db
     .update(weddings)
     .set(set)

@@ -166,7 +166,7 @@ describe('renderPrintPlan', () => {
   })
 
   it('prints ceremony rows: names or initials beside each named chair, the reserved label, and the side label', () => {
-    const rows = generateSeatingBlock({ rows: 3, chairsPerRow: 6, origin: { x: 0, y: 0 } }, idMaker(3))
+    const rows = generateSeatingBlock({ rows: 3, chairsPerRow: 6, leftLabel: "Noa's side", rightLabel: "Aiden's side", origin: { x: 0, y: 0 } }, idMaker(3))
     const names = new Map<string, LabelName>([
       [guestId(1), { firstName: 'Zoë', lastName: 'Shapiro' }],
       [guestId(2), { firstName: 'Łukasz', lastName: 'Nowak' }],

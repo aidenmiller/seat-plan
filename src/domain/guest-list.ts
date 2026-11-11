@@ -10,7 +10,8 @@ import type { Item } from './canvas-schema'
 import { itemLabel } from './item-labels'
 import { findLikelyDuplicates, foldName, type PersonName } from './names'
 
-export type ListSide = 'Noa' | 'Aiden' | 'Both'
+/** Partner 1, partner 2 or both (domain/partners). */
+export type ListSide = 'partner1' | 'partner2' | 'both'
 export type ListRsvp = 'yes' | 'no' | 'pending'
 
 /** The fields of a guest the list reads (a subset of the API's Guest). */
@@ -150,7 +151,7 @@ export function compareText(a: string, b: string): number {
 }
 
 const RSVP_ORDER: Record<ListRsvp, number> = { yes: 0, pending: 1, no: 2 }
-const SIDE_ORDER: Record<ListSide, number> = { Noa: 0, Aiden: 1, Both: 2 }
+const SIDE_ORDER: Record<ListSide, number> = { partner1: 0, partner2: 1, both: 2 }
 
 /** The value a column sorts by: text, or a number. Empty text sorts last either way. */
 function sortValue(guest: ListGuest, key: GuestSortKey, ctx: SortContext): string | number {

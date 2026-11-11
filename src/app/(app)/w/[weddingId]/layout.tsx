@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { PartnerNamesProvider } from '@/client/guests/partners-context'
 import { requireSiteSession } from '@/server/auth/require'
 import { getDb } from '@/server/db/client'
 import { getWedding } from '@/server/repo/weddings'
@@ -32,7 +33,10 @@ export default async function WeddingLayout({ children, params }: LayoutProps<'/
           <WeddingTabs weddingId={wedding.id} />
         </div>
       </div>
-      {children}
+      {/* The partners' names label guest sides in every tab. */}
+      <PartnerNamesProvider partner1={wedding.partner1Name} partner2={wedding.partner2Name}>
+        {children}
+      </PartnerNamesProvider>
     </div>
   )
 }

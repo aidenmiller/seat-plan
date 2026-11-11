@@ -79,6 +79,9 @@ export const weddings = pgTable(
     date: date({ mode: 'string' }),
     unit: text({ enum: ['ft', 'm'] }).notNull().default('ft'),
     minGapCm: real().notNull().default(152.4),
+    /** The couple's names. Guest sides are 'partner1' / 'partner2', so renaming relabels every guest. Null shows "Partner 1". */
+    partner1Name: text(),
+    partner2Name: text(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: deletedAt(),
@@ -87,6 +90,8 @@ export const weddings = pgTable(
     check('weddings_name_not_blank', sql`length(btrim(${t.name})) > 0`),
     check('weddings_unit_valid', sql`${t.unit} in ('ft', 'm')`),
     check('weddings_min_gap_positive', sql`${t.minGapCm} > 0`),
+    check('weddings_partner1_name_valid', sql`${t.partner1Name} is null or length(btrim(${t.partner1Name})) between 1 and 60`),
+    check('weddings_partner2_name_valid', sql`${t.partner2Name} is null or length(btrim(${t.partner2Name})) between 1 and 60`),
   ],
 )
 
@@ -229,7 +234,8 @@ export const guests = pgTable(
     partnerId: uuid(),
     coupleRuleEnabled: boolean().notNull().default(true),
     household: text(),
-    side: text({ enum: ['Noa', 'Aiden', 'Both'] }).notNull().default('Both'),
+    /** Which partner's guest, by position (weddings.partner1_name / partner2_name), or both. */
+    side: text({ enum: ['partner1', 'partner2', 'both'] }).notNull().default('both'),
     rsvp: text({ enum: ['yes', 'no', 'pending'] }).notNull().default('pending'),
     meal: text(),
     isChild: boolean().notNull().default(false),
@@ -249,7 +255,8 @@ export const guests = pgTable(
     }),
     check('guests_first_name_not_blank', sql`length(btrim(${t.firstName})) > 0`),
     check('guests_last_name_not_blank', sql`length(btrim(${t.lastName})) > 0`),
-    check('guests_side_valid', sql`${t.side} in ('Noa', 'Aiden', 'Both')`),
+    // The old names stay allowed for one release (migration 0007), so the deployment still serving during a build keeps working.
+    check('guests_side_valid', sql`${t.side} in ('partner1', 'partner2', 'both', 'Noa', 'Aiden', 'Both')`),
     check('guests_rsvp_valid', sql`${t.rsvp} in ('yes', 'no', 'pending')`),
     check('guests_partner_not_self', sql`${t.partnerId} is null or ${t.partnerId} <> ${t.id}`),
     uniqueIndex('guests_partner_live_uq')

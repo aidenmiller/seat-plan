@@ -38,7 +38,7 @@ function guest(first: string, last: string, over: Partial<ListGuest> = {}): List
     nickname: null,
     partnerId: null,
     household: null,
-    side: 'Both',
+    side: 'both',
     rsvp: 'pending',
     meal: null,
     isChild: false,
@@ -48,10 +48,10 @@ function guest(first: string, last: string, over: Partial<ListGuest> = {}): List
   }
 }
 
-const zoe = guest('Zoë', 'Kowalczyk', { nickname: 'Zozo', side: 'Noa', rsvp: 'yes', meal: 'Fish', groupIds: ['fam'] })
-const lukasz = guest('Łukasz', 'Kowalczyk', { side: 'Noa', rsvp: 'yes', meal: 'Beef', groupIds: ['fam'] })
-const mia = guest('Mia', 'Kowalczyk', { side: 'Noa', rsvp: 'yes', meal: 'kids meal', isChild: true, groupIds: ['fam', 'kids'] })
-const anna = guest('Anna', 'van der Berg', { side: 'Aiden', rsvp: 'no' })
+const zoe = guest('Zoë', 'Kowalczyk', { nickname: 'Zozo', side: 'partner1', rsvp: 'yes', meal: 'Fish', groupIds: ['fam'] })
+const lukasz = guest('Łukasz', 'Kowalczyk', { side: 'partner1', rsvp: 'yes', meal: 'Beef', groupIds: ['fam'] })
+const mia = guest('Mia', 'Kowalczyk', { side: 'partner1', rsvp: 'yes', meal: 'kids meal', isChild: true, groupIds: ['fam', 'kids'] })
+const anna = guest('Anna', 'van der Berg', { side: 'partner2', rsvp: 'no' })
 const jose = guest('José', 'García', { meal: 'Vegetarian', notes: 'Arrives late' })
 const all = [zoe, lukasz, mia, anna, jose]
 
@@ -86,7 +86,7 @@ describe('filters', () => {
   })
 
   it('filters by side, RSVP and child', () => {
-    expect(filterGuests(all, '', { ...NO_FILTERS, side: 'Aiden' })).toEqual([anna])
+    expect(filterGuests(all, '', { ...NO_FILTERS, side: 'partner2' })).toEqual([anna])
     expect(filterGuests(all, '', { ...NO_FILTERS, rsvp: 'pending' })).toEqual([jose])
     expect(filterGuests(all, '', { ...NO_FILTERS, child: true })).toEqual([mia])
     expect(filterGuests(all, '', { ...NO_FILTERS, child: false })).toHaveLength(4)
@@ -140,7 +140,7 @@ describe('sorting', () => {
   it('sorts RSVP yes, pending, no, and child first on asc', () => {
     expect(sortGuests(all, { key: 'rsvp', direction: 'asc' }, ctx).map((g) => g.rsvp)).toEqual(['yes', 'yes', 'yes', 'pending', 'no'])
     expect(sortGuests(all, { key: 'isChild', direction: 'asc' }, ctx)[0]).toBe(mia)
-    expect(sortGuests(all, { key: 'side', direction: 'asc' }, ctx).map((g) => g.side)).toEqual(['Noa', 'Noa', 'Noa', 'Aiden', 'Both'])
+    expect(sortGuests(all, { key: 'side', direction: 'asc' }, ctx).map((g) => g.side)).toEqual(['partner1', 'partner1', 'partner1', 'partner2', 'both'])
   })
 
   it('sorts by every column without throwing, ties by name', () => {
@@ -256,7 +256,7 @@ describe('the editor side list', () => {
     expect(list.seated.map((s) => s.guest.firstName)).toEqual(['Zoë'])
     expect(list.counts.guests).toBe(4)
     expect(sideList(guests, labels, { ...base, group: 'kids' }).unassigned).toEqual([mia])
-    expect(sideList(guests, labels, { ...base, side: 'Aiden', showDeclined: true }).unassigned).toEqual([anna])
+    expect(sideList(guests, labels, { ...base, side: 'partner2', showDeclined: true }).unassigned).toEqual([anna])
     expect(sideList(guests, labels, { ...base, rsvp: 'pending' }).unassigned).toEqual([jose])
   })
 

@@ -11,8 +11,10 @@ import { useId } from 'react'
 import { primaryButton, secondaryButton } from '@/client/ui/styles'
 import { applyMapping, COLUMN_TARGETS, mappingProblems, type ColumnMapping, type ColumnTarget, type ImportRow } from '@/domain/csv/columns'
 import { isLegacyEncoding, LEGACY_ENCODINGS, type LegacyEncoding } from '@/domain/csv/decode'
+import { sideLabel } from '@/domain/partners'
 import { plural } from '@/domain/wording'
 import { RSVP_LABEL } from '../options'
+import { usePartnerNames } from '../partners-context'
 import { sampleValues, type ReadCsv } from './read-file'
 
 const PREVIEW_ROWS = 10
@@ -39,8 +41,9 @@ export function ColumnStep({
   onNext(): void
 }) {
   const encodingId = useId()
+  const partners = usePartnerNames()
   const problems = mappingProblems(mapping)
-  const preview = applyMapping(file.rows.slice(0, PREVIEW_ROWS), mapping, file.rowNumbers.slice(0, PREVIEW_ROWS))
+  const preview = applyMapping(file.rows.slice(0, PREVIEW_ROWS), mapping, partners, file.rowNumbers.slice(0, PREVIEW_ROWS))
   const previewRows = new Map(preview.rows.map((r) => [r.rowNumber, r]))
   const previewErrors = new Map(preview.errors.map((e) => [e.rowNumber, e.message]))
 
@@ -178,6 +181,7 @@ function ColumnRow({
 }
 
 function PreviewCells({ row }: { row: ImportRow }) {
+  const partners = usePartnerNames()
   const notes = [row.notes, ...row.extraNotes].filter(Boolean).join('\n')
   const cell = 'px-2 py-2'
   return (
@@ -187,7 +191,7 @@ function PreviewCells({ row }: { row: ImportRow }) {
       <td className={cell}>{row.nickname ?? ''}</td>
       <td className={cell}>{row.partnerName ?? ''}</td>
       <td className={cell}>{row.household ?? ''}</td>
-      <td className={cell}>{row.side ?? ''}</td>
+      <td className={cell}>{row.side ? sideLabel(partners, row.side) : ''}</td>
       <td className={cell}>{row.groups.join('; ')}</td>
       <td className={cell}>{row.rsvp ? RSVP_LABEL[row.rsvp] : ''}</td>
       <td className={cell}>{row.meal ?? ''}</td>

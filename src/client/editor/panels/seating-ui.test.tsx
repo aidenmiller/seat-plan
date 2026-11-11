@@ -33,7 +33,7 @@ function guest(first: string, last: string, over: Partial<Guest> = {}): Guest {
     partnerId: null,
     coupleRuleEnabled: true,
     household: null,
-    side: 'Both',
+    side: 'both',
     rsvp: 'yes',
     meal: null,
     isChild: false,

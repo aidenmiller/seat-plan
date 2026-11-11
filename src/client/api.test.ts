@@ -15,6 +15,7 @@ import {
   listVenues,
   removeGroupMember,
   updateGuest,
+  updateWedding,
 } from './api'
 
 function reply(status: number, body: unknown) {
@@ -124,5 +125,21 @@ describe('guest and group helpers', () => {
       ['DELETE', '/api/groups/gr1/members/g1', undefined],
     ])
     expect(guestsExportUrl(W)).toBe('/api/weddings/w%201/guests/export')
+  })
+})
+
+describe('partner names and sides', () => {
+  it('send the partner names with a wedding, and a guest side as its code', async () => {
+    const fetchMock = vi.fn(async () => reply(200, {}))
+    vi.stubGlobal('fetch', fetchMock)
+    await createWedding({ name: 'Sam & Alex', partner1Name: 'Sam', partner2Name: 'Alex' })
+    await updateWedding('w1', { partner2Name: null })
+    await updateGuest('g1', { side: 'partner2' })
+    const bodies = (fetchMock.mock.calls as unknown as [string, RequestInit][]).map(([path, init]) => [path, JSON.parse(String(init.body))])
+    expect(bodies).toEqual([
+      ['/api/weddings', { name: 'Sam & Alex', partner1Name: 'Sam', partner2Name: 'Alex' }],
+      ['/api/weddings/w1', { partner2Name: null }],
+      ['/api/guests/g1', { side: 'partner2' }],
+    ])
   })
 })

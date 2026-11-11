@@ -2,14 +2,18 @@
 
 /**
  * The seating block tool (spec section 8): rows, chairs per row, aisle
- * width and the two side labels. Add places two blocks of chair rows either
- * side of the aisle in the middle of the view (domain/ceremony.ts).
+ * width and the two side labels, which start as the partners' names ("Sam's
+ * side" on the left, "Alex's side" on the right). Add places two blocks of
+ * chair rows either side of the aisle in the middle of the view
+ * (domain/ceremony.ts).
  */
 import { useState, type FormEvent } from 'react'
+import { usePartnerNames } from '@/client/guests/partners-context'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { TextField } from '@/client/ui/fields'
 import { primaryButton, secondaryButton } from '@/client/ui/styles'
 import { AISLE_WIDTH_CM, CHAIR_PITCH_CM, DEFAULT_LEFT_LABEL, DEFAULT_RIGHT_LABEL, MAX_BLOCK_ROWS, MAX_CHAIRS_PER_ROW, ROW_PITCH_CM, type SeatingBlockOptions } from '@/domain/ceremony'
+import { ceremonySideLabels } from '@/domain/partners'
 import { formatLength, parseLength, type LengthUnit } from '@/domain/units'
 
 export type SeatingBlockChoice = Omit<SeatingBlockOptions, 'origin' | 'facing'>
@@ -46,7 +50,11 @@ export function SeatingBlockDialog({ open, unit, onCancel, onAdd }: { open: bool
 }
 
 function BlockForm({ unit, onCancel, onAdd }: { unit: LengthUnit; onCancel(): void; onAdd(choice: SeatingBlockChoice): void }) {
-  const [form, setForm] = useState({ rows: '8', chairs: '6', aisle: formatLength(AISLE_WIDTH_CM, unit), left: DEFAULT_LEFT_LABEL, right: DEFAULT_RIGHT_LABEL })
+  const partners = usePartnerNames()
+  const [form, setForm] = useState(() => {
+    const sides = ceremonySideLabels(partners)
+    return { rows: '8', chairs: '6', aisle: formatLength(AISLE_WIDTH_CM, unit), left: sides.left, right: sides.right }
+  })
   const [errors, setErrors] = useState<Errors>({})
   const set = (key: keyof typeof form) => (value: string) => setForm((f) => ({ ...f, [key]: value }))
 

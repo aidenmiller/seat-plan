@@ -48,12 +48,12 @@ test('the Guests tab counts, searches as you type, shows declined on request, fi
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Side list', testInfo))
   const guests = await apiAddGuests(page.request, wedding.id, [
-    { firstName: 'Ava', lastName: 'Cohen', side: 'Noa', rsvp: 'yes' },
-    { firstName: 'Ben', lastName: 'Levi', side: 'Aiden', rsvp: 'yes', nickname: 'Benji' },
-    { firstName: 'Cara', lastName: 'Diaz', side: 'Both', rsvp: 'pending' },
-    { firstName: 'Dov', lastName: 'Katz', side: 'Aiden', rsvp: 'no' },
-    { firstName: 'Zoë', lastName: 'Adler', side: 'Noa', rsvp: 'yes' },
-    { firstName: 'Eli', lastName: 'Brooks', side: 'Aiden', rsvp: 'yes' },
+    { firstName: 'Ava', lastName: 'Cohen', side: 'partner1', rsvp: 'yes' },
+    { firstName: 'Ben', lastName: 'Levi', side: 'partner2', rsvp: 'yes', nickname: 'Benji' },
+    { firstName: 'Cara', lastName: 'Diaz', side: 'both', rsvp: 'pending' },
+    { firstName: 'Dov', lastName: 'Katz', side: 'partner2', rsvp: 'no' },
+    { firstName: 'Zoë', lastName: 'Adler', side: 'partner1', rsvp: 'yes' },
+    { firstName: 'Eli', lastName: 'Brooks', side: 'partner2', rsvp: 'yes' },
   ])
   const [ava, ben, , , zoe, eli] = guests
   await apiCreateGroup(page.request, wedding.id, 'Noa Family', [ava.id, zoe.id])

@@ -17,7 +17,21 @@ import { DEFAULT_LEFT_LABEL, generateSeatingBlock } from '@/domain/ceremony'
 import { makeGridPng } from '@/domain/floorplan/__fixtures__/plans'
 import type { FixedItem } from '@/domain/venue-schema'
 import { SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
-import { groupMembers, groups, guests, layouts, layoutSeats, ruleGuests, rules, shareLinks, venueImages, venueTemplates, weddings } from '@/server/db/schema'
+import {
+  groupMembers,
+  groups,
+  guests,
+  layouts,
+  layoutSeats,
+  ruleGuests,
+  rules,
+  shareLinks,
+  users,
+  venueImages,
+  venueTemplates,
+  weddingMembers,
+  weddings,
+} from '@/server/db/schema'
 import { addTemplateImage } from '@/server/repo/venues'
 import { canvasOf, chairRow, makeGuest, makeLayout, makeTemplate, makeWedding, roundTable } from '@/server/repo/test-fixtures'
 import type { RestoredLayout, RestoredTemplate, RestoreStarted } from '@/shared/api'
@@ -73,7 +87,10 @@ const routes = async () => ({
 async function makeSource() {
   const database = await db()
   const weddingId = await makeWedding(database, 'Noa & Aiden')
-  await database.update(weddings).set({ unit: 'm', minGapCm: 120, date: '2027-06-12' }).where(eq(weddings.id, weddingId))
+  await database
+    .update(weddings)
+    .set({ unit: 'm', minGapCm: 120, date: '2027-06-12', partner1Name: 'Noa', partner2Name: 'Aiden' })
+    .where(eq(weddings.id, weddingId))
   const ann = await makeGuest(database, weddingId, 'Ann', 'Lee')
   const ben = await makeGuest(database, weddingId, 'Ben', 'Lee')
   const cat = await makeGuest(database, weddingId, 'Cat', 'Ray')
@@ -81,7 +98,7 @@ async function makeSource() {
   const eve = await makeGuest(database, weddingId, 'Eve', 'Gone')
   await database.update(guests).set({ partnerId: ben, coupleRuleEnabled: false }).where(eq(guests.id, ann))
   await database.update(guests).set({ partnerId: ann, coupleRuleEnabled: false }).where(eq(guests.id, ben))
-  await database.update(guests).set({ isChild: true, meal: 'Kids pasta', notes: 'Needs a high chair', side: 'Aiden', rsvp: 'yes' }).where(eq(guests.id, dan))
+  await database.update(guests).set({ isChild: true, meal: 'Kids pasta', notes: 'Needs a high chair', side: 'partner2', rsvp: 'yes' }).where(eq(guests.id, dan))
 
   const [friends] = await database.insert(groups).values({ weddingId, name: 'Friends', color: '#2563EB' }).returning({ id: groups.id })
   const [family] = await database.insert(groups).values({ weddingId, name: 'Family', color: '#C2410C' }).returning({ id: groups.id })
@@ -340,9 +357,71 @@ describe('backup and restore', () => {
     expect(after.ids.filter((id) => old.has(id))).toEqual([])
 
     const [wedding] = await (await db()).select().from(weddings).where(eq(weddings.id, restored.started.weddingId))
-    expect(wedding).toMatchObject({ name: 'Noa & Aiden (restored)', unit: 'm', minGapCm: 120, date: '2027-06-12' })
+    expect(wedding).toMatchObject({ name: 'Noa & Aiden (restored)', unit: 'm', minGapCm: 120, date: '2027-06-12', partner1Name: 'Noa', partner2Name: 'Aiden' })
     const links = await (await db()).select().from(shareLinks).where(eq(shareLinks.weddingId, restored.started.weddingId))
     expect(links).toEqual([])
+  })
+
+  it("writes version 2: the partners' names, sides as codes, and the members", async () => {
+    const source = await makeSource()
+    const database = await db()
+    const [owner] = await database
+      .insert(users)
+      .values({ email: `owner-${randomUUID().slice(0, 8)}@example.com`, displayName: 'Noa', passwordHash: 'x' })
+      .returning({ id: users.id, email: users.email })
+    await database.insert(weddingMembers).values({ weddingId: source.weddingId, userId: owner!.id, role: 'owner' })
+    const file = await downloadBackup(source.weddingId)
+    expect(file.version).toBe(2)
+    expect(file.wedding).toMatchObject({ partner1Name: 'Noa', partner2Name: 'Aiden' })
+    expect(Object.fromEntries(file.guests.map((g) => [g.firstName, g.side]))).toEqual({ Ann: 'both', Ben: 'both', Cat: 'both', Dan: 'partner2' })
+    expect(file.members).toEqual([{ userId: owner!.id, email: owner!.email, displayName: 'Noa', role: 'owner' }])
+
+    // A restore never trusts the members: nobody is added, even when the step names someone.
+    const restored = await restore(file)
+    const r = await routes()
+    const forged = await call(r.start, 'POST', {}, {
+      body: { ...file, jobId: randomUUID(), layouts: undefined, templates: undefined, images: undefined, exportedAt: undefined },
+    })
+    expect(forged.status).toBe(201)
+    for (const weddingId of [restored.started.weddingId, forged.body.weddingId as string]) {
+      expect(await database.select().from(weddingMembers).where(eq(weddingMembers.weddingId, weddingId))).toEqual([])
+    }
+  })
+
+  it('restores a version 1 file as Noa and Aiden, with sides by place', async () => {
+    const source = await makeSource()
+    const v2 = await downloadBackup(source.weddingId)
+    // The same file as version 1 wrote it: no partner names, sides as names, no members.
+    const words = { partner1: 'Noa', partner2: 'Aiden', both: 'Both' } as const
+    const wedding = { id: v2.wedding.id, name: v2.wedding.name, date: v2.wedding.date, unit: v2.wedding.unit, minGapCm: v2.wedding.minGapCm }
+    const oldGuests = v2.guests.map((g) => ({ ...g, side: words[g.side] }))
+    const v1: Record<string, unknown> = { ...v2, version: 1, wedding, guests: oldGuests }
+    delete v1.members
+
+    // A browser still running the page from before version 2 sends its first step as version 1.
+    const r = await routes()
+    const jobId = randomUUID()
+    const start = await call(r.start, 'POST', {}, {
+      body: { format: v2.format, version: 1, jobId, wedding, guests: oldGuests, groups: v2.groups, groupMembers: v2.groupMembers, rules: v2.rules, ruleGuests: v2.ruleGuests },
+    })
+    expect(start.status).toBe(201)
+    const database = await db()
+    const [old] = await database.select().from(weddings).where(eq(weddings.id, start.body.weddingId))
+    expect(old).toMatchObject({ partner1Name: 'Noa', partner2Name: 'Aiden' })
+    expect((await snapshot(start.body.weddingId)).guests).toEqual((await snapshot(source.weddingId)).guests)
+
+    // A version 1 file read by today's page restores the same way.
+    const restored = await restore(backupFileSchema.parse(v1))
+    const [wed] = await database.select().from(weddings).where(eq(weddings.id, restored.started.weddingId))
+    expect(wed).toMatchObject({ partner1Name: 'Noa', partner2Name: 'Aiden' })
+    const after = await snapshot(restored.started.weddingId)
+    expect(after.guests.map((g) => [g.name, g.side])).toEqual([
+      ['Ann Lee', 'both'],
+      ['Ben Lee', 'both'],
+      ['Cat Ray', 'both'],
+      ['Dan Ray', 'partner2'],
+    ])
+    expect(after.seats).toEqual((await snapshot(source.weddingId)).seats)
   })
 
   it('exports the editor name and restores another person’s name into edited_by_name only', async () => {

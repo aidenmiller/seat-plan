@@ -11,6 +11,7 @@ import {
 } from '@/domain/backup/schema'
 import { partnerPairs, remapCanvas, remapWeddingRows, restoredName, sameWalls } from '@/domain/backup/remap'
 import { nameKey } from '@/domain/names'
+import { legacySide } from '@/domain/partners'
 import { fixedItemsSchema, type FixedItem } from '@/domain/venue-schema'
 import type { RestoredLayout, RestoredTemplate, RestoreStarted } from '@/shared/api'
 import { writeCanvas } from './canvas-write'
@@ -22,9 +23,11 @@ import {
   layouts,
   ruleGuests,
   rules,
+  users,
   venueImages,
   venueTemplateRevisions,
   venueTemplates,
+  weddingMembers,
   weddings,
 } from './db/schema'
 import type { Db, Tx } from './locks'
@@ -38,7 +41,8 @@ import { addTemplateImage, type AddImageResult } from './repo/venues'
  * rules and rule guests, its live layouts with their canvases, and the venue
  * templates those layouts use, each with its current floor plan image as
  * base64 (images come last, one at a time, so a large file never sits in
- * memory whole). Share links are left out.
+ * memory whole). Share links are left out. The wedding's members are listed
+ * for reading only: a restore never trusts them or adds anyone.
  *
  * Restore makes a new wedding in steps, each its own request under Vercel's
  * 4.5 MB limit: the wedding's rows, then each template and its image, then
@@ -79,13 +83,21 @@ export function backupFileName(weddingName: string, now = new Date()): string {
 /** Everything but the image bytes. Null when the wedding is missing or deleted. */
 async function backupHead(db: Db, weddingId: string): Promise<{ head: BackupHead; images: ImageRef[] } | null> {
   const [wedding] = await db
-    .select({ id: weddings.id, name: weddings.name, date: weddings.date, unit: weddings.unit, minGapCm: weddings.minGapCm })
+    .select({
+      id: weddings.id,
+      name: weddings.name,
+      date: weddings.date,
+      unit: weddings.unit,
+      minGapCm: weddings.minGapCm,
+      partner1Name: weddings.partner1Name,
+      partner2Name: weddings.partner2Name,
+    })
     .from(weddings)
     .where(and(eq(weddings.id, weddingId), isNull(weddings.deletedAt)))
   if (!wedding) return null
 
   const liveGuest = and(eq(guests.weddingId, weddingId), isNull(guests.deletedAt))
-  const [guestRows, groupRows, memberRows, ruleRows, ruleGuestRows, layoutRows] = await Promise.all([
+  const [guestRows, groupRows, memberRows, ruleRows, ruleGuestRows, layoutRows, weddingMemberRows] = await Promise.all([
     db
       .select({
         id: guests.id,
@@ -145,6 +157,13 @@ async function backupHead(db: Db, weddingId: string): Promise<{ head: BackupHead
       .from(layouts)
       .where(and(eq(layouts.weddingId, weddingId), isNull(layouts.deletedAt)))
       .orderBy(asc(layouts.createdAt), asc(layouts.id)),
+    // Who can open the wedding, for reading only (a restore never adds members). None for a wedding from before accounts.
+    db
+      .select({ userId: weddingMembers.userId, email: users.email, displayName: users.displayName, role: weddingMembers.role })
+      .from(weddingMembers)
+      .innerJoin(users, eq(users.id, weddingMembers.userId))
+      .where(eq(weddingMembers.weddingId, weddingId))
+      .orderBy(asc(weddingMembers.createdAt), asc(weddingMembers.userId)),
   ])
 
   // The templates the layouts use, deleted or not: a restore can bring a deleted one back as a copy.
@@ -175,7 +194,9 @@ async function backupHead(db: Db, weddingId: string): Promise<{ head: BackupHead
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     wedding,
-    guests: guestRows,
+    // Old words an older deployment wrote during a build go out as codes (migration 0007).
+    guests: guestRows.map((g) => ({ ...g, side: legacySide(g.side) ?? 'both' })),
+    members: weddingMemberRows,
     groups: groupRows,
     groupMembers: memberRows,
     rules: ruleRows,
@@ -238,10 +259,11 @@ export async function backupStream(db: Db, weddingId: string): Promise<{ fileNam
 export type StartRestoreResult = ({ status: 'created' } & RestoreStarted & { existed: boolean }) | { status: 'id-taken' }
 
 /**
- * Step 1: a new wedding named "<name> (restored)" with the backup's guests,
- * groups, members, rules and rule guests under new ids, all in one
- * transaction. Sent again with the same job id, it gives back the wedding the
- * first try made.
+ * Step 1: a new wedding named "<name> (restored)", with the backup's partner
+ * names, and its guests, groups, members, rules and rule guests under new
+ * ids, all in one transaction. Sent again with the same job id, it gives back
+ * the wedding the first try made. The file's list of wedding members is not
+ * part of this step: who can open the restored wedding is never read from a file.
  */
 export async function startRestore(db: Db, body: RestoreStart, jobId: string): Promise<StartRestoreResult> {
   const weddingId = restoredWeddingId(jobId)
@@ -251,7 +273,15 @@ export async function startRestore(db: Db, body: RestoreStart, jobId: string): P
   return db.transaction(async (tx): Promise<StartRestoreResult> => {
     const inserted = await tx
       .insert(weddings)
-      .values({ id: weddingId, name: weddingName, date: body.wedding.date, unit: body.wedding.unit, minGapCm: body.wedding.minGapCm })
+      .values({
+        id: weddingId,
+        name: weddingName,
+        date: body.wedding.date,
+        unit: body.wedding.unit,
+        minGapCm: body.wedding.minGapCm,
+        partner1Name: body.wedding.partner1Name,
+        partner2Name: body.wedding.partner2Name,
+      })
       .onConflictDoNothing({ target: weddings.id })
       .returning({ id: weddings.id, name: weddings.name })
     if (inserted.length === 0) {

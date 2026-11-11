@@ -41,6 +41,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { emptyCanvas, type Author, type Canvas, type Item } from '../src/domain/canvas-schema'
 import { nameKey } from '../src/domain/names'
+import { legacySide } from '../src/domain/partners'
 import { createPool, requireDatabaseUrl } from '../src/server/db/connection'
 import * as schema from '../src/server/db/schema'
 import type { LayoutKind } from '../src/shared/api'
@@ -113,7 +114,13 @@ async function main() {
       weddingId = existing.id
       console.log(`"${DEMO_WEDDING_NAME}" already exists.`)
     } else {
-      const made = await server.createWedding(db, { name: DEMO_WEDDING_NAME, date: '2027-06-19', unit: 'ft' })
+      const made = await server.createWedding(db, {
+        name: DEMO_WEDDING_NAME,
+        date: '2027-06-19',
+        unit: 'ft',
+        partner1Name: 'Noa',
+        partner2Name: 'Aiden',
+      })
       if (made.status !== 'created') throw new Error(`Could not make "${DEMO_WEDDING_NAME}": ${made.status}`)
       weddingId = made.wedding.id
       console.log(`Made "${DEMO_WEDDING_NAME}".`)
@@ -229,7 +236,8 @@ async function seedGuestList(db: Db, server: Server, weddingId: string, plan: De
         lastName: g.lastName,
         nickname: g.nickname,
         household: g.household,
-        side: g.side,
+        // The demo plan names sides the old way: Noa is partner 1, Aiden partner 2.
+        side: legacySide(g.side) ?? 'both',
         rsvp: g.rsvp,
         meal: g.meal,
         isChild: g.isChild,

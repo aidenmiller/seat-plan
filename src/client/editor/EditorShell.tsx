@@ -39,6 +39,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from 'react'
 import { createRule, errorMessage, updateLayout } from '@/client/api'
 import { AddToGroupDialog } from '@/client/guests/AddToGroupDialog'
+import { PartnerNamesProvider } from '@/client/guests/partners-context'
 import { randomId } from '@/client/sync/random-id'
 import { getAuthor, useAuthor } from '@/client/author'
 import type { LayoutSaver, SaveStatus } from '@/client/sync/types'
@@ -111,8 +112,18 @@ function createBridge(wedding: EditorWedding, venue: readonly FixedItem[]) {
   }
 }
 
-/** What the editor reads from the wedding: the grid and lengths unit, the narrowest gap between tables, and its name and date for exports. */
-export type EditorWedding = { unit: LengthUnit; minGapCm: number; name?: string; date?: string | null }
+/**
+ * What the editor reads from the wedding: the grid and lengths unit, the narrowest gap between tables, its name and date for exports,
+ * and the partners' names for guest sides and the seating block's side labels (none: "Partner 1", "Left side").
+ */
+export type EditorWedding = {
+  unit: LengthUnit
+  minGapCm: number
+  name?: string
+  date?: string | null
+  partner1Name?: string | null
+  partner2Name?: string | null
+}
 
 const DEFAULT_WEDDING: EditorWedding = { unit: 'ft', minGapCm: DEFAULT_MIN_GAP_CM }
 /** The bottom sheet's strip on phones: its 44 px handle and the 44 px tabs. */
@@ -582,6 +593,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
     <EditorStateProvider state={editor}>
       <AnalysisProvider value={analysis}>
       <EditorUiProvider value={editorUi}>
+      <PartnerNamesProvider partner1={wedding.partner1Name ?? null} partner2={wedding.partner2Name ?? null}>
         <EditorGuestsProvider value={guestList}>
           <div ref={rootRef} className="flex min-h-0 flex-1 flex-col" data-editor-root="" data-mode={deviceKnown ? mode : undefined} data-phone={phone ? 'true' : undefined}>
             <header className="flex items-center gap-1 border-b border-stone-200 bg-white px-2 py-1 sm:gap-2 sm:px-3">
@@ -738,6 +750,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
             <GuestGhost />
           </div>
         </EditorGuestsProvider>
+      </PartnerNamesProvider>
       </EditorUiProvider>
       </AnalysisProvider>
     </EditorStateProvider>

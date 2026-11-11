@@ -3,7 +3,7 @@ import './globals.css'
 
 export const metadata: Metadata = {
   title: 'Seat Plan',
-  description: 'Guest list and seating for Noa and Aiden',
+  description: 'Wedding guest lists and seating plans',
   robots: { index: false, follow: false, nocache: true },
 }
 

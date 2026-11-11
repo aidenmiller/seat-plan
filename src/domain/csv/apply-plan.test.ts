@@ -9,7 +9,7 @@ const guest = (id: string, firstName: string, lastName: string, extra: Partial<E
   nickname: null,
   partnerId: null,
   household: null,
-  side: 'Both',
+  side: 'both',
   rsvp: 'pending',
   meal: null,
   isChild: false,

@@ -1,11 +1,11 @@
 ﻿first_name,last_name,partner,household,side,groups,rsvp,meal,child,notes,Table wish
-Zoë,Kowalczyk,Łukasz Kowalczyk,Kowalczyk,Noa,"Noa Family; Noa Cousins",yes,Fish,no,Allergic to nuts,Near the dance floor
-Łukasz,Kowalczyk,Zoë Kowalczyk,Kowalczyk,Noa,Noa Family,yes,Beef,no,,
-Mia,Kowalczyk,,Kowalczyk,Noa,Noa Family,yes,Kids meal,yes,Needs a booster seat,
-Daniel,O'Connor,Priya Raman,O'Connor and Raman,Aiden,Aiden HS Friends,yes,Chicken,no,,Away from the speakers
-Priya,Raman,Daniel O'Connor,O'Connor and Raman,Aiden,"Aiden HS Friends; Book Club",pending,Vegetarian,no,,
+Zoë,Kowalczyk,Łukasz Kowalczyk,Kowalczyk,Partner 1,"Noa Family; Noa Cousins",yes,Fish,no,Allergic to nuts,Near the dance floor
+Łukasz,Kowalczyk,Zoë Kowalczyk,Kowalczyk,Partner 1,Noa Family,yes,Beef,no,,
+Mia,Kowalczyk,,Kowalczyk,Partner 1,Noa Family,yes,Kids meal,yes,Needs a booster seat,
+Daniel,O'Connor,Priya Raman,O'Connor and Raman,Partner 2,Aiden HS Friends,yes,Chicken,no,,Away from the speakers
+Priya,Raman,Daniel O'Connor,O'Connor and Raman,Partner 2,"Aiden HS Friends; Book Club",pending,Vegetarian,no,,
 José,García,,,Both,Work Friends,yes,Vegetarian,no,Arrives after the ceremony,
-Anna,van der Berg,,,Aiden,Aiden Family,no,,no,Sends her regrets,
-Renée,Dubois,,,Noa,Noa College,pending,,no,,Near Zoë
-Sam,Lee,,Lee,Aiden,"Aiden Family; Aiden Cousins",yes,Fish,no,,
-Theo,Lee,,Lee,Aiden,Aiden Family,yes,Kids meal,yes,,
+Anna,van der Berg,,,Partner 2,Aiden Family,no,,no,Sends her regrets,
+Renée,Dubois,,,Partner 1,Noa College,pending,,no,,Near Zoë
+Sam,Lee,,Lee,Partner 2,"Aiden Family; Aiden Cousins",yes,Fish,no,,
+Theo,Lee,,Lee,Partner 2,Aiden Family,yes,Kids meal,yes,,

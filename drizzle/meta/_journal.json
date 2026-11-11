@@ -50,6 +50,13 @@
       "when": 1794424793541,
       "tag": "0006_accounts_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794432586673,
+      "tag": "0007_partner_names",
+      "breakpoints": true
     }
   ]
 }

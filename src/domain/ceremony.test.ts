@@ -31,7 +31,8 @@ describe('generateSeatingBlock', () => {
   it('makes one row per side per row, numbered from the front, with the defaults', () => {
     expect(rows).toHaveLength(6)
     expect(rows.map((r) => r.rowNumber)).toEqual([1, 1, 2, 2, 3, 3])
-    expect(rows.map((r) => r.blockLabel)).toEqual(["Noa's side", "Aiden's side", "Noa's side", "Aiden's side", "Noa's side", "Aiden's side"])
+    // The dialog fills in the partners' names; the module's own defaults name no one.
+    expect(rows.map((r) => r.blockLabel)).toEqual(['Left side', 'Right side', 'Left side', 'Right side', 'Left side', 'Right side'])
     for (const r of rows) {
       expect(r.chairCount).toBe(4)
       expect(r.spacing).toBe(CHAIR_PITCH_CM)
@@ -62,7 +63,7 @@ describe('generateSeatingBlock', () => {
       ids(),
     )
     expect(l.blockLabel).toBe('Bride')
-    expect(r.blockLabel).toBe("Aiden's side")
+    expect(r.blockLabel).toBe('Right side')
     expect(l.rotation).toBe(90)
     // Turned 90°: the row runs down the plan, so left is above the origin.
     expect(l.x).toBeCloseTo(10)

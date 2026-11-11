@@ -17,6 +17,7 @@ import { SAMPLE_CSV_FILE_NAME, SAMPLE_CSV_URL } from '@/domain/csv/sample'
 import { plural } from '@/domain/wording'
 import type { Guest, ImportCommitResult, ImportPreview } from '@/shared/api'
 import { seatLines } from '../DeleteGuestDialog'
+import { usePartnerNames } from '../partners-context'
 import { ColumnStep } from './ColumnStep'
 import { keepPicks, NO_PICKS, picksBody, type ImportPicks } from './picks'
 import { readCsvFile, rereadCsv, type ReadCsv } from './read-file'
@@ -32,6 +33,7 @@ const STEP_TITLES = ['Pick a file', 'Match columns', 'Check and import', 'Done']
 
 export function ImportWizard({ weddingId, guests }: { weddingId: string; guests: Guest[] }) {
   const [step, setStep] = useState<Step>({ kind: 'pick' })
+  const partners = usePartnerNames()
   /** The review step's choices, and the rows they were made against. */
   const [picks, setPicks] = useState<{ picks: ImportPicks; rows: readonly ImportRow[] }>({ picks: NO_PICKS, rows: [] })
   const index = { pick: 0, columns: 1, review: 2, done: 3 }[step.kind]
@@ -72,7 +74,7 @@ export function ImportWizard({ weddingId, guests }: { weddingId: string; guests:
           onEncoding={(legacy) => readAgain(step.file, step.mapping, legacy)}
           onBack={() => setStep({ kind: 'pick' })}
           onNext={() => {
-            const mapped = applyMapping(step.file.rows, step.mapping, step.file.rowNumbers)
+            const mapped = applyMapping(step.file.rows, step.mapping, partners, step.file.rowNumbers)
             setPicks((p) => ({ picks: keepPicks(p.picks, p.rows, mapped.rows), rows: mapped.rows }))
             setStep({ kind: 'review', file: step.file, mapping: step.mapping, mapped })
           }}

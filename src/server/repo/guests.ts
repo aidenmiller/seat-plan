@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { and, asc, eq, inArray, isNull, notInArray, or, sql } from 'drizzle-orm'
 import type { z } from 'zod'
 import { nameKey } from '@/domain/names'
+import { legacySide } from '@/domain/partners'
 import type {
   Guest,
   GuestDeleteSummary,
@@ -40,7 +41,8 @@ function toGuest(row: GuestRow, groupIds: readonly string[]): Guest {
     partnerId: row.partnerId,
     coupleRuleEnabled: row.coupleRuleEnabled,
     household: row.household,
-    side: row.side,
+    // An older deployment may still write 'Noa' / 'Aiden' / 'Both' while a new one builds (migration 0007).
+    side: legacySide(row.side) ?? 'both',
     rsvp: row.rsvp,
     meal: row.meal,
     isChild: row.isChild,
@@ -151,7 +153,7 @@ export function newGuestValues(weddingId: string, id: string, body: Omit<CreateG
     nameKey: nameKey(body.firstName, body.lastName),
     nickname: body.nickname ?? null,
     household: body.household ?? null,
-    side: body.side ?? 'Both',
+    side: body.side ?? 'both',
     rsvp: body.rsvp ?? 'pending',
     meal: body.meal ?? null,
     isChild: body.isChild ?? false,

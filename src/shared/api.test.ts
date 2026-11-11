@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createLayoutBody, createWeddingBody, duplicateLayoutBody, updateLayoutBody, updateWeddingBody } from './api'
+import { createGuestBody, createLayoutBody, createWeddingBody, duplicateLayoutBody, updateGuestBody, updateLayoutBody, updateWeddingBody } from './api'
 
 describe('names in request bodies', () => {
   it('drop NUL, mend lone surrogates, then trim', () => {
@@ -13,5 +13,32 @@ describe('names in request bodies', () => {
 
   it('a name of only NULs and spaces is empty, so it is refused', () => {
     expect(createWeddingBody.safeParse({ name: ' \u0000\u0000 ' }).success).toBe(false)
+  })
+})
+
+describe('partner names', () => {
+  it('are optional, trimmed to one line, and blank becomes null', () => {
+    expect(createWeddingBody.parse({ name: 'W' })).not.toHaveProperty('partner1Name')
+    const made = createWeddingBody.parse({ name: 'W', partner1Name: '  Sam \n Rivera ', partner2Name: '   ' })
+    expect(made).toMatchObject({ partner1Name: 'Sam Rivera', partner2Name: null })
+    expect(updateWeddingBody.parse({ partner2Name: null })).toEqual({ partner2Name: null })
+    expect(updateWeddingBody.parse({ partner1Name: '' })).toEqual({ partner1Name: null })
+  })
+
+  it('take at most 60 characters', () => {
+    expect(updateWeddingBody.safeParse({ partner1Name: 'x'.repeat(60) }).success).toBe(true)
+    expect(updateWeddingBody.safeParse({ partner1Name: 'x'.repeat(61) }).success).toBe(false)
+    expect(createWeddingBody.safeParse({ name: 'W', partner2Name: 5 }).success).toBe(false)
+  })
+})
+
+describe('guest sides', () => {
+  it("are the codes partner1, partner2 and both, never a partner's name", () => {
+    for (const side of ['partner1', 'partner2', 'both']) {
+      expect(createGuestBody.safeParse({ firstName: 'A', lastName: 'B', side }).success).toBe(true)
+    }
+    for (const side of ['Noa', 'Aiden', 'Both', 'Sam']) {
+      expect(updateGuestBody.safeParse({ side }).success).toBe(false)
+    }
   })
 })

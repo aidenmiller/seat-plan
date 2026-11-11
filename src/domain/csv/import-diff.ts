@@ -22,7 +22,8 @@
  * so importing the same file twice gives zero new and zero changed.
  */
 import { DUPLICATE_REASON_TEXT, findLikelyDuplicates, nameKey, type DuplicateReason } from '../names'
-import { cleanNotes, cleanOneLine, type GuestRsvp, type GuestSide, type ImportRow } from './columns'
+import type { GuestSide } from '../partners'
+import { cleanNotes, cleanOneLine, type GuestRsvp, type ImportRow } from './columns'
 import {
   isPartnerProblem,
   matchPartners,
@@ -101,7 +102,7 @@ export const CHANGE_FIELD_LABELS: Record<ChangeField, string> = {
   groups: 'Groups',
 }
 
-/** Before and after as display text ("" for none). */
+/** Before and after as display text ("" for none). A side is its code ('partner1'); the screen shows the wedding's names. */
 export type FieldChange = { field: ChangeField; before: string; after: string }
 
 export type MatchedBy = 'id' | 'name' | 'pick'
@@ -374,7 +375,7 @@ export function planImport(
           lastName: row.lastName,
           nickname: row.nickname ?? null,
           household: row.household ?? null,
-          side: row.side ?? 'Both',
+          side: row.side ?? 'both',
           rsvp: row.rsvp ?? 'pending',
           meal: row.meal ?? null,
           isChild: row.isChild ?? false,
