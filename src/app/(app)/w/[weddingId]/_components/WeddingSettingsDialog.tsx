@@ -6,7 +6,8 @@ import { backupUrl, errorMessage, updateWedding } from '@/client/api'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { ChoiceGroup, TextField, UNIT_CHOICES } from '@/client/ui/fields'
 import { PartnerNameFields } from '@/client/ui/PartnerNameFields'
-import { errorClass, hintClass, labelClass, primaryButton, secondaryButton } from '@/client/ui/styles'
+import { useCanManageWedding } from '@/client/wedding-access'
+import { errorClass,hintClass, labelClass, primaryButton, secondaryButton } from '@/client/ui/styles'
 import { convertLengthText, formatLength, parseLength, type LengthUnit } from '@/domain/units'
 import type { UpdateWeddingBody, WeddingSummary } from '@/shared/api'
 
@@ -30,10 +31,28 @@ export function WeddingSettingsDialog({
   /** The wedding as the server stored it, before router.refresh() brings new props. */
   onSaved?: (wedding: WeddingSummary) => void
 }) {
+  const canManage = useCanManageWedding()
   return (
     <Dialog open={open} onClose={onClose} title="Wedding settings">
-      {open && <SettingsForm wedding={wedding} onClose={onClose} onSaved={onSaved} />}
+      {open && canManage && <SettingsForm wedding={wedding} onClose={onClose} onSaved={onSaved} />}
+      {open && !canManage && <OwnersOnly onClose={onClose} />}
     </Dialog>
+  )
+}
+
+/** Everything here (the details, the unit and gap, the backup) is for owners; the header does not even offer it to an editor. */
+function OwnersOnly({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-stone-700" data-testid="settings-owners-only">
+        Only owners can change the wedding settings or download a backup.
+      </p>
+      <DialogActions>
+        <button type="button" className={secondaryButton} onClick={onClose}>
+          Close
+        </button>
+      </DialogActions>
+    </div>
   )
 }
 

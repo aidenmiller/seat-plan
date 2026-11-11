@@ -8,6 +8,7 @@ import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { TextField } from '@/client/ui/fields'
 import { RelativeTime } from '@/client/ui/RelativeTime'
 import { dangerButton, errorClass, primaryButton, secondaryButton } from '@/client/ui/styles'
+import { useCanManageWedding } from '@/client/wedding-access'
 import { SHARE_PASSWORD_MIN, type ShareLink, type UpdateShareLinkBody } from '@/shared/api'
 import { CopyLinkButton, LinkBox } from './CopyLink'
 
@@ -19,29 +20,53 @@ import { CopyLinkButton, LinkBox } from './CopyLink'
  */
 export function LinksScreen({ weddingId, initial }: { weddingId: string; initial: ShareLink[] }) {
   const [links, setLinks] = useState(initial)
+  const canManage = useCanManageWedding()
+  /** Editors see the links but cannot make or change them. */
+  const ownersOnly = !canManage && (
+    <p className="mb-4 text-sm text-stone-600" data-testid="links-owners-only">
+      Only owners can make or change share links.
+    </p>
+  )
   if (links.length === 0) {
     return (
-      <p className="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center text-stone-600">
-        No share links yet. Open a layout and press Share to make one.
-      </p>
+      <>
+        {ownersOnly}
+        <p className="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center text-stone-600">
+          {canManage ? 'No share links yet. Open a layout and press Share to make one.' : 'No share links yet.'}
+        </p>
+      </>
     )
   }
   return (
-    <ul className="space-y-4" data-testid="share-links">
-      {links.map((link) => (
-        <li key={link.id}>
-          <LinkCard
-            weddingId={weddingId}
-            link={link}
-            onChange={(next) => setLinks((list) => (next.enabled ? list.map((l) => (l.id === next.id ? next : l)) : list.filter((l) => l.id !== next.id)))}
-          />
-        </li>
-      ))}
-    </ul>
+    <>
+      {ownersOnly}
+      <ul className="space-y-4" data-testid="share-links">
+        {links.map((link) => (
+          <li key={link.id}>
+            <LinkCard
+              weddingId={weddingId}
+              link={link}
+              canManage={canManage}
+              onChange={(next) => setLinks((list) => (next.enabled ? list.map((l) => (l.id === next.id ? next : l)) : list.filter((l) => l.id !== next.id)))}
+            />
+          </li>
+        ))}
+      </ul>
+    </>
   )
 }
 
-function LinkCard({ weddingId, link, onChange }: { weddingId: string; link: ShareLink; onChange: (link: ShareLink) => void }) {
+function LinkCard({
+  weddingId,
+  link,
+  canManage,
+  onChange,
+}: {
+  weddingId: string
+  link: ShareLink
+  canManage: boolean
+  onChange: (link: ShareLink) => void
+}) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dialog, setDialog] = useState<'password' | 'off' | null>(null)
@@ -89,22 +114,24 @@ function LinkCard({ weddingId, link, onChange }: { weddingId: string; link: Shar
         <CopyLinkButton path={link.path} />
       </div>
       <div className="mt-3 max-w-sm">
-        <Switch label="Show guest names" hint="Off shows table names only" checked={link.showNames} disabled={busy} onChange={(v) => void change({ showNames: v })} />
-        <Switch label="Show notes" checked={link.showNotes} disabled={busy} onChange={(v) => void change({ showNotes: v })} />
+        <Switch label="Show guest names" hint="Off shows table names only" checked={link.showNames} disabled={busy || !canManage} onChange={(v) => void change({ showNames: v })} />
+        <Switch label="Show notes" checked={link.showNotes} disabled={busy || !canManage} onChange={(v) => void change({ showNotes: v })} />
       </div>
       {error && (
         <p role="alert" className={`${errorClass} mt-2`}>
           {error}
         </p>
       )}
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" className={secondaryButton} onClick={() => setDialog('password')} disabled={busy}>
-          Change password
-        </button>
-        <button type="button" className={secondaryButton} onClick={() => setDialog('off')} disabled={busy}>
-          Turn off
-        </button>
-      </div>
+      {canManage && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" className={secondaryButton} onClick={() => setDialog('password')} disabled={busy}>
+            Change password
+          </button>
+          <button type="button" className={secondaryButton} onClick={() => setDialog('off')} disabled={busy}>
+            Turn off
+          </button>
+        </div>
+      )}
 
       <Dialog open={dialog === 'password'} onClose={() => setDialog(null)} title="Change link password">
         {dialog === 'password' && (

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { emptyCanvas } from '@/domain/canvas-schema'
 import { makeItem } from '@/domain/presets'
 import type { LayoutDetail } from '@/shared/api'
+import { WeddingAccessProvider } from '../../wedding-access'
 import { EditorShell } from '../EditorShell'
 
 vi.mock('next/navigation', () => ({
@@ -39,7 +40,11 @@ const layout: LayoutDetail = {
 
 describe('EditorShell layout', () => {
   // The server render: the desktop layout, in View mode until the device is known.
-  const html = renderToStaticMarkup(<EditorShell layout={layout} wedding={{ unit: 'm', minGapCm: 152.4 }} />)
+  const html = renderToStaticMarkup(
+    <WeddingAccessProvider access={{ role: 'owner', viaAdmin: false }}>
+      <EditorShell layout={layout} wedding={{ unit: 'm', minGapCm: 152.4 }} />
+    </WeddingAccessProvider>,
+  )
 
   it('draws the canvas with its tables inside a viewport that turns off browser gestures', () => {
     expect(html).toContain('data-testid="canvas"')

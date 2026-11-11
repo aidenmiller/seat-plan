@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireSiteSession } from '@/server/auth/require'
+import { requireWeddingPage } from '@/server/auth/pages'
 import { getDb } from '@/server/db/client'
 import { listLayouts } from '@/server/repo/layouts'
 import { listVenues } from '@/server/repo/venues'
@@ -12,7 +12,7 @@ export const metadata = { title: 'Layouts · Seat Plan' }
 
 export default async function LayoutsPage({ params }: PageProps<'/w/[weddingId]/layouts'>) {
   const { weddingId } = await params
-  await requireSiteSession(`/w/${weddingId}/layouts`)
+  await requireWeddingPage(weddingId, `/w/${weddingId}/layouts`)
   if (!uuid.safeParse(weddingId).success) notFound()
   const id = weddingId.toLowerCase()
   const db = getDb()

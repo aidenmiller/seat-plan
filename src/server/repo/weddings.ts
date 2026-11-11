@@ -2,7 +2,7 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import type { CreateWeddingBody, UpdateWeddingBody, WeddingDeleteSummary, WeddingSummary } from '@/shared/api'
-import { weddings } from '../db/schema'
+import { weddingMembers, weddings } from '../db/schema'
 import type { Db } from '../locks'
 
 /**
@@ -66,6 +66,17 @@ export async function listWeddings(db: Db): Promise<WeddingSummary[]> {
   const rows = await db
     .select(summaryColumns)
     .from(weddings)
+    .where(isNull(weddings.deletedAt))
+    .orderBy(asc(weddings.createdAt), asc(weddings.id))
+  return rows.map(toSummary)
+}
+
+/** Live weddings the user is a member of, in the same order and shape as listWeddings. */
+export async function listWeddingsForUser(db: Db, userId: string): Promise<WeddingSummary[]> {
+  const rows = await db
+    .select(summaryColumns)
+    .from(weddings)
+    .innerJoin(weddingMembers, and(eq(weddingMembers.weddingId, weddings.id), eq(weddingMembers.userId, userId)))
     .where(isNull(weddings.deletedAt))
     .orderBy(asc(weddings.createdAt), asc(weddings.id))
   return rows.map(toSummary)

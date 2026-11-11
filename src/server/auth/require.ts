@@ -1,23 +1,9 @@
 import 'server-only'
 import type { NextRequest } from 'next/server'
-import type { SessionUser } from './access'
 import { withUser, type Guarded } from './guards'
-import { requireUser } from './pages'
 
 export { authCookieOptions } from './cookie-options'
 export { unauthorized } from './guards'
-
-/**
- * Stand-ins from the shared-password days, kept so every page and route
- * changes over in one step: each now needs a signed-in user (any user) and
- * nothing more. The next phase replaces them with the per-wedding checks in
- * guards.ts and pages.ts, and deletes them.
- */
-
-/** For pages: the signed-in user, or a redirect to /login that comes back to `nextPath`. */
-export async function requireSiteSession(nextPath = '/'): Promise<SessionUser> {
-  return requireUser(nextPath)
-}
 
 /**
  * Wraps a route handler so it answers only a signed-in user (withUser: 401

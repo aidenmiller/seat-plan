@@ -59,6 +59,7 @@ import type { LengthUnit } from '@/domain/units'
 import { copyLayoutName } from '@/domain/wording'
 import type { Group, Guest, LayoutDetail, StoredRule } from '@/shared/api'
 import { VenuePickerDialog } from '@/client/venues/VenuePicker'
+import { useCanManageWedding } from '@/client/wedding-access'
 import { ConflictDialog } from './ConflictDialog'
 import { createDocStore, type DocStore } from './doc-store'
 import type { ContextMenuRequest, RefusalReason, SeatRequest } from './input/controller'
@@ -196,6 +197,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   const router = useRouter()
   const pathname = usePathname()
   const author = useAuthor()
+  const canManage = useCanManageWedding()
   // The page keys this component by layout id, so these live as long as this layout is open.
   const [initial] = useState(layout)
   const backHref = `/w/${initial.weddingId}/layouts`
@@ -624,7 +626,8 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
               <SaveStatusSlot status={status} />
               {/* Phones reach Export from the canvas menu (a long press on the plan) and the Layouts tab: the top bar has no room. */}
               {!phone && <ExportButton compact={false} load={exportSource} />}
-              <ShareButton layoutId={initial.id} compact={phone} />
+              {/* Making a link is for owners; editors still see and open the existing ones in the Links tab. */}
+              {canManage && <ShareButton layoutId={initial.id} compact={phone} />}
               <ModeSwitch compact={phone} />
               <AuthorSwitch compact />
             </header>

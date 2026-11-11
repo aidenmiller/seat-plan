@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { RulesScreen } from '@/client/rules/RulesScreen'
-import { requireSiteSession } from '@/server/auth/require'
+import { requireWeddingPage } from '@/server/auth/pages'
 import { getDb } from '@/server/db/client'
 import { listGroups } from '@/server/repo/groups'
 import { listGuests } from '@/server/repo/guests'
@@ -13,7 +13,7 @@ export const metadata = { title: 'Rules · Seat Plan' }
 /** Couple rules and the wedding's other rules; guests and groups feed the guest picker. */
 export default async function RulesPage({ params }: PageProps<'/w/[weddingId]/rules'>) {
   const { weddingId } = await params
-  await requireSiteSession(`/w/${weddingId}/rules`)
+  await requireWeddingPage(weddingId, `/w/${weddingId}/rules`)
   if (!uuid.safeParse(weddingId).success) notFound()
   const id = weddingId.toLowerCase()
   const db = getDb()
