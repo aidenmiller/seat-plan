@@ -1,18 +1,26 @@
 /**
  * The wedding and venue route handlers against the test database, signed in
- * with a made-up password, plus the 404 answer every [id] route gives to an
+ * as a test user, plus the 404 answer every [id] route gives to an
  * id that is not a uuid. (route-auth.test.ts covers the 401 without a cookie.)
  */
 import { randomUUID } from 'node:crypto'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../test/db'
-import { SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
+import { makeUser, sessionCookie } from '../../../../test/auth'
 
-beforeAll(() => {
+async function db() {
+  return (await import('@/server/db/client')).getDb()
+}
+
+/** A signed-in user's cookie: for now any signed-in user may use these routes. */
+let signedIn = ''
+
+beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'weddings-route-test-secret-32-chars-plus')
-  vi.stubEnv('SITE_PASSWORD', 'weddings-route-made-up-password')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
+  const database = await db()
+  signedIn = await sessionCookie(database, (await makeUser(database)).id)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -21,7 +29,7 @@ afterAll(() => {
 type Handler = (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => Promise<Response>
 
 function request(method: string, path: string, body?: unknown): NextRequest {
-  const headers: Record<string, string> = { cookie: `${SITE_COOKIE}=${createSiteToken()}` }
+  const headers: Record<string, string> = { cookie: signedIn }
   let payload: string | undefined
   if (body !== undefined) {
     headers['content-type'] = 'application/json'
@@ -83,8 +91,9 @@ describe('/api/weddings', () => {
       rules: 0,
     })
 
-    // Deleting needs the typed word, exactly.
-    expect((await call(one, 'DELETE', `/api/weddings/${id}`, id)).status).toBe(400)
+    // Deleting needs the typed word, exactly, sent as JSON.
+    expect((await call(one, 'DELETE', `/api/weddings/${id}`, id)).status).toBe(415)
+    expect((await call(one, 'DELETE', `/api/weddings/${id}`, id, 'not json')).status).toBe(400)
     expect((await call(one, 'DELETE', `/api/weddings/${id}`, id, {})).status).toBe(422)
     expect((await call(one, 'DELETE', `/api/weddings/${id}`, id, { confirm: 'Delete' })).status).toBe(422)
     expect((await call(one, 'GET', `/api/weddings/${id}`, id)).status).toBe(200)

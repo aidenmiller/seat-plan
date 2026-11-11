@@ -23,6 +23,7 @@
  */
 import type { Canvas } from '@/domain/canvas-schema'
 import type { LayoutVersionInfo, SaveLayoutBody, SaveLayoutConflict, SaveLayoutOk } from '@/shared/api'
+import { appFetch } from '../http'
 import { backoffDelay } from './backoff'
 import { defaultDraftStore } from './outbox'
 import { randomId } from './random-id'
@@ -72,7 +73,7 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
   const draftWaitMs = options.draftWaitMs ?? 2000
   const drafts = options.drafts ?? (defaultDraftStore() as unknown as DraftStore<T>)
   const random = options.random ?? Math.random
-  const fetchFn: typeof fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
+  const fetchFn: typeof fetch = options.fetch ?? appFetch
   const isOnline =
     options.isOnline ??
     (() => typeof navigator === 'undefined' || (navigator as { onLine?: boolean }).onLine !== false)

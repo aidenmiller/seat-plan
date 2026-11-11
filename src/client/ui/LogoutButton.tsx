@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { appFetch } from '../http'
 
 export function LogoutButton() {
   const router = useRouter()
@@ -10,7 +11,7 @@ export function LogoutButton() {
   async function logout() {
     setBusy(true)
     try {
-      await fetch('/api/auth/logout', { method: 'POST' })
+      await appFetch('/api/auth/logout', { method: 'POST', cache: 'no-store' })
     } finally {
       router.replace('/login')
       router.refresh()

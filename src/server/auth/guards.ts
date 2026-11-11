@@ -1,5 +1,5 @@
 import 'server-only'
-import type { NextRequest } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { json, notFound } from '../api-route'
 import { runAfterResponse } from '../after-response'
 import { getDb } from '../db/client'
@@ -15,7 +15,6 @@ import {
   type WeddingAccess,
 } from './access'
 import { isUnsafeMethod, userHeaderMatches } from './origin'
-import { unauthorized } from './require'
 import type { TemplateResolver, WeddingResolver } from './resolvers'
 import { refreshSessionCookie, sessionFromRequest } from './session'
 import { requireTemplate, type TemplateAccess, type Viewer } from './venue-access'
@@ -59,7 +58,11 @@ export type Guarded<Ctx> = ((req: NextRequest, ctx: Ctx) => Promise<Response>) &
 
 type MaybePromise<T> = T | Promise<T>
 
-function tag<Ctx>(policy: AuthPolicy, handler: (req: NextRequest, ctx: Ctx) => Promise<Response>): Guarded<Ctx> {
+/**
+ * Marks a handler with its policy. Exported for the one wrapper that lives
+ * elsewhere, withShareAuth (share.ts); routes use the wrappers below.
+ */
+export function tagPolicy<Ctx>(policy: AuthPolicy, handler: (req: NextRequest, ctx: Ctx) => Promise<Response>): Guarded<Ctx> {
   Object.defineProperty(handler, AUTH_POLICY, { value: Object.freeze({ ...policy }), enumerable: false, writable: false })
   return handler as Guarded<Ctx>
 }
@@ -68,6 +71,11 @@ function tag<Ctx>(policy: AuthPolicy, handler: (req: NextRequest, ctx: Ctx) => P
 export function policyOf(handler: unknown): AuthPolicy | null {
   if (typeof handler !== 'function') return null
   return (handler as { [AUTH_POLICY]?: AuthPolicy })[AUTH_POLICY] ?? null
+}
+
+/** No session, or one that has ended: the reply every signed-in route gives. */
+export function unauthorized(): NextResponse {
+  return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: { 'Cache-Control': 'no-store' } })
 }
 
 export function stalePage(): Response {
@@ -102,12 +110,12 @@ async function afterSignedIn(req: NextRequest, session: SessionLookup, res: Resp
 /** A route anyone may call. The reason is required, so each exception is written down. */
 export function publicRoute<Ctx>(reason: string, handler: (req: NextRequest, ctx: Ctx) => MaybePromise<Response>): Guarded<Ctx> {
   if (!reason.trim()) throw new Error('publicRoute needs a reason')
-  return tag({ kind: 'public', reason }, async (req, ctx) => handler(req, ctx))
+  return tagPolicy({ kind: 'public', reason }, async (req, ctx) => handler(req, ctx))
 }
 
 /** Any signed-in user. */
 export function withUser<Ctx>(handler: (req: NextRequest, ctx: Ctx, user: SessionUser) => MaybePromise<Response>): Guarded<Ctx> {
-  return tag({ kind: 'user' }, async (req, ctx) => {
+  return tagPolicy({ kind: 'user' }, async (req, ctx) => {
     const signed = await signedIn(req)
     if (!signed.ok) return signed.response
     const res = await handler(req, ctx, signed.session.user)
@@ -120,7 +128,7 @@ export function withUser<Ctx>(handler: (req: NextRequest, ctx: Ctx, user: Sessio
  * admin routes look the same as routes that do not exist.
  */
 export function withAdmin<Ctx>(handler: (req: NextRequest, ctx: Ctx, user: SessionUser) => MaybePromise<Response>): Guarded<Ctx> {
-  return tag({ kind: 'admin' }, async (req, ctx) => {
+  return tagPolicy({ kind: 'admin' }, async (req, ctx) => {
     const signed = await signedIn(req)
     if (!signed.ok) return signed.response
     if (!signed.session.user.isAdmin) return notFound()
@@ -163,7 +171,7 @@ export function withWeddingRole<Ctx>(
   minRole: Role,
   handler: (req: NextRequest, ctx: Ctx, access: WeddingAccess) => MaybePromise<Response>,
 ): Guarded<Ctx> {
-  return tag({ kind: 'wedding', minRole, resolver: resolver.name }, async (req, ctx) => {
+  return tagPolicy({ kind: 'wedding', minRole, resolver: resolver.name }, async (req, ctx) => {
     const signed = await signedIn(req)
     if (!signed.ok) return signed.response
     const { user } = signed.session
@@ -205,7 +213,7 @@ export function withVenueAccess<Ctx>(
   resolver: TemplateResolver<Ctx> | null,
   handler: (req: NextRequest, ctx: Ctx, access: VenueTemplateAccess) => MaybePromise<Response>,
 ): Guarded<Ctx> {
-  return tag({ kind: 'venue', mode }, async (req, ctx) => {
+  return tagPolicy({ kind: 'venue', mode }, async (req, ctx) => {
     const signed = await signedIn(req)
     if (!signed.ok) return signed.response
     const { user } = signed.session

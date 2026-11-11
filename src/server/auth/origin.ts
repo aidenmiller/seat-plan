@@ -14,8 +14,9 @@
  * signed in on this browser sends the wrong id, so its edits are refused
  * instead of landing under the new account.
  */
+import { USER_HEADER } from '@/shared/user-header'
 
-export const USER_HEADER = 'x-seat-plan-user'
+export { USER_HEADER }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 

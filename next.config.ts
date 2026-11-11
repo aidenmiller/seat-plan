@@ -28,6 +28,11 @@ const nextConfig: NextConfig = {
         source: '/share/:path*',
         headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
       },
+      {
+        // Invite and reset pages carry a one-time token: never pass their address on either.
+        source: '/:page(invite|reset)/:path*',
+        headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
+      },
     ]
   },
 }

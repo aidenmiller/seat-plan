@@ -34,13 +34,16 @@ describe('api helpers', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wedding = await createWedding({ name: 'Noa & Aiden', unit: 'ft' })
     expect(wedding).toEqual({ id: 'w1', name: 'Noa & Aiden' })
+    // Sent through appFetch (src/client/http.ts), which hands fetch a Headers object.
     expect(fetchMock).toHaveBeenCalledWith('/api/weddings', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: expect.any(Headers),
       body: JSON.stringify({ name: 'Noa & Aiden', unit: 'ft' }),
       cache: 'no-store',
       credentials: 'same-origin',
     })
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(Object.fromEntries(new Headers(init.headers))).toEqual({ 'content-type': 'application/json' })
   })
 
   it('deletes send the typed word', async () => {

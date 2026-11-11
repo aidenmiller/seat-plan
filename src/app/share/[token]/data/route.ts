@@ -4,9 +4,9 @@ import { shareViewData, touchShareLink } from '@/server/repo/share-links'
 
 /**
  * ShareView: the link's one layout, built on the server from the link's
- * switches (PLAN change 24), so hidden parts never reach the viewer. Needs the
- * site cookie or this link's cookie. Opening it with the link's cookie updates
- * the link's last opened time.
+ * switches (PLAN change 24), so hidden parts never reach the viewer. Needs a
+ * member's session or this link's cookie. Opening it with the link's cookie
+ * updates the link's last opened time.
  */
 export const GET = withShareAuth(async (_req, access) => {
   const db = getDb()
