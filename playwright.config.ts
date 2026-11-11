@@ -1,7 +1,7 @@
 /**
  * End-to-end tests run against a production build (next build && next start)
- * and a fresh local database. Every run makes up its own site password and
- * secret, so the real password never appears in a test.
+ * and a fresh local database. Every run makes up its own site password,
+ * secret and account passwords, so no real password ever appears in a test.
  *
  * Projects (spec section 4: check every milestone at 390 px and 1440 px):
  *   desktop  1440 x 900
@@ -22,8 +22,13 @@ const SUFFIX = (process.env.TEST_DB_SUFFIX ?? '').replace(/[^a-z0-9_]/gi, '')
 const E2E_DATABASE_URL = process.env.E2E_DATABASE_URL ?? `postgres://seating:seating@127.0.0.1:5432/seating_e2e${SUFFIX}`
 const STAND_IN_PORT = Number(process.env.E2E_STAND_IN_PORT ?? 4210)
 
-// Set once in the runner; worker processes inherit these.
+// Set once in the runner; worker processes inherit these. The site password
+// now only opens /setup, which stays closed because global setup makes the
+// run's accounts (e2e/users.ts) with the passwords below.
 process.env.E2E_SITE_PASSWORD ??= `e2e-${randomBytes(12).toString('hex')}`
+process.env.E2E_PASSWORD_A ??= `e2e-a-${randomBytes(12).toString('hex')}`
+process.env.E2E_PASSWORD_B ??= `e2e-b-${randomBytes(12).toString('hex')}`
+process.env.E2E_PASSWORD_C ??= `e2e-c-${randomBytes(12).toString('hex')}`
 process.env.E2E_AUTH_SECRET ??= randomBytes(32).toString('base64')
 process.env.E2E_DATABASE_URL = E2E_DATABASE_URL
 process.env.E2E_BASE_URL = `http://localhost:${PORT}`

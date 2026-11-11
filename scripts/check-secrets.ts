@@ -1,13 +1,15 @@
 /**
- * Fails if the site password appears in the built browser files or in git
- * history (spec section 13). Reads the password from SITE_PASSWORD (or
- * CHECK_PASSWORD), never from the command line, and never prints it.
+ * Fails if a secret appears in the built browser files or in git history
+ * (spec section 13). It looks for AUTH_SECRET (which signs every cookie), and
+ * for SITE_PASSWORD and CHECK_PASSWORD when they are set (CI puts the real
+ * site password in CHECK_PASSWORD). Reads them from the environment, never
+ * from the command line, and never prints them.
  *
  *   npm run check:secrets -- --bundle     scan the build output (.next, except its cache) and public/
  *   npm run check:secrets -- --history    scan every commit on every branch: diffs, merges and messages
  *   (no flag)                             both
  *
- * Without a password to look for it skips with a warning, unless --strict.
+ * With nothing to look for it skips with a warning, unless --strict.
  */
 import { loadEnvConfig } from '@next/env'
 import { spawn } from 'node:child_process'
@@ -96,15 +98,30 @@ export function scanHistory(secret: string, cwd = process.cwd()): Promise<Hit[]>
   })
 }
 
+/** The variables whose values must never show up, in the order they are named. */
+export const SECRET_NAMES = ['AUTH_SECRET', 'SITE_PASSWORD', 'CHECK_PASSWORD'] as const
+
+export type Secret = { name: (typeof SECRET_NAMES)[number]; value: string }
+
+/** The secrets set in `env`, each value once (the first name that holds it). */
+export function secretsToFind(env: Readonly<Record<string, string | undefined>>): Secret[] {
+  const out: Secret[] = []
+  for (const name of SECRET_NAMES) {
+    const value = env[name]
+    if (value && !out.some((s) => s.value === value)) out.push({ name, value })
+  }
+  return out
+}
+
 async function main() {
   loadEnvConfig(process.cwd())
   const args = new Set(process.argv.slice(2))
   const doBundle = args.has('--bundle') || (!args.has('--history') && !args.has('--bundle'))
   const doHistory = args.has('--history') || (!args.has('--history') && !args.has('--bundle'))
-  const secret = process.env.CHECK_PASSWORD || process.env.SITE_PASSWORD || ''
+  const secrets = secretsToFind(process.env)
 
-  if (!secret) {
-    const message = 'check-secrets: no SITE_PASSWORD to look for.'
+  if (secrets.length === 0) {
+    const message = `check-secrets: none of ${SECRET_NAMES.join(', ')} is set, so there is nothing to look for.`
     if (args.has('--strict')) {
       console.error(`${message} Failing because of --strict.`)
       process.exit(1)
@@ -113,16 +130,23 @@ async function main() {
     return
   }
 
-  const hits: Hit[] = []
-  if (doBundle) hits.push(...scanBundle(secret))
-  if (doHistory) hits.push(...(await scanHistory(secret)))
-
-  if (hits.length > 0) {
-    console.error(`check-secrets: found the site password ${hits.length} time(s):`)
-    for (const hit of hits.slice(0, 50)) console.error(`  ${hit.where} @${hit.offset}: …${hit.context}…`)
-    process.exit(1)
+  let found = 0
+  for (const secret of secrets) {
+    const hits: Hit[] = []
+    if (doBundle) hits.push(...scanBundle(secret.value))
+    if (doHistory) hits.push(...(await scanHistory(secret.value)))
+    if (hits.length === 0) continue
+    found += hits.length
+    console.error(`check-secrets: found ${secret.name} ${hits.length} time(s):`)
+    for (const hit of hits.slice(0, 50)) {
+      // The context hides this secret already; hide any other one that sits next to it.
+      const context = secrets.reduce((text, other) => text.split(other.value).join('*'.repeat(8)), hit.context)
+      console.error(`  ${hit.where} @${hit.offset}: …${context}…`)
+    }
   }
-  console.log(`check-secrets: clean (${[doBundle && 'bundle', doHistory && 'git history'].filter(Boolean).join(' and ')}).`)
+  if (found > 0) process.exit(1)
+  const where = [doBundle && 'bundle', doHistory && 'git history'].filter(Boolean).join(' and ')
+  console.log(`check-secrets: clean (${where}; looked for ${secrets.map((s) => s.name).join(', ')}).`)
 }
 
 if (process.argv[1]?.endsWith('check-secrets.ts')) {

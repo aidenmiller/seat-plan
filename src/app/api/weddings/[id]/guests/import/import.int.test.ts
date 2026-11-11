@@ -13,18 +13,22 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../../../test/db'
+import { makeUser, sessionCookie } from '../../../../../../../test/auth'
 import { applyMapping, guessMapping, type ImportRow } from '@/domain/csv/columns'
 import { CSV_BOM, EXPORT_COLUMNS } from '@/domain/csv/export'
 import { MAX_IMPORT_ROWS, parseCsv } from '@/domain/csv/parse'
 import { SAMPLE_CSV_FILE } from '@/domain/csv/sample'
 import { GROUP_COLORS } from '@/domain/group-colors'
-import { SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
 import { MAX_GUEST_ROWS, type Guest, type ImportCommitResult, type ImportPreview } from '@/shared/api'
 
-beforeAll(() => {
+/** A signed-in user's cookie: for now any signed-in user may use these routes. */
+let signedIn = ''
+
+beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'import-route-test-secret-32-chars-plus')
-  vi.stubEnv('SITE_PASSWORD', 'import-route-made-up-password')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
+  const database = await db()
+  signedIn = await sessionCookie(database, (await makeUser(database)).id)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -33,7 +37,7 @@ afterAll(() => {
 type Handler = (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>
 
 async function send(mod: Record<string, unknown>, method: string, id: string, body?: unknown) {
-  const headers: Record<string, string> = { cookie: `${SITE_COOKIE}=${createSiteToken()}` }
+  const headers: Record<string, string> = { cookie: signedIn }
   if (body !== undefined) headers['content-type'] = 'application/json'
   const req = new NextRequest('https://seat.example/api/x', {
     method,

@@ -3,7 +3,7 @@
  * hard expiry, the 10-minute touch, the per-user cap, and signing out.
  */
 import { eq, sql } from 'drizzle-orm'
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeTestDb, truncateAll } from '../../../test/db'
 import { makeUser } from '../../../test/auth'
 import { hashOpaqueToken, newOpaqueToken, openSessionCookie, signSessionCookie } from '../auth/tokens'
@@ -64,6 +64,19 @@ describe('createSession', () => {
     const exp = openSessionCookie(s.cookieValue)!.exp
     expect(exp - before).toBeGreaterThan(364.9 * DAY)
     expect(exp - before).toBeLessThan(365.1 * DAY)
+  })
+
+  it('signs the cookie before writing the row: without AUTH_SECRET it throws and leaves no session', async () => {
+    const user = await makeUser(db)
+    vi.stubEnv('AUTH_SECRET', '')
+    try {
+      await expect(createSession(db, user.id)).rejects.toThrow(/AUTH_SECRET/)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+    expect(await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.userId, user.id))).toEqual([])
+    const [row] = await db.select({ lastLoginAt: users.lastLoginAt }).from(users).where(eq(users.id, user.id))
+    expect(row!.lastLoginAt).toBeNull()
   })
 
   it('makes a new session every time and notes the sign-in', async () => {

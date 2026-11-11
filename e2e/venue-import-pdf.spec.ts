@@ -128,7 +128,7 @@ test('a black and white scan (CCITT fax) renders its picture: pdf.js loads its d
   const venue = await apiCreateVenue(page.request, name)
   await openTemplateEditor(page, venue.id)
 
-  // The decoders are served behind the site cookie, from the pinned pdfjs-dist.
+  // The decoders are served behind the sign-in, from the pinned pdfjs-dist.
   const wasm = await page.request.get('/pdfjs-wasm/jbig2.wasm')
   expect(wasm.status()).toBe(200)
   expect((await wasm.body()).subarray(0, 4).toString('latin1')).toBe('\0asm')

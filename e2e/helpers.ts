@@ -4,26 +4,30 @@ import type { Canvas } from '../src/domain/canvas-schema'
 import { addRoundTable } from '../src/domain/round-table'
 import type { LayoutDetail, SaveLayoutOk, WeddingSummary } from '../src/shared/api'
 import { addControl, setMode } from './canvas'
+import { E2E_USERS, userPassword, type Who } from './users'
 
 export { addRoundTable, addPreset } from './canvas'
+export { E2E_USERS, userPassword, type Who } from './users'
 
-/** The password this run's server was started with (made up per run). */
+/** The site password this run's server was started with (made up per run; it only opens /setup now). */
 export function sitePassword(): string {
   const value = process.env.E2E_SITE_PASSWORD
   if (!value) throw new Error('E2E_SITE_PASSWORD is not set; run through playwright.config.ts')
   return value
 }
 
-export async function signIn(page: Page, next = '/'): Promise<void> {
+/** Signs the page in as one of the run's accounts (e2e/users.ts): A, an admin, unless told otherwise. */
+export async function signIn(page: Page, who: Who = 'a', next = '/'): Promise<void> {
   await page.goto(next === '/' ? '/login' : `/login?next=${encodeURIComponent(next)}`)
-  await page.getByLabel('Password').fill(sitePassword())
-  await page.getByRole('button', { name: 'Enter' }).click()
+  await page.getByLabel('Email').fill(E2E_USERS[who].email)
+  await page.getByLabel('Password').fill(userPassword(who))
+  await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page).not.toHaveURL(/\/login/)
 }
 
 /** Signs a bare request context in (no page), for setting up data through the API. */
-export async function signInRequest(request: APIRequestContext): Promise<void> {
-  const res = await request.post('/api/auth/login', { data: { password: sitePassword() } })
+export async function signInRequest(request: APIRequestContext, who: Who = 'a'): Promise<void> {
+  const res = await request.post('/api/auth/login', { data: { email: E2E_USERS[who].email, password: userPassword(who) } })
   expect(res.status()).toBe(200)
 }
 

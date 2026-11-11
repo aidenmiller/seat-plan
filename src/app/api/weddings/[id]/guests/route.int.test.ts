@@ -9,13 +9,17 @@ import { eq } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../../test/db'
-import { SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
+import { makeUser, sessionCookie } from '../../../../../../test/auth'
 import type { Guest, GuestDeleteSummary, UpdateGuestReply } from '@/shared/api'
 
-beforeAll(() => {
+/** A signed-in user's cookie: for now any signed-in user may use these routes. */
+let signedIn = ''
+
+beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'guests-route-test-secret-32-chars-plus')
-  vi.stubEnv('SITE_PASSWORD', 'guests-route-made-up-password')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
+  const database = await db()
+  signedIn = await sessionCookie(database, (await makeUser(database)).id)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -24,7 +28,7 @@ afterAll(() => {
 type Handler = (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>
 
 async function call(mod: Record<string, unknown>, method: string, params: Record<string, string>, body?: unknown) {
-  const headers: Record<string, string> = { cookie: `${SITE_COOKIE}=${createSiteToken()}` }
+  const headers: Record<string, string> = { cookie: signedIn }
   if (body !== undefined) headers['content-type'] = 'application/json'
   const req = new NextRequest(`https://seat.example/api/x/${params.id ?? ''}`, {
     method,

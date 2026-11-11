@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { findAll, maskedContext, scanBundle, scanHistory } from './check-secrets'
+import { findAll, maskedContext, scanBundle, scanHistory, secretsToFind } from './check-secrets'
 
 const NEEDLE = 'made-up-value-for-the-scanner-test'
 
@@ -19,6 +19,24 @@ describe('check-secrets helpers', () => {
     const context = maskedContext(text, text.indexOf(NEEDLE), NEEDLE)
     expect(context).not.toContain(NEEDLE)
     expect(context).toContain('********')
+  })
+})
+
+describe('secretsToFind', () => {
+  it('always looks for AUTH_SECRET, and for the site password and CHECK_PASSWORD when set', () => {
+    expect(secretsToFind({ AUTH_SECRET: 'a-secret' })).toEqual([{ name: 'AUTH_SECRET', value: 'a-secret' }])
+    expect(secretsToFind({ AUTH_SECRET: 'a-secret', SITE_PASSWORD: 'site', CHECK_PASSWORD: 'real' })).toEqual([
+      { name: 'AUTH_SECRET', value: 'a-secret' },
+      { name: 'SITE_PASSWORD', value: 'site' },
+      { name: 'CHECK_PASSWORD', value: 'real' },
+    ])
+    expect(secretsToFind({ SITE_PASSWORD: 'site' })).toEqual([{ name: 'SITE_PASSWORD', value: 'site' }])
+  })
+
+  it('finds nothing to look for when none is set, and looks for a repeated value once', () => {
+    expect(secretsToFind({})).toEqual([])
+    expect(secretsToFind({ AUTH_SECRET: '', SITE_PASSWORD: '' })).toEqual([])
+    expect(secretsToFind({ SITE_PASSWORD: 'same', CHECK_PASSWORD: 'same' })).toEqual([{ name: 'SITE_PASSWORD', value: 'same' }])
   })
 })
 

@@ -90,6 +90,12 @@ function open(token: string, key: Buffer, now: number): Record<string, unknown> 
   return payload as Record<string, unknown>
 }
 
+/**
+ * Site tokens are from the shared-password days: nothing in the app makes or
+ * accepts one any more (the proxy and the sign-in routes only clear an old
+ * sp_site cookie). They stay, with the tests that show such a cookie opens
+ * nothing, until the next phase removes them.
+ */
 export function createSiteToken(now: number = Date.now()): string {
   const key = siteKey()
   if (!key) throw new Error('AUTH_SECRET (32+ characters) and SITE_PASSWORD must be set')

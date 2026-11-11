@@ -1,6 +1,6 @@
 /**
  * Acceptance check 21: a venue share link made with the editor's Share
- * button asks for its own password in a fresh browser (no site cookie). A
+ * button asks for its own password in a fresh browser (signed out). A
  * wrong password is refused; the right one opens that one layout in View mode
  * and nothing else. A new password signs the viewer out, and so does turning
  * the link off in the Links tab.
@@ -91,7 +91,7 @@ test('a share link opens one layout with its own password; a new password or tur
   const path = new URL(url).pathname
   await dialog.getByRole('button', { name: 'Done' }).click()
 
-  // The site cookie opens the link too, and that does not count as the venue opening it.
+  // A planner's session (here an admin's) opens the link too, and that does not count as the venue opening it.
   await page.goto(path)
   await expect(page.getByTestId('share-layout-name')).toHaveText(shared.name)
   await page.goto(`/w/${wedding.id}/links`)
@@ -101,7 +101,7 @@ test('a share link opens one layout with its own password; a new password or tur
   await expect(card).toContainText(shared.name)
   await expect(card).toContainText('Not opened yet')
 
-  // A fresh browser with no site cookie gets the link's password page, and its data stays closed.
+  // A fresh, signed-out browser gets the link's password page, and its data stays closed.
   const viewer = await browser.newContext(testInfo.project.name === 'phone' ? PHONE : LAPTOP)
   try {
     const view = await viewer.newPage()
@@ -174,7 +174,7 @@ test('a share link opens one layout with its own password; a new password or tur
     await expect(shareError(view)).toHaveText(WRONG)
     await expectPasswordPage(view)
 
-    // Even the site cookie no longer opens it.
+    // Even a planner's session no longer opens it.
     await page.goto(path)
     await expectPasswordPage(page)
   } finally {
@@ -184,7 +184,7 @@ test('a share link opens one layout with its own password; a new password or tur
 
 // ---------- The viewer ----------
 
-/** A browser with no site cookie, set up as this project's device. */
+/** A signed-out browser, set up as this project's device. */
 async function venueBrowser(browser: Browser, testInfo: TestInfo): Promise<BrowserContext> {
   return browser.newContext(testInfo.project.name === 'phone' ? PHONE : LAPTOP)
 }

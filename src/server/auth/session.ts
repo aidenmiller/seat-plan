@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { getDb } from '../db/client'
 import { findSession, type SessionLookup } from '../repo/sessions'
 import type { SessionUser } from './access'
-import { authCookieOptions } from './require'
+import { authCookieOptions } from './cookie-options'
 import { SESSION_COOKIE, SESSION_COOKIE_MAX_AGE_SECONDS, SITE_COOKIE, openSessionCookie } from './tokens'
 
 /**
@@ -32,6 +32,11 @@ export function setSessionCookie(res: NextResponse, req: NextRequest, value: str
   const seconds = Math.floor((expiresAt.getTime() - Date.now()) / 1000)
   const maxAge = Math.max(0, Math.min(SESSION_COOKIE_MAX_AGE_SECONDS, seconds))
   res.cookies.set(SESSION_COOKIE, value, authCookieOptions(req, maxAge))
+}
+
+/** Clears the old site-password cookie, when the browser still sends one. */
+export function clearLegacySiteCookie(res: NextResponse, req: NextRequest): void {
+  if (req.cookies.has(SITE_COOKIE)) res.cookies.set(SITE_COOKIE, '', authCookieOptions(req, 0))
 }
 
 /** Clears the session cookie and the old site-password cookie on this device. */

@@ -23,6 +23,7 @@
  * the layout drafts' "seat-plan" database would never be created.
  */
 import { createStore, del, entries, set, type UseStore } from 'idb-keyval'
+import { appFetch } from '../http'
 import { backoffDelay } from './backoff'
 import { randomId } from './random-id'
 import type { LockManagerLike } from './tab-lock'
@@ -251,7 +252,7 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
   const random = options.random ?? Math.random
   const now = options.now ?? (() => Date.now())
   const newId = options.newId ?? randomId
-  const fetchFn: typeof fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
+  const fetchFn: typeof fetch = options.fetch ?? appFetch
   const store: RowStore | null = options.store !== undefined ? options.store : createRowStore()
   const locks = options.locks !== undefined ? options.locks : defaultLocks()
   const isOnline =

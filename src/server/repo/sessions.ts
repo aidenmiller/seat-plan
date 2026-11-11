@@ -47,6 +47,11 @@ export type NewSession = { cookieValue: string; expiresAt: Date; sessionId: stri
  */
 export async function createSession(db: Db, userId: string, opts: { userAgent?: string | null } = {}): Promise<NewSession> {
   const secret = newOpaqueToken()
+  // Signed before the row is written, so a server without AUTH_SECRET throws
+  // here and never leaves a session row behind that no cookie can name. The
+  // cookie's own expiry is the hard cap; the row's expires_at is the real,
+  // sliding one.
+  const cookieValue = signSessionCookie(secret, Date.now() + SESSION_MAX_DAYS * DAY_MS)
   const row = await db.transaction(async (tx) => {
     const [created] = await tx
       .insert(sessions)
@@ -56,7 +61,7 @@ export async function createSession(db: Db, userId: string, opts: { userAgent?: 
         userAgent: cleanUserAgent(opts.userAgent),
         expiresAt: sql`now() + make_interval(days => ${SESSION_IDLE_DAYS})`,
       })
-      .returning({ id: sessions.id, createdAt: sessions.createdAt, expiresAt: sessions.expiresAt })
+      .returning({ id: sessions.id, expiresAt: sessions.expiresAt })
     await tx.execute(sql`
       delete from sessions
       where user_id = ${userId}
@@ -69,8 +74,6 @@ export async function createSession(db: Db, userId: string, opts: { userAgent?: 
     await tx.update(users).set({ lastLoginAt: sql`now()`, lastSeenAt: sql`now()` }).where(eq(users.id, userId))
     return created!
   })
-  // The cookie's own expiry is the hard cap; the row's expires_at is the real, sliding one.
-  const cookieValue = signSessionCookie(secret, row.createdAt.getTime() + SESSION_MAX_DAYS * DAY_MS)
   return { cookieValue, expiresAt: row.expiresAt, sessionId: row.id }
 }
 

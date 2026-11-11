@@ -11,21 +11,25 @@ import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../test/db'
+import { makeUser, sessionCookie } from '../../../../../test/auth'
 import { backupFileSchema, type BackupFile } from '@/domain/backup/schema'
 import type { Canvas, Note } from '@/domain/canvas-schema'
 import { DEFAULT_LEFT_LABEL, generateSeatingBlock } from '@/domain/ceremony'
 import { makeGridPng } from '@/domain/floorplan/__fixtures__/plans'
 import type { FixedItem } from '@/domain/venue-schema'
-import { SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
 import { groupMembers, groups, guests, layouts, layoutSeats, ruleGuests, rules, shareLinks, venueImages, venueTemplates, weddings } from '@/server/db/schema'
 import { addTemplateImage } from '@/server/repo/venues'
 import { canvasOf, chairRow, makeGuest, makeLayout, makeTemplate, makeWedding, roundTable } from '@/server/repo/test-fixtures'
 import type { RestoredLayout, RestoredTemplate, RestoreStarted } from '@/shared/api'
 
-beforeAll(() => {
+/** A signed-in user's cookie: for now any signed-in user may use these routes. */
+let signedIn = ''
+
+beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'restore-int-test-secret-of-32-chars-plus')
-  vi.stubEnv('SITE_PASSWORD', 'restore-int-made-up-password')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
+  const database = await db()
+  signedIn = await sessionCookie(database, (await makeUser(database)).id)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -39,7 +43,7 @@ type Params = Record<string, string>
 type Handler = (req: NextRequest, ctx: { params: Promise<Params> }) => Promise<Response>
 
 async function send(mod: Record<string, unknown>, method: string, params: Params, opts: { body?: unknown; raw?: Uint8Array } = {}) {
-  const headers: Record<string, string> = { cookie: `${SITE_COOKIE}=${createSiteToken()}` }
+  const headers: Record<string, string> = { cookie: signedIn }
   let body: BodyInit | undefined = opts.raw ? new Uint8Array(opts.raw) : undefined
   if (opts.body !== undefined) {
     headers['content-type'] = 'application/json'

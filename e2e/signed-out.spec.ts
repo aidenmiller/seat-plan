@@ -1,8 +1,8 @@
 /**
- * Acceptance check 2: no page or API route returns data without the cookie,
- * and the password never reaches the browser. New pages and routes join these
- * lists as each milestone adds them (milestone 4: the guest list, its import
- * page, the sample file, and the guest and group routes; milestone 7: the
+ * Acceptance check 2: no page or API route returns data without a session,
+ * and no password or secret ever reaches the browser. New pages and routes
+ * join these lists as each milestone adds them (milestone 4: the guest list,
+ * its import page, the sample file, and the guest and group routes; milestone 7: the
  * template editor and every venue, image, import and revision route;
  * milestone 6: the rule routes and the couple rule switch;
  * milestone 10: the share link and backup routes, and every restore step).
@@ -13,9 +13,10 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { expect, request as playwrightRequest, test } from '@playwright/test'
 import { apiAddGuests, apiCreateGroup, apiListGroups, apiListGuests } from './guest-list'
 import { makePlanPng } from './fixtures/floorplan-png'
-import { apiCreateLayout, apiCreateWedding, signIn, signInRequest, sitePassword } from './helpers'
+import { apiCreateLayout, apiCreateWedding, signIn, signInRequest, sitePassword, userPassword } from './helpers'
 import { apiCreateVenue, apiGetVenue, apiSaveVenue, apiVenueRevisions } from './venues'
 import { emptyCanvas } from '../src/domain/canvas-schema'
+import { SESSION_COOKIE } from '../src/server/auth/tokens'
 import type { ShareLink, StoredRule, VenueImageInfo } from '../src/shared/api'
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
@@ -62,9 +63,9 @@ const RESTORE_START = {
 }
 
 /**
- * Every API route but the login route, with a body where the route takes
- * one; `:guest`, `:group`, `:image`, `:revision`, `:link` and `:job` stand
- * for ids too.
+ * Every API route but the public ones (sign-in and first-run setup), with a
+ * body where the route takes one; `:guest`, `:group`, `:image`, `:revision`,
+ * `:link` and `:job` stand for ids too.
  */
 const API_ROUTES: { method: Method; path: string; body?: unknown }[] = [
   { method: 'GET', path: '/api/weddings' },
@@ -337,18 +338,28 @@ test.describe('without the cookie', () => {
   })
 })
 
-test('no response the app loads contains the password', async ({ page }) => {
-  const password = sitePassword()
+test('no response the app loads contains a password or a secret', async ({ page, context }) => {
+  // The site password, every account's password, AUTH_SECRET, and (once signed in) the session cookie and its secret.
+  const secrets = new Map<string, string>([
+    ['the site password', sitePassword()],
+    ['account A’s password', userPassword('a')],
+    ['account B’s password', userPassword('b')],
+    ['account C’s password', userPassword('c')],
+    ['AUTH_SECRET', process.env.E2E_AUTH_SECRET!],
+  ])
   const leaks: string[] = []
   page.on('response', async (res) => {
     try {
       const body = await res.body()
-      if (body.includes(Buffer.from(password))) leaks.push(res.url())
+      for (const [name, value] of secrets) if (body.includes(Buffer.from(value))) leaks.push(`${name} in ${res.url()}`)
     } catch {
       // Redirects and aborted requests have no body.
     }
   })
   await signIn(page)
+  const session = (await context.cookies()).find((c) => c.name === SESSION_COOKIE)!.value
+  secrets.set('the session cookie', session)
+  secrets.set('the session secret', (JSON.parse(Buffer.from(session.split('.')[0]!, 'base64url').toString('utf8')) as { s: string }).s)
   await page.reload()
   await page.waitForLoadState('networkidle')
   // The wedding pages and the editor too.

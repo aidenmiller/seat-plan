@@ -5,6 +5,7 @@
  * version when it has no unsaved edits and no gesture in progress).
  */
 import type { LayoutVersionInfo } from '@/shared/api'
+import { appFetch } from '../http'
 
 export type WatchRemoteVersionOptions = {
   layoutId: string
@@ -59,7 +60,7 @@ export function readLayoutVersionInfo(value: unknown): LayoutVersionInfo | null 
 }
 
 export function watchRemoteVersion(options: WatchRemoteVersionOptions): RemoteVersionWatch {
-  const fetchFn: typeof fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
+  const fetchFn: typeof fetch = options.fetch ?? appFetch
   const minIntervalMs = options.minIntervalMs ?? 2000
   const win =
     options.windowTarget !== undefined ? options.windowTarget : typeof window === 'undefined' ? null : window

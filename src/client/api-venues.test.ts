@@ -23,13 +23,16 @@ describe('venue api helpers', () => {
     vi.stubGlobal('fetch', fetchMock)
     const blob = new Blob([new Uint8Array([0x89, 0x50])], { type: 'image/png' })
     expect(await uploadVenueImage('v1', blob)).toEqual({ id: 'img' })
+    // Sent through appFetch (src/client/http.ts), which hands fetch a Headers object.
     expect(fetchMock).toHaveBeenCalledWith('/api/venues/v1/images', {
       method: 'POST',
-      headers: { 'content-type': 'image/png' },
+      headers: expect.any(Headers),
       body: blob,
       cache: 'no-store',
       credentials: 'same-origin',
     })
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(Object.fromEntries(new Headers(init.headers))).toEqual({ 'content-type': 'image/png' })
   })
 
   it('shows the server sentence for a refused upload and a save conflict', async () => {

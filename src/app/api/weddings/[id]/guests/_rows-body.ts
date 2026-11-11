@@ -2,18 +2,20 @@ import 'server-only'
 import type { NextRequest } from 'next/server'
 import type { z } from 'zod'
 import { MAX_GUEST_ROWS } from '@/shared/api'
-import { json, type BodyResult } from '@/server/api-route'
+import { isJsonRequest, json, notJson, type BodyResult } from '@/server/api-route'
 import { zodIssues } from '@/server/canvas-write'
 
 /**
- * Like readBody (400 bad JSON, 422 with issues), but a body whose `key`
- * array holds more than MAX_GUEST_ROWS entries gets 413 before any checking.
+ * Like readBody (415 not sent as JSON, 400 bad JSON, 422 with issues), but a
+ * body whose `key` array holds more than MAX_GUEST_ROWS entries gets 413
+ * before any checking.
  */
 export async function readRowsBody<S extends z.ZodType>(
   req: NextRequest,
   schema: S,
   key: string,
 ): Promise<BodyResult<z.output<S>>> {
+  if (!isJsonRequest(req)) return { ok: false, response: notJson() }
   let raw: unknown
   try {
     raw = await req.json()

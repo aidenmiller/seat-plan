@@ -9,6 +9,7 @@
 import { createHmac } from 'node:crypto'
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { normalizeEmail } from '@/domain/accounts'
 
 export const PER_ADDRESS_LIMIT = 10
 export const PER_ADDRESS_WINDOW_MINUTES = 15
@@ -52,6 +53,22 @@ function ipv6Prefix64(address: string): string {
     .map((part) => part.replace(/^0+(?=.)/, ''))
     .join(':')
 }
+
+/**
+ * The throttle scope for signing in to one account: `login:` and the
+ * normalized email keyed with AUTH_SECRET, so the table never holds an
+ * address. Any email gets a scope, whether or not it has an account, so a
+ * block says nothing about which accounts exist. Throws without AUTH_SECRET:
+ * an unkeyed hash of an email can be undone by guessing.
+ */
+export function loginScope(email: string, secret: string = process.env.AUTH_SECRET ?? ''): string {
+  if (secret.length < 32) throw new Error('AUTH_SECRET (32+ characters) must be set')
+  const key = createHmac('sha256', secret).update(`login email:${normalizeEmail(email)}`).digest('hex').slice(0, 32)
+  return `login:${key}`
+}
+
+/** The scope that counts one address's sign-in tries across every account. */
+export const LOGIN_ADDRESS_SCOPE = 'login-ip'
 
 export type AttemptVerdict = { allowed: true } | { allowed: false; retryAfterSeconds: number }
 

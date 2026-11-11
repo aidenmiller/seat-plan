@@ -2,18 +2,20 @@
  * Venue share links against the test database, through the route handlers:
  * make a link, sign in with its own password, read the layout's data, and
  * the sign-outs (spec section 2): a new password or turning the link off
- * signs out anyone using it. Also: a share cookie never passes as the site
- * cookie, the site cookie opens every link, and the data hides names and notes
- * when the link says so (PLAN change 24). The wrong-guess delay is off here.
+ * signs out anyone using it. Also: a share cookie never passes as a session
+ * cookie, a member's (or an admin's) session opens the wedding's links but a
+ * signed-in non-member's does not, and the data hides names and notes when
+ * the link says so (PLAN change 24). The wrong-guess delay is off here.
  */
 import { randomBytes } from 'node:crypto'
 import { sql } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../test/db'
+import { makeMember, makeUser, sessionCookie } from '../../../test/auth'
 import type { ChairRow, Note } from '@/domain/canvas-schema'
 import { DEFAULT_RIGHT_LABEL, generateSeatingBlock } from '@/domain/ceremony'
-import { SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
+import { SESSION_COOKIE } from '@/server/auth/tokens'
 import { canvasOf, makeGuest, makeLayout, makeWedding, roundTable } from '@/server/repo/test-fixtures'
 import type { ShareLink, ShareView } from '@/shared/api'
 
@@ -22,10 +24,13 @@ vi.mock('@/server/auth/throttle', async (importOriginal) => ({
   wrongGuessDelay: async () => {},
 }))
 
-beforeAll(() => {
+/** A signed-in user who is no member of any wedding: for now any signed-in user may use the site routes. */
+let planner: Record<string, string> = {}
+
+beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'share-links-int-test-secret-32-chars-plus')
-  vi.stubEnv('SITE_PASSWORD', 'share-links-int-made-up-password')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
+  planner = await signedInJar()
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -35,6 +40,15 @@ async function db() {
   return (await import('@/server/db/client')).getDb()
 }
 
+/** A new user's session cookie, as a jar: a member of `weddingId` when given, or an admin. */
+async function signedInJar(opts: { memberOf?: string; isAdmin?: boolean } = {}): Promise<Record<string, string>> {
+  const database = await db()
+  const user = await makeUser(database, { isAdmin: opts.isAdmin })
+  if (opts.memberOf) await makeMember(database, opts.memberOf, user.id, 'editor')
+  const pair = await sessionCookie(database, user.id)
+  return { [SESSION_COOKIE]: pair.slice(pair.indexOf('=') + 1) }
+}
+
 beforeEach(async () => {
   await (await db()).execute(sql`delete from login_attempts`)
 })
@@ -42,7 +56,7 @@ beforeEach(async () => {
 type Params = Record<string, string>
 type Handler = (req: NextRequest, ctx: { params: Promise<Params> }) => Promise<Response>
 
-/** Calls a handler. `cookies` replaces the site cookie the site routes get by default. */
+/** Calls a handler. `cookies` replaces the signed-in planner's cookie the site routes get by default. */
 async function send(
   mod: Record<string, unknown>,
   method: string,
@@ -51,7 +65,7 @@ async function send(
   opts: { body?: unknown; cookies?: Record<string, string>; ip?: string } = {},
 ) {
   const headers: Record<string, string> = { 'x-real-ip': opts.ip ?? '203.0.113.50' }
-  const cookies = opts.cookies ?? { [SITE_COOKIE]: createSiteToken() }
+  const cookies = opts.cookies ?? planner
   const jar = Object.entries(cookies)
     .map(([k, v]) => `${k}=${v}`)
     .join('; ')
@@ -173,7 +187,7 @@ describe('share links', () => {
   })
 
   it('signs the viewer out when the password changes, and again when the link is turned off', async () => {
-    const { layoutId } = await setup()
+    const { weddingId, layoutId } = await setup()
     const { link, token } = await makeLink(layoutId, { password: 'first-pass' })
     const first = cookieOf(await login(token, 'first-pass'))
     expect((await data(token, { [first.name]: first.value })).status).toBe(200)
@@ -193,8 +207,8 @@ describe('share links', () => {
     expect(off.body).toMatchObject({ enabled: false })
     expect((await data(token, { [second.name]: second.value })).status).toBe(401)
     expect((await login(token, 'second-pass')).status).toBe(401)
-    // The site cookie does not open a link that is off either, and the lists leave it out.
-    expect((await data(token, { [SITE_COOKIE]: createSiteToken() })).status).toBe(401)
+    // A member's session does not open a link that is off either, and the lists leave it out.
+    expect((await data(token, await signedInJar({ memberOf: weddingId }))).status).toBe(401)
     const listed = await send(await routes.layoutLinks(), 'GET', `/api/layouts/${layoutId}/share-links`, { id: layoutId })
     expect(listed.body).toEqual([])
 
@@ -204,26 +218,44 @@ describe('share links', () => {
     expect((await login(token, 'second-pass')).status).toBe(200)
   })
 
-  it('never takes a share cookie as the site cookie', async () => {
+  it('never takes a share cookie as a session cookie', async () => {
     const { layoutId } = await setup()
     const { link, token } = await makeLink(layoutId, { password: 'venue-pass' })
     const share = cookieOf(await login(token, 'venue-pass'))
-    const asSite = { [SITE_COOKIE]: share.value }
-    expect((await send(await routes.weddings(), 'GET', '/api/weddings', {}, { cookies: asSite })).status).toBe(401)
-    expect((await send(await routes.layoutLinks(), 'GET', `/api/layouts/${layoutId}/share-links`, { id: layoutId }, { cookies: asSite })).status).toBe(401)
-    const patch = await send(await routes.link(), 'PATCH', `/api/share-links/${link.id}`, { id: link.id }, { body: { showNotes: true }, cookies: asSite })
+    const asSession = { [SESSION_COOKIE]: share.value }
+    expect((await send(await routes.weddings(), 'GET', '/api/weddings', {}, { cookies: asSession })).status).toBe(401)
+    expect((await send(await routes.layoutLinks(), 'GET', `/api/layouts/${layoutId}/share-links`, { id: layoutId }, { cookies: asSession })).status).toBe(401)
+    const patch = await send(await routes.link(), 'PATCH', `/api/share-links/${link.id}`, { id: link.id }, { body: { showNotes: true }, cookies: asSession })
     expect(patch.status).toBe(401)
     // Nor under its own name for another link's routes.
     expect((await send(await routes.weddings(), 'GET', '/api/weddings', {}, { cookies: { [share.name]: share.value } })).status).toBe(401)
   })
 
-  it('opens every link with the site cookie, without counting as opened', async () => {
-    const { layoutId } = await setup()
+  it('opens a link for a member of its wedding or an admin, without counting as opened', async () => {
+    const { weddingId, layoutId } = await setup()
     const { token } = await makeLink(layoutId, { password: 'venue-pass' })
-    const view = await data(token, { [SITE_COOKIE]: createSiteToken() })
-    expect(view.status).toBe(200)
+    for (const jar of [await signedInJar({ memberOf: weddingId }), await signedInJar({ isAdmin: true })]) {
+      const view = await data(token, jar)
+      expect(view.status).toBe(200)
+      expect(view.body as ShareView).toMatchObject({ layoutName: 'Dinner' })
+    }
     const listed = await send(await routes.layoutLinks(), 'GET', `/api/layouts/${layoutId}/share-links`, { id: layoutId })
     expect(listed.body[0].lastOpenedAt).toBeNull()
+  })
+
+  it('keeps a link closed to a signed-in user who is not a member, unless they have its password', async () => {
+    const { layoutId } = await setup()
+    const other = await setup()
+    const { token } = await makeLink(layoutId, { password: 'venue-pass' })
+    // The planner the site routes use, and a member of another wedding.
+    for (const jar of [planner, await signedInJar({ memberOf: other.weddingId })]) {
+      const res = await data(token, jar)
+      expect(res.status).toBe(401)
+      expect(res.text).not.toContain('Annabel')
+      // With the link's own cookie as well, it opens as the venue would.
+      const cookie = cookieOf(await login(token, 'venue-pass'))
+      expect((await data(token, { ...jar, [cookie.name]: cookie.value })).status).toBe(200)
+    }
   })
 
   it('hides guest names and notes when they are off, and shows them when on', async () => {

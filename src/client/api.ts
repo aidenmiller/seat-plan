@@ -64,6 +64,7 @@ import type {
   UpdateShareLinkBody,
 } from '@/shared/api'
 import type { BackupLayoutInput, BackupTemplateInput, RestoreStartInput } from '@/domain/backup/schema'
+import { appFetch } from './http'
 
 export class ApiRequestError extends Error {
   /** The HTTP status, or 0 when no answer came back. */
@@ -117,7 +118,7 @@ type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
 async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
   let res: Response
   try {
-    res = await fetch(path, {
+    res = await appFetch(path, {
       method,
       headers: body === undefined ? undefined : { 'content-type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -240,7 +241,7 @@ export const acceptVenueImport = (id: string, body: AcceptImportBody) =>
 /** Every live layout using the template, with the tables a saved wall runs through. */
 export const venueWallCheck = (id: string) => request<VenueWallCheck>('GET', `/api/venues/${enc(id)}/wall-check`)
 
-/** Where a stored image is served (behind the site cookie). */
+/** Where a stored image is served (behind the sign-in). */
 export const venueImageUrl = (id: string, imageId: string) => `/api/venues/${enc(id)}/images/${enc(imageId)}`
 
 /**
@@ -255,7 +256,7 @@ export function uploadVenueImage(id: string, image: Blob): Promise<VenueImageInf
 async function sendRaw<T>(method: 'POST' | 'PUT', path: string, image: Blob): Promise<T> {
   let res: Response
   try {
-    res = await fetch(path, {
+    res = await appFetch(path, {
       method,
       headers: { 'content-type': image.type || 'application/octet-stream' },
       body: image,
@@ -289,7 +290,7 @@ export async function runFloorplanImport(
   const path = `/api/venues/${enc(id)}/import`
   let res: Response
   try {
-    res = await fetch(path, {
+    res = await appFetch(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),

@@ -9,9 +9,9 @@ import { createHash, randomUUID } from 'node:crypto'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../test/db'
+import { makeUser, sessionCookie } from '../../../../test/auth'
 import { makeGridPng } from '@/domain/floorplan/__fixtures__/plans'
 import type { FixedItem } from '@/domain/venue-schema'
-import { SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
 import {
   MAX_VENUE_IMAGE_BYTES,
   type SaveVenueConflict,
@@ -25,10 +25,14 @@ import {
   type VenueWallCheck,
 } from '@/shared/api'
 
-beforeAll(() => {
+/** A signed-in user's cookie: for now any signed-in user may use these routes. */
+let signedIn = ''
+
+beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'venues-route-test-secret-32-chars-plus')
-  vi.stubEnv('SITE_PASSWORD', 'venues-route-made-up-password')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
+  const database = await db()
+  signedIn = await sessionCookie(database, (await makeUser(database)).id)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -40,7 +44,7 @@ type Handler = (req: NextRequest, ctx: { params: Promise<Params> }) => Promise<R
 type CallOptions = { body?: unknown; raw?: Uint8Array; headers?: Record<string, string> }
 
 async function send(mod: Record<string, unknown>, method: string, params: Params, opts: CallOptions = {}) {
-  const headers: Record<string, string> = { cookie: `${SITE_COOKIE}=${createSiteToken()}`, ...opts.headers }
+  const headers: Record<string, string> = { cookie: signedIn, ...opts.headers }
   // A copy: request bodies need a plain ArrayBuffer behind them.
   let body: BodyInit | undefined = opts.raw ? new Uint8Array(opts.raw) : undefined
   if (opts.body !== undefined) {
