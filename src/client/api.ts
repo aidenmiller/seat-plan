@@ -115,7 +115,7 @@ export function errorMessage(error: unknown): string {
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
 
-async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
+export async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
   let res: Response
   try {
     res = await appFetch(path, {

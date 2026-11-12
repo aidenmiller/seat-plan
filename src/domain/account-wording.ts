@@ -45,6 +45,12 @@ export function resetProblemMessage(problem: 'used' | 'expired'): string {
 export const LAST_OWNER_MESSAGE = 'A wedding needs at least one owner. Make someone else an owner first.'
 export const LAST_OWNER_LEAVE_MESSAGE = 'You are the only owner. Make someone else an owner before you leave.'
 
+/** "Too many tries. Try again in 14 minutes.", as the sign-in page says it. */
+export function tooManyTriesMessage(retryAfterSeconds: number | undefined): string {
+  const minutes = Math.max(1, Math.ceil((retryAfterSeconds ?? 900) / 60))
+  return `Too many tries. Try again in ${minutes === 1 ? '1 minute' : `${minutes} minutes`}.`
+}
+
 /** "Expires in 7 days", "Expires in 3 hours", "Expired". For invite and reset links. */
 export function expiresIn(iso: string, nowMs: number): string {
   const at = Date.parse(iso)
