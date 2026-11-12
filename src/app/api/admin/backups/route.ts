@@ -1,4 +1,3 @@
-import type { NextRequest } from 'next/server'
 import { ADMIN_BACKUP_LIST_LIMIT, type AdminBackupsReply } from '@/shared/backups-api'
 import { json } from '@/server/api-route'
 import { withAdmin } from '@/server/auth/guards'
@@ -14,13 +13,13 @@ import { cronRunTimes, listAllBackups, listRuns, storageUsed, uploadsLast30Days 
  * limit, and when the nightly run last succeeded. Admins only (404 to
  * anyone else).
  */
-export const GET = withAdmin(async (_req: NextRequest) => {
+export const GET = withAdmin(async () => {
   const db = getDb()
   const store = getBackupStore()
   const [{ backups, total }, runs, storage, cron, uploads] = await Promise.all([
-    listAllBackups(db, ADMIN_BACKUP_LIST_LIMIT),
+    listAllBackups(db, ADMIN_BACKUP_LIST_LIMIT, store?.id ?? null),
     listRuns(db, 30),
-    storageUsed(db),
+    storageUsed(db, store?.id ?? null),
     cronRunTimes(db),
     uploadsLast30Days(db),
   ])

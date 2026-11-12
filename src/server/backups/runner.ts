@@ -24,8 +24,10 @@ import { backupPathname, BackupStoreError, imagePathname, type BackupStore } fro
  *     session one, so it works through Neon's pooler. Vercel can deliver one
  *     cron call twice; the second gets 'busy'.
  *  2. Lists the weddings to back up (orderedCandidates): every live wedding,
- *     and every deleted one whose deletion is newer than its last backup (it
- *     gets one 'final' backup).
+ *     and every wedding deleted in the last 12 months whose deletion is newer
+ *     than its last backup (it gets one 'final' backup). Only backups in this
+ *     store count (BackupStore.id), so after the store is replaced every
+ *     wedding is backed up afresh.
  *  3. Backs each up in turn (backupOneWedding), each in its own try/catch, so
  *     one failure never stops the others; a failure is recorded by wedding id
  *     with a message that never holds guest data. Past the deadline it stops,
@@ -202,14 +204,18 @@ async function finishRun(db: Db, runId: string, summary: RunSummary): Promise<vo
 type Candidate = { weddingId: string; deleted: boolean; createdAt: Date; lastCheckedAt: Date | null }
 
 /**
- * The weddings this run backs up, in order:
+ * The weddings this run backs up: every live wedding, and every wedding
+ * deleted in the last 12 months whose deletion is newer than its last backup
+ * in this store (its final backup). The 12 months stop a deleted wedding
+ * from coming back once retention has let its final backup go, 12 months
+ * after it was made. In order:
  *  - never backed up first, then the one checked longest ago (checked_at:
  *    when its last backup was made or last found unchanged), so after a run
  *    that stopped at its deadline the next one starts with what it missed;
  *  - but a wedding that failed in the last full run goes after all the rest,
  *    so one that keeps failing cannot hold the others up.
  */
-async function orderedCandidates(db: Db, runId: string, weddingIds?: readonly string[]): Promise<Candidate[]> {
+async function orderedCandidates(db: Db, storeId: string, runId: string, weddingIds?: readonly string[]): Promise<Candidate[]> {
   if (weddingIds && weddingIds.length === 0) return []
   const only = weddingIds
     ? sql`and w.id in (${sql.join(
@@ -221,12 +227,19 @@ async function orderedCandidates(db: Db, runId: string, weddingIds?: readonly st
     with latest as (
       select distinct on (wedding_id) wedding_id, created_at, checked_at
       from backups
+      where store_id = ${storeId}
       order by wedding_id, created_at desc, id desc
     )
     select w.id, w.deleted_at, w.created_at, l.checked_at as last_checked_at
     from weddings w
     left join latest l on l.wedding_id = w.id
-    where (w.deleted_at is null or l.created_at is null or w.deleted_at > l.created_at)
+    where (
+      w.deleted_at is null
+      or (
+        w.deleted_at > now() - make_interval(months => ${DEFAULT_RETENTION.monthlyMonths})
+        and (l.created_at is null or w.deleted_at > l.created_at)
+      )
+    )
     ${only}
   `)
   const [previous] = await db
@@ -280,7 +293,7 @@ export async function backupOneWedding(
     const [latest] = await db
       .select({ id: backups.id, contentSha256: backups.contentSha256 })
       .from(backups)
-      .where(eq(backups.weddingId, weddingId))
+      .where(and(eq(backups.weddingId, weddingId), eq(backups.storeId, store.id)))
       .orderBy(desc(backups.createdAt), desc(backups.id))
       .limit(1)
     if (latest && latest.contentSha256 === built.contentSha256) {
@@ -295,7 +308,14 @@ export async function backupOneWedding(
   const known =
     shas.length === 0
       ? new Set<string>()
-      : new Set((await db.select({ sha256: backupImages.sha256 }).from(backupImages).where(inArray(backupImages.sha256, shas))).map((r) => r.sha256))
+      : new Set(
+          (
+            await db
+              .select({ sha256: backupImages.sha256 })
+              .from(backupImages)
+              .where(and(eq(backupImages.storeId, store.id), inArray(backupImages.sha256, shas)))
+          ).map((r) => r.sha256),
+        )
   const missing = wanted.filter((image) => !known.has(image.sha256))
 
   // Every upload of the last 30 days still has its row: pruning never deletes a backup that young, nor an image one names.
@@ -317,7 +337,7 @@ export async function backupOneWedding(
     await store.put(pathname, bytes, image.contentType, { overwrite: true })
     await db
       .insert(backupImages)
-      .values({ sha256: image.sha256, pathname, contentType: image.contentType, byteSize: bytes.byteLength })
+      .values({ storeId: store.id, sha256: image.sha256, pathname, contentType: image.contentType, byteSize: bytes.byteLength })
       .onConflictDoNothing()
   }
 
@@ -328,13 +348,17 @@ export async function backupOneWedding(
   try {
     const row = await db.transaction(async (tx) => {
       if (shas.length > 0) {
-        const present = await tx.select({ sha256: backupImages.sha256 }).from(backupImages).where(inArray(backupImages.sha256, shas))
+        const present = await tx
+          .select({ sha256: backupImages.sha256 })
+          .from(backupImages)
+          .where(and(eq(backupImages.storeId, store.id), inArray(backupImages.sha256, shas)))
         if (present.length !== shas.length) throw new BackupError('A floor plan image this backup needs is no longer in the backup store.')
       }
       const [inserted] = await tx
         .insert(backups)
         .values({
           id: backupId,
+          storeId: store.id,
           weddingId,
           weddingName: built.weddingName,
           kind: opts.kind,
@@ -373,6 +397,7 @@ export async function pruneBackups(db: Db, store: BackupStore, now: Date = new D
   const rows = await db
     .select({ id: backups.id, weddingId: backups.weddingId, kind: backups.kind, createdAt: backups.createdAt, pathname: backups.pathname })
     .from(backups)
+    .where(eq(backups.storeId, store.id))
     .orderBy(asc(backups.createdAt), asc(backups.id))
   const byId = new Map(rows.map((r) => [r.id, r]))
   const doomed = backupsToPrune(rows, now, DEFAULT_RETENTION)
@@ -384,15 +409,20 @@ export async function pruneBackups(db: Db, store: BackupStore, now: Date = new D
     pruned += ids.length
   }
 
-  const unnamed = sql`not exists (select 1 from "backups" b where "backup_images"."sha256" = any(b."image_sha256s"))`
+  const unnamed = sql`not exists (
+    select 1 from "backups" b
+    where b."store_id" = "backup_images"."store_id" and "backup_images"."sha256" = any(b."image_sha256s")
+  )`
   const orphans = await db
     .select({ sha256: backupImages.sha256, pathname: backupImages.pathname })
     .from(backupImages)
-    .where(and(lt(backupImages.createdAt, new Date(now.getTime() - IMAGE_GRACE_MS)), unnamed))
+    .where(and(eq(backupImages.storeId, store.id), lt(backupImages.createdAt, new Date(now.getTime() - IMAGE_GRACE_MS)), unnamed))
   for (let i = 0; i < orphans.length; i += 100) {
     const part = orphans.slice(i, i + 100)
     await store.delete(part.map((o) => o.pathname))
-    await db.delete(backupImages).where(and(inArray(backupImages.sha256, part.map((o) => o.sha256)), unnamed))
+    await db
+      .delete(backupImages)
+      .where(and(eq(backupImages.storeId, store.id), inArray(backupImages.sha256, part.map((o) => o.sha256)), unnamed))
   }
   return pruned
 }
@@ -425,7 +455,7 @@ export async function runBackups(db: Db, store: BackupStore, opts: RunOptions): 
   summary.runId = runId
 
   try {
-    const list = await orderedCandidates(db, runId, opts.weddingIds)
+    const list = await orderedCandidates(db, store.id, runId, opts.weddingIds)
     for (let i = 0; i < list.length; i++) {
       const candidate = list[i]!
       if (Date.now() >= opts.deadline) {

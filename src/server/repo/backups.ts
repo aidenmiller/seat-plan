@@ -13,7 +13,9 @@ import type { Db } from '../locks'
 /**
  * Reads of the stored-backup tables for the routes (src/server/backups is
  * the job that writes them). A wedding's own backups are always looked up
- * with its id, so a backup id from another wedding reads as missing.
+ * with its id, so a backup id from another wedding reads as missing; and
+ * only backups in the store this deployment uses (BackupStore.id) are listed
+ * or found for a download or restore.
  */
 
 export type BackupRow = typeof backups.$inferSelect
@@ -48,13 +50,13 @@ function toSummary(row: SummaryRow): BackupSummary {
   }
 }
 
-/** A wedding's backups, newest first. */
-export async function listWeddingBackups(db: Db, weddingId: string): Promise<BackupSummary[]> {
+/** A wedding's backups in this store, newest first. */
+export async function listWeddingBackups(db: Db, weddingId: string, storeId: string): Promise<BackupSummary[]> {
   const rows = await db
     .select(summaryColumns)
     .from(backups)
     .leftJoin(users, eq(users.id, backups.createdBy))
-    .where(eq(backups.weddingId, weddingId))
+    .where(and(eq(backups.weddingId, weddingId), eq(backups.storeId, storeId)))
     .orderBy(desc(backups.createdAt), desc(backups.id))
   return rows.map(toSummary)
 }
@@ -65,18 +67,21 @@ export async function backupSummaryById(db: Db, backupId: string): Promise<Backu
   return row ? toSummary(row) : null
 }
 
-/** The backup, only when it belongs to this wedding. */
-export async function getWeddingBackup(db: Db, weddingId: string, backupId: string): Promise<BackupRow | null> {
+/** The backup, only when it belongs to this wedding and is in this store. */
+export async function getWeddingBackup(db: Db, weddingId: string, backupId: string, storeId: string): Promise<BackupRow | null> {
   const [row] = await db
     .select()
     .from(backups)
-    .where(and(eq(backups.id, backupId), eq(backups.weddingId, weddingId)))
+    .where(and(eq(backups.id, backupId), eq(backups.weddingId, weddingId), eq(backups.storeId, storeId)))
   return row ?? null
 }
 
-/** Any backup, for the admin. */
-export async function getBackup(db: Db, backupId: string): Promise<BackupRow | null> {
-  const [row] = await db.select().from(backups).where(eq(backups.id, backupId))
+/** Any backup in this store, for the admin. */
+export async function getBackup(db: Db, backupId: string, storeId: string): Promise<BackupRow | null> {
+  const [row] = await db
+    .select()
+    .from(backups)
+    .where(and(eq(backups.id, backupId), eq(backups.storeId, storeId)))
   return row ?? null
 }
 
@@ -97,10 +102,14 @@ export async function recentManualBackupAt(db: Db, weddingId: string, withinMs: 
   return row?.createdAt ?? null
 }
 
-/** Every backup, newest first, with whether its wedding is live, deleted, or gone altogether. */
-export async function listAllBackups(db: Db, limit: number): Promise<{ backups: AdminBackupSummary[]; total: number }> {
+/**
+ * Every backup, newest first, with whether its wedding is live, deleted, or
+ * gone altogether, and whether it is in this store (one in a store replaced
+ * since cannot be downloaded or restored).
+ */
+export async function listAllBackups(db: Db, limit: number, storeId: string | null): Promise<{ backups: AdminBackupSummary[]; total: number }> {
   const rows = await db
-    .select({ ...summaryColumns, weddingDeletedAt: weddings.deletedAt, weddingExists: weddings.id })
+    .select({ ...summaryColumns, storeId: backups.storeId, weddingDeletedAt: weddings.deletedAt, weddingExists: weddings.id })
     .from(backups)
     .leftJoin(users, eq(users.id, backups.createdBy))
     .leftJoin(weddings, eq(weddings.id, backups.weddingId))
@@ -111,6 +120,7 @@ export async function listAllBackups(db: Db, limit: number): Promise<{ backups: 
     backups: rows.map((r) => ({
       ...toSummary(r),
       weddingState: r.weddingExists === null ? 'gone' : r.weddingDeletedAt === null ? 'live' : 'deleted',
+      inThisStore: r.storeId === storeId,
     })),
     total: total?.n ?? 0,
   }
@@ -161,10 +171,11 @@ export async function listRuns(db: Db, limit: number): Promise<BackupRunInfo[]> 
   }))
 }
 
-/** What the store holds, by the database's count: backup files and images, and their sizes. */
-export async function storageUsed(db: Db): Promise<BackupStorageUsage> {
-  const [files] = await db.select({ n: count(), bytes: sum(backups.byteSize) }).from(backups)
-  const [images] = await db.select({ n: count(), bytes: sum(backupImages.byteSize) }).from(backupImages)
+/** What this store holds, by the database's count: backup files and images, and their sizes. */
+export async function storageUsed(db: Db, storeId: string | null): Promise<BackupStorageUsage> {
+  if (storeId === null) return { backupCount: 0, backupBytes: 0, imageCount: 0, imageBytes: 0, totalBytes: 0 }
+  const [files] = await db.select({ n: count(), bytes: sum(backups.byteSize) }).from(backups).where(eq(backups.storeId, storeId))
+  const [images] = await db.select({ n: count(), bytes: sum(backupImages.byteSize) }).from(backupImages).where(eq(backupImages.storeId, storeId))
   const backupBytes = Number(files?.bytes ?? 0)
   const imageBytes = Number(images?.bytes ?? 0)
   return { backupCount: files?.n ?? 0, backupBytes, imageCount: images?.n ?? 0, imageBytes, totalBytes: backupBytes + imageBytes }
@@ -187,7 +198,7 @@ export async function cronRunTimes(db: Db): Promise<{ lastSuccessAt: Date | null
   return { lastSuccessAt: success?.startedAt ?? null, last: last ?? null }
 }
 
-/** Uploads to the store in the last 30 days (what the upload limit counts, runner.ts). */
+/** Uploads in the last 30 days, to any store (what the upload limit counts, runner.ts: the allowance is the account's). */
 export async function uploadsLast30Days(db: Db): Promise<number> {
   const result = await db.execute<{ n: string }>(sql`
     select (select count(*) from backups where created_at > now() - interval '30 days')

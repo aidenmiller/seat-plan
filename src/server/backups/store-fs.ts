@@ -27,6 +27,7 @@ export function createFilesystemStore(root: string): BackupStore {
 
   return {
     kind: 'filesystem',
+    id: `filesystem:${base}`,
     async put(pathname, bytes, _contentType, opts) {
       const full = fullPath(pathname)
       if (!opts?.overwrite) {

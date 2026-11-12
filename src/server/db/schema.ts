@@ -595,11 +595,14 @@ export const backupRuns = pgTable(
  * images are stored once each by content (backup_images) and named by
  * `image_sha256s`. wedding_id has no foreign key, so backups outlive the
  * wedding (as activity_events do); wedding_name is the name at backup time.
+ * store_id names the store the file went to (BackupStore.id): a backup in
+ * another store (one replaced since) is never read, compared or reused.
  */
 export const backups = pgTable(
   'backups',
   {
     id: uuid().primaryKey().defaultRandom(),
+    storeId: text().notNull(),
     weddingId: uuid().notNull(),
     weddingName: text().notNull(),
     kind: text({ enum: ['nightly', 'manual', 'final'] }).notNull(),
@@ -626,24 +629,31 @@ export const backups = pgTable(
     check('backups_blob_sha256_hex', sql`${t.blobSha256} ~ '^[0-9a-f]{64}$'`),
     check('backups_content_sha256_hex', sql`${t.contentSha256} ~ '^[0-9a-f]{64}$'`),
     check('backups_counts_nonnegative', sql`${t.byteSize} >= 0 and ${t.guestCount} >= 0 and ${t.layoutCount} >= 0`),
+    check('backups_store_id_length', sql`length(${t.storeId}) between 1 and 300`),
     index('backups_wedding_created_idx').on(t.weddingId, t.createdAt.desc()),
     index('backups_created_idx').on(t.createdAt),
     index('backups_image_sha256s_idx').using('gin', t.imageSha256s),
   ],
 )
 
-/** A floor plan image in the backup store, stored once by its content (backups/images/<sha256>.<ext>). */
+/**
+ * A floor plan image in a backup store, stored once per store by its content
+ * (backups/images/<sha256>.<ext>).
+ */
 export const backupImages = pgTable(
   'backup_images',
   {
-    sha256: text().primaryKey(),
+    storeId: text().notNull(),
+    sha256: text().notNull(),
     pathname: text().notNull(),
     contentType: text({ enum: ['image/png', 'image/jpeg'] }).notNull(),
     byteSize: bigint({ mode: 'number' }).notNull(),
     createdAt: createdAt(),
   },
   (t) => [
-    unique('backup_images_pathname_uq').on(t.pathname),
+    primaryKey({ columns: [t.storeId, t.sha256] }),
+    unique('backup_images_store_pathname_uq').on(t.storeId, t.pathname),
+    check('backup_images_store_id_length', sql`length(${t.storeId}) between 1 and 300`),
     check('backup_images_sha256_hex', sql`${t.sha256} ~ '^[0-9a-f]{64}$'`),
     check('backup_images_content_type_valid', sql`${t.contentType} in ('image/png', 'image/jpeg')`),
     check('backup_images_byte_size_nonnegative', sql`${t.byteSize} >= 0`),

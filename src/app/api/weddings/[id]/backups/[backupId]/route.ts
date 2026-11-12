@@ -18,9 +18,9 @@ type Context = { params: Promise<{ id: string; backupId: string }> }
 export const GET = withWeddingRole<Context>(byWeddingId, 'owner', async (_req: NextRequest, ctx: Context, access) => {
   const backupId = await backupIdParam(ctx)
   if (!backupId) return notFound()
-  const backup = await getWeddingBackup(getDb(), access.weddingId, backupId)
-  if (!backup) return notFound()
   const store = getBackupStore()
   if (!store) return notConfigured()
+  const backup = await getWeddingBackup(getDb(), access.weddingId, backupId, store.id)
+  if (!backup) return notFound()
   return storedBackupDownload(store, backup)
 })

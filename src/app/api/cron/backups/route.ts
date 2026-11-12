@@ -1,4 +1,3 @@
-import type { NextRequest } from 'next/server'
 import type { CronBackupsReply } from '@/shared/backups-api'
 import { json } from '@/server/api-route'
 import { withCronSecret } from '@/server/auth/guards'
@@ -25,7 +24,7 @@ export const dynamic = 'force-dynamic'
  * pruning failed or the run itself did, so Vercel's cron log shows it. 503
  * when this deployment has no backup store.
  */
-const run = withCronSecret(async (_req: NextRequest) => {
+const run = withCronSecret(async () => {
   const store = getBackupStore()
   if (!store) return notConfigured()
   const summary = await runBackups(getDb(), store, { trigger: 'cron', deadline: Date.now() + RUN_BUDGET_MS })

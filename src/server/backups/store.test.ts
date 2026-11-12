@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { backupPathname, BackupStoreError, getBackupStore, imagePathname, isBackupPathname, type BackupStore } from './store'
+import { backupPathname, blobStoreId, BackupStoreError, getBackupStore, imagePathname, isBackupPathname, type BackupStore } from './store'
 import { createFilesystemStore } from './store-fs'
 import { createMemoryStore } from './store-memory'
 import { createVercelBlobStore, type BlobSdk } from './store-vercel'
@@ -167,8 +167,9 @@ describe('vercel blob store', () => {
 
   it('passes private access, the content type, no random suffix and the overwrite flag, and never lists', async () => {
     const sdk = fakeSdk()
-    const store = createVercelBlobStore(async () => sdk as unknown as BlobSdk)
+    const store = createVercelBlobStore('abc123', async () => sdk as unknown as BlobSdk)
     expect(store.kind).toBe('vercel-blob')
+    expect(store.id).toBe('vercel-blob:abc123')
     const pathname = backupPathname(WEDDING, AT, 'nightly', BACKUP)
     await store.put(pathname, new Uint8Array([1, 2, 3]), 'application/gzip')
     expect(sdk.put).toHaveBeenCalledWith(pathname, expect.any(Buffer), {
@@ -198,7 +199,7 @@ describe('vercel blob store', () => {
 
   it('refuses a bad pathname before loading the SDK, and wraps SDK errors without their details', async () => {
     const load = vi.fn(async () => fakeSdk() as unknown as BlobSdk)
-    const store = createVercelBlobStore(load)
+    const store = createVercelBlobStore('abc123', load)
     await expect(store.put('../x', new Uint8Array([1]), 'image/png')).rejects.toThrow(BackupStoreError)
     await expect(store.get('../x')).rejects.toThrow(BackupStoreError)
     expect(load).not.toHaveBeenCalled()
@@ -213,7 +214,7 @@ describe('vercel blob store', () => {
         throw new Error('boom')
       }),
     }
-    const broken = createVercelBlobStore(async () => failing as unknown as BlobSdk)
+    const broken = createVercelBlobStore('abc123', async () => failing as unknown as BlobSdk)
     const pathname = imagePathname(SHA, 'image/png')
     await expect(broken.put(pathname, new Uint8Array([1]), 'image/png')).rejects.toThrow(
       /^Vercel Blob upload failed \(BlobStoreSuspendedError: Vercel Blob: This store has been suspended\.\)$/,
@@ -226,7 +227,10 @@ describe('vercel blob store', () => {
 describe('getBackupStore', () => {
   it('uses Vercel Blob only on the production deployment, with a store connected', () => {
     expect(getBackupStore({ VERCEL: '1', VERCEL_ENV: 'production', BLOB_STORE_ID: 'store_x' })?.kind).toBe('vercel-blob')
-    expect(getBackupStore({ VERCEL: '1', VERCEL_ENV: 'production', BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_x' })?.kind).toBe('vercel-blob')
+    expect(getBackupStore({ VERCEL: '1', VERCEL_ENV: 'production', BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_x_secret' })?.kind).toBe('vercel-blob')
+    expect(getBackupStore({ VERCEL: '1', VERCEL_ENV: 'production', BLOB_STORE_ID: 'store_AbC9' })?.id).toBe('vercel-blob:abc9')
+    // A token the store id cannot be read from: not set up, rather than guess.
+    expect(getBackupStore({ VERCEL: '1', VERCEL_ENV: 'production', BLOB_READ_WRITE_TOKEN: 'not-a-token' })).toBeNull()
     // Production without a store: none (the build refuses this, but the routes must still say so plainly).
     expect(getBackupStore({ VERCEL: '1', VERCEL_ENV: 'production' })).toBeNull()
     // A folder setting is ignored on production: a function's disk does not last.
@@ -247,5 +251,25 @@ describe('getBackupStore', () => {
     expect(getBackupStore({ BACKUP_STORE_DIR: '.backups' })?.kind).toBe('filesystem')
     expect(getBackupStore({ BACKUP_STORE_DIR: '.backups', BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_x' })?.kind).toBe('filesystem')
     expect(getBackupStore({ VERCEL_ENV: 'development', BACKUP_STORE_DIR: '.backups' })?.kind).toBe('filesystem')
+  })
+})
+
+describe('store ids', () => {
+  it('reads the Blob store id as the SDK does: BLOB_STORE_ID, else the id inside the token', () => {
+    expect(blobStoreId({ BLOB_STORE_ID: 'store_Ab12' })).toBe('ab12')
+    expect(blobStoreId({ BLOB_STORE_ID: 'ab12' })).toBe('ab12')
+    expect(blobStoreId({ BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_Zz99_secretpart' })).toBe('zz99')
+    // The connection's store id wins over a token, as OIDC does in the SDK.
+    expect(blobStoreId({ BLOB_STORE_ID: 'one', BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_two_secret' })).toBe('one')
+    for (const env of [{}, { BLOB_STORE_ID: '' }, { BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw' }, { BLOB_STORE_ID: 'a/b' }]) expect(blobStoreId(env)).toBeNull()
+  })
+
+  it('tells stores apart: each folder, each memory store, each Blob store', () => {
+    const a = tempDir()
+    expect(createFilesystemStore(a).id).toBe(`filesystem:${path.resolve(a)}`)
+    expect(createFilesystemStore(a).id).toBe(createFilesystemStore(a).id)
+    expect(createFilesystemStore(tempDir()).id).not.toBe(createFilesystemStore(a).id)
+    expect(createMemoryStore().id).not.toBe(createMemoryStore().id)
+    expect(createVercelBlobStore('one').id).not.toBe(createVercelBlobStore('two').id)
   })
 })

@@ -63,8 +63,7 @@ export type BuiltBackup = {
 
 /** The hash of a head: canonical JSON without exportedAt. */
 export function contentSha256Of(head: StoredBackupHead): string {
-  const { exportedAt: _exportedAt, ...content } = head
-  return sha256Hex(canonicalJson(content))
+  return sha256Hex(canonicalJson({ ...head, exportedAt: undefined }))
 }
 
 /** The backup of one wedding, or null when it does not exist (or is deleted, without `includeDeleted`). */

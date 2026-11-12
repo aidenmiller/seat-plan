@@ -84,8 +84,12 @@ export type BackupRunInfo = {
   error: string | null
 }
 
-/** A backup on the admin's list, with whether its wedding is still there. */
-export type AdminBackupSummary = BackupSummary & { weddingState: 'live' | 'deleted' | 'gone' }
+/**
+ * A backup on the admin's list, with whether its wedding is still there, and
+ * whether it is in the store this deployment uses (one in a store replaced
+ * since cannot be downloaded or restored).
+ */
+export type AdminBackupSummary = BackupSummary & { weddingState: 'live' | 'deleted' | 'gone'; inThisStore: boolean }
 
 export type BackupStorageUsage = { backupCount: number; backupBytes: number; imageCount: number; imageBytes: number; totalBytes: number }
 

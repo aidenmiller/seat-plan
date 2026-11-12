@@ -1,10 +1,13 @@
 CREATE TABLE "backup_images" (
-	"sha256" text PRIMARY KEY NOT NULL,
+	"store_id" text NOT NULL,
+	"sha256" text NOT NULL,
 	"pathname" text NOT NULL,
 	"content_type" text NOT NULL,
 	"byte_size" bigint NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "backup_images_pathname_uq" UNIQUE("pathname"),
+	CONSTRAINT "backup_images_store_id_sha256_pk" PRIMARY KEY("store_id","sha256"),
+	CONSTRAINT "backup_images_store_pathname_uq" UNIQUE("store_id","pathname"),
+	CONSTRAINT "backup_images_store_id_length" CHECK (length("backup_images"."store_id") between 1 and 300),
 	CONSTRAINT "backup_images_sha256_hex" CHECK ("backup_images"."sha256" ~ '^[0-9a-f]{64}$'),
 	CONSTRAINT "backup_images_content_type_valid" CHECK ("backup_images"."content_type" in ('image/png', 'image/jpeg')),
 	CONSTRAINT "backup_images_byte_size_nonnegative" CHECK ("backup_images"."byte_size" >= 0)
@@ -33,6 +36,7 @@ CREATE TABLE "backup_runs" (
 --> statement-breakpoint
 CREATE TABLE "backups" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"store_id" text NOT NULL,
 	"wedding_id" uuid NOT NULL,
 	"wedding_name" text NOT NULL,
 	"kind" text NOT NULL,
@@ -52,7 +56,8 @@ CREATE TABLE "backups" (
 	CONSTRAINT "backups_kind_valid" CHECK ("backups"."kind" in ('nightly', 'manual', 'final')),
 	CONSTRAINT "backups_blob_sha256_hex" CHECK ("backups"."blob_sha256" ~ '^[0-9a-f]{64}$'),
 	CONSTRAINT "backups_content_sha256_hex" CHECK ("backups"."content_sha256" ~ '^[0-9a-f]{64}$'),
-	CONSTRAINT "backups_counts_nonnegative" CHECK ("backups"."byte_size" >= 0 and "backups"."guest_count" >= 0 and "backups"."layout_count" >= 0)
+	CONSTRAINT "backups_counts_nonnegative" CHECK ("backups"."byte_size" >= 0 and "backups"."guest_count" >= 0 and "backups"."layout_count" >= 0),
+	CONSTRAINT "backups_store_id_length" CHECK (length("backups"."store_id") between 1 and 300)
 );
 --> statement-breakpoint
 ALTER TABLE "backup_runs" ADD CONSTRAINT "backup_runs_started_by_users_id_fk" FOREIGN KEY ("started_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint

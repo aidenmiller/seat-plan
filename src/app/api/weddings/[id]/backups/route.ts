@@ -18,7 +18,11 @@ const MANUAL_INTERVAL_MS = 5 * 60_000
 
 /** The wedding's stored backups, newest first, and whether this deployment stores backups at all. Owners only. */
 export const GET = withWeddingRole(byWeddingId, 'owner', async (_req: NextRequest, _ctx: IdContext, access) => {
-  const reply: WeddingBackupsReply = { configured: getBackupStore() !== null, backups: await listWeddingBackups(getDb(), access.weddingId) }
+  const store = getBackupStore()
+  const reply: WeddingBackupsReply = {
+    configured: store !== null,
+    backups: store ? await listWeddingBackups(getDb(), access.weddingId, store.id) : [],
+  }
   return json(reply)
 })
 

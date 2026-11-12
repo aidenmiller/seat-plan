@@ -18,7 +18,8 @@
  *  - As the admin, every route works, and each wedding opened is logged.
  * Signed out is route-auth.test.ts's job.
  */
-import { readdirSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { and, asc, eq, inArray } from 'drizzle-orm'
@@ -53,6 +54,10 @@ import { createShareLink, deleteShareLink, listLayoutShareLinks, updateShareLink
 import { canvasOf, makeGuest, makeLayout, roundTable } from '../repo/test-fixtures'
 import { addTemplateImage, createTemplate } from '../repo/venues'
 import { policyOf } from './guards'
+// ---- Stored backups (mu-p9-backups)
+import { backupOneWedding } from '../backups/runner'
+import { getBackupStore } from '../backups/store'
+// ---- End of stored backups
 
 const APP_DIR = path.resolve(__dirname, '../../app')
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const
@@ -93,6 +98,10 @@ type World = {
   bGuest: string
   bLayout: string
   bTemplate: string
+  // ---- Stored backups (mu-p9-backups): a stored backup of W_A and one of W_B.
+  backupA: string
+  backupB: string
+  // ---- End of stored backups
   /** Strings no reply to B may hold. */
   secrets: string[]
 }
@@ -103,12 +112,19 @@ let userB: TestUser
 let admin: TestUser
 const cookies: Record<Actor | 'owner', string> = { outsider: '', editor: '', admin: '', owner: '' }
 let tbc = ''
+// ---- Stored backups (mu-p9-backups): a folder backup store for this file, and a cron secret that no request here sends.
+const backupDir = mkdtempSync(path.join(os.tmpdir(), 'isolation-backups-'))
+// ---- End of stored backups
 
 beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'isolation-int-test-secret-of-32-chars-plus')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
   // The floor plan import answers 503 after its checks: no model call is made here.
   vi.stubEnv('ANTHROPIC_API_KEY', '')
+  // ---- Stored backups (mu-p9-backups)
+  vi.stubEnv('BACKUP_STORE_DIR', backupDir)
+  vi.stubEnv('CRON_SECRET', 'isolationcronsecret0123456789abcdefXYZ')
+  // ---- End of stored backups
   await truncateAll(pool)
   userA = await makeUser(db, { displayName: 'Ada' })
   userE = await makeUser(db, { displayName: 'Eli' })
@@ -127,6 +143,7 @@ beforeAll(async () => {
 afterAll(async () => {
   vi.unstubAllEnvs()
   await pool.end()
+  rmSync(backupDir, { recursive: true, force: true })
 })
 
 /** A fresh W_A (owned by A, E an editor), A's restore job, and W_B (owned by B). */
@@ -183,6 +200,13 @@ async function makeWorld(): Promise<World> {
   const bGuest = await makeGuest(db, weddingB, 'Bo', `Guest${tag}`)
   const bLayout = await makeLayout(db, weddingB, canvasOf(), { name: 'Bo layout' })
 
+  // ---- Stored backups (mu-p9-backups): nightly ones, so the owner's "Back up now" is not held back by the 5-minute rule.
+  const store = getBackupStore()!
+  const storedA = await backupOneWedding(db, store, weddingA, { kind: 'nightly' })
+  const storedB = await backupOneWedding(db, store, weddingB, { kind: 'nightly' })
+  if (storedA.status === 'not-found' || storedB.status === 'not-found') throw new Error('makeWorld: a backup was not made')
+  // ---- End of stored backups
+
   return {
     tag,
     weddingA,
@@ -212,6 +236,8 @@ async function makeWorld(): Promise<World> {
     bGuest,
     bLayout,
     bTemplate: bMade.venue.id,
+    backupA: storedA.backup.id,
+    backupB: storedB.backup.id,
     secrets: [
       weddingA,
       weddingName,
@@ -592,7 +618,68 @@ const ROWS: Record<string, Partial<Record<Method, Row>>> = {
     },
   },
   'api/venues/[id]/duplicate/route.ts': { POST: { req: (w) => ({ ...id(w.template), body: { name: 'A copy' } }) } },
+
+  // ---- Stored backups (mu-p9-backups). The wedding's backup routes follow their
+  // policy (owner: B 404, E 403, the admin through); the cron route lets no
+  // session in without its bearer secret; the admin's backup routes answer
+  // 404 to anyone but an admin.
+  'api/cron/backups/route.ts': { GET: { checks: cronRefusesSessions('GET') }, POST: { checks: cronRefusesSessions('POST') } },
+  'api/weddings/[id]/backups/route.ts': {
+    GET: { req: (w) => id(w.weddingA) },
+    // The admin's "Back up now": 201, or 200 when nothing changed since the nightly backup.
+    POST: { req: (w) => id(w.weddingA) },
+  },
+  'api/weddings/[id]/backups/[backupId]/route.ts': { GET: { req: (w) => ({ params: { id: w.weddingA, backupId: w.backupA } }) } },
+  'api/weddings/[id]/backups/[backupId]/restore/route.ts': {
+    POST: { req: (w) => ({ params: { id: w.weddingA, backupId: w.backupA }, body: { jobId: randomUUID() } }) },
+  },
+  'api/admin/backups/route.ts': {
+    GET: {
+      checks: adminOnly(async (w, call) => {
+        const res = await call({ params: {} })
+        expect(res.status).toBe(200)
+        expect((res.body as { backups: { id: string }[] }).backups.map((b) => b.id)).toContain(w.backupA)
+      }, () => ({ params: {} })),
+    },
+  },
+  'api/admin/backups/run/route.ts': {
+    POST: { checks: adminOnly(async (_w, call) => expect((await call({ params: {} })).status).toBe(200), () => ({ params: {} })) },
+  },
+  'api/admin/backups/[backupId]/route.ts': {
+    GET: {
+      checks: adminOnly(
+        async (w, call) => expect((await call({ params: { backupId: w.backupA } })).status).toBe(200),
+        (w) => ({ params: { backupId: w.backupA } }),
+      ),
+    },
+  },
+  'api/admin/backups/[backupId]/restore/route.ts': {
+    POST: {
+      checks: adminOnly(
+        async (w, call) => expect((await call({ params: { backupId: w.backupA }, body: { jobId: randomUUID() } })).status).toBe(201),
+        (w) => ({ params: { backupId: w.backupA }, body: { jobId: randomUUID() } }),
+      ),
+    },
+  },
+  // ---- End of stored backups
 }
+
+// ---- Stored backups (mu-p9-backups)
+/** The cron route with each actor's valid session cookie and no bearer secret: 401, before anything runs. */
+function cronRefusesSessions(method: string): Record<Actor, Check> {
+  const check: Check = async (_w, call) => {
+    const res = await call({ params: {} })
+    expect(res, `${method} /api/cron/backups with a session cookie`).toMatchObject({ status: 401, body: { error: 'unauthorized' } })
+  }
+  return { outsider: check, editor: check, admin: check }
+}
+
+/** An admin route: 404 to B and E (as a route that does not exist), `admin` for the admin. */
+function adminOnly(adminCheck: Check, req: (w: World) => Req): Record<Actor, Check> {
+  const refused: Check = async (w, call) => expect(await call(req(w))).toMatchObject({ status: 404, body: { error: 'not_found' } })
+  return { outsider: refused, editor: refused, admin: adminCheck }
+}
+// ---- End of stored backups
 
 /** Every handler with its row, in the table's order with late ones last; fails for a handler without a row. */
 async function plan(): Promise<{ file: string; method: Method; handler: Handler; row: Row }[]> {
@@ -772,6 +859,44 @@ describe('a planner outside the wedding (B)', () => {
     ])
   })
 })
+
+// ---- Stored backups (mu-p9-backups)
+describe('a planner outside the wedding (B), with the id of A’s stored backup', () => {
+  it('cannot list, download or restore it through B’s own wedding, nor through any admin route', async () => {
+    const w = await makeWorld()
+    const before = await snapshot(w)
+    const call = async (file: string, method: Method, req: Req) => {
+      const handler = (await handlersOf(file)).find(([m]) => m === method)![1]
+      return send(handler, file, method, req, cookies.outsider)
+    }
+    const jobId = randomUUID()
+    const replies = [
+      // B's own wedding id with A's backup id: the backup must be the wedding's, so it reads as missing.
+      await call('api/weddings/[id]/backups/[backupId]/route.ts', 'GET', { params: { id: w.weddingB, backupId: w.backupA } }),
+      await call('api/weddings/[id]/backups/[backupId]/restore/route.ts', 'POST', { params: { id: w.weddingB, backupId: w.backupA }, body: { jobId } }),
+      // A's wedding id with A's backup id: not B's wedding.
+      await call('api/weddings/[id]/backups/[backupId]/route.ts', 'GET', { params: { id: w.weddingA, backupId: w.backupA } }),
+      await call('api/weddings/[id]/backups/[backupId]/restore/route.ts', 'POST', { params: { id: w.weddingA, backupId: w.backupA }, body: { jobId } }),
+      // The admin's routes, which take any backup id.
+      await call('api/admin/backups/[backupId]/route.ts', 'GET', { params: { backupId: w.backupA } }),
+      await call('api/admin/backups/[backupId]/restore/route.ts', 'POST', { params: { backupId: w.backupA }, body: { jobId } }),
+      await call('api/admin/backups/route.ts', 'GET', { params: {} }),
+      await call('api/admin/backups/run/route.ts', 'POST', { params: {} }),
+    ]
+    expect(replies.map((r) => r.status)).toEqual([404, 404, 404, 404, 404, 404, 404, 404])
+    // B's own list holds only B's backup.
+    const list = await call('api/weddings/[id]/backups/route.ts', 'GET', id(w.weddingB))
+    expect((list.body as { backups: { id: string }[] }).backups.map((b) => b.id)).toEqual([w.backupB])
+    replies.push(list)
+    // B's own backup works, so the refusals above are the wedding check, not a broken route.
+    const own = await call('api/weddings/[id]/backups/[backupId]/route.ts', 'GET', { params: { id: w.weddingB, backupId: w.backupB } })
+    expect(own.status).toBe(200)
+    expect(await db.select().from(weddings).where(eq(weddings.id, restoredWeddingId(jobId)))).toEqual([])
+    expect(await snapshot(w)).toEqual(before)
+    expectNoSecrets(w, replies)
+  })
+})
+// ---- End of stored backups
 
 describe('the calls behind the child-id routes', () => {
   it('hold to the wedding the guard resolved: a row of another wedding reads as missing and nothing changes', async () => {

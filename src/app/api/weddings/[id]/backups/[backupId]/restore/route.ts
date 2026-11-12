@@ -27,11 +27,11 @@ export const POST = withWeddingRole<Context>(byWeddingId, 'owner', async (req: N
   if (!backupId) return notFound()
   const body = await readBody(req, restoreBackupBody)
   if (!body.ok) return body.response
-  const db = getDb()
-  const backup = await getWeddingBackup(db, access.weddingId, backupId)
-  if (!backup) return notFound()
   const store = getBackupStore()
   if (!store) return notConfigured()
+  const db = getDb()
+  const backup = await getWeddingBackup(db, access.weddingId, backupId, store.id)
+  if (!backup) return notFound()
   const result = await restoreStoredBackup(db, store, backup.id, {
     jobId: body.data.jobId,
     actor: { userId: access.user.id, isAdmin: access.user.isAdmin },

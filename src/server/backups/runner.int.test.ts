@@ -25,11 +25,13 @@ const { pool, db } = makeTestDb()
 let owner: TestUser
 let store: MemoryStore
 
+// Emptying every table can take more than the default 10 s on a busy machine; a timed-out hook would leave its
+// TRUNCATE running into the next test's.
 beforeEach(async () => {
   await truncateAll(pool)
   owner = await makeUser(db, { displayName: 'Olive' })
   store = createMemoryStore()
-})
+}, 120_000)
 afterAll(async () => {
   await pool.end()
 })
@@ -41,6 +43,7 @@ const run = (s: BackupStore = store, opts: Partial<RunOptions> = {}) => runBacku
 function hooked(inner: BackupStore, before: (pathname: string) => void | Promise<void>): BackupStore {
   return {
     kind: inner.kind,
+    id: inner.id,
     put: async (pathname, bytes, contentType, opts) => {
       await before(pathname)
       return inner.put(pathname, bytes, contentType, opts)
@@ -271,6 +274,51 @@ describe('runBackups', () => {
     await expect(backupOneWedding(db, store, b.weddingId, { kind: 'final' })).rejects.toThrow(/only made of a deleted wedding/)
   })
 
+  it('lets a wedding deleted over 12 months ago go: no new final backup, even once its old one is pruned', async () => {
+    const a = await makeBackupWedding(db, owner.id)
+    const old = await makeBackupWedding(db, owner.id)
+    const monthsAgo = (m: number) => {
+      const d = new Date()
+      d.setUTCMonth(d.getUTCMonth() - m)
+      return d
+    }
+    // Deleted 13 months ago, its final backup made the day after: past retention now.
+    await db.update(weddings).set({ deletedAt: monthsAgo(13) }).where(eq(weddings.id, old.weddingId))
+    const final = await backupOneWedding(db, store, old.weddingId, { kind: 'final' })
+    if (final.status !== 'created') throw new Error(final.status)
+    await db.update(backups).set({ createdAt: new Date(monthsAgo(13).getTime() + 86_400_000) }).where(eq(backups.id, final.backup.id))
+    // Deleted 13 months ago and never backed up: too late for a final one.
+    const never = await makeBackupWedding(db, owner.id)
+    await db.update(weddings).set({ deletedAt: monthsAgo(13) }).where(eq(weddings.id, never.weddingId))
+
+    const summary = await run()
+    expect(summary.results.map((r) => r.weddingId)).toEqual([a.weddingId])
+    expect(summary.pruned).toBe(1)
+    expect(await backupRows(old.weddingId)).toEqual([])
+    expect((await run()).results.map((r) => r.weddingId)).toEqual([a.weddingId])
+    expect(await backupRows(old.weddingId)).toEqual([])
+  })
+
+  it('backs everything up afresh, images too, when the store is replaced, and never reads the old store’s rows', async () => {
+    const [a, b] = await three()
+    await run()
+    const replacement = createMemoryStore()
+    const summary = await run(replacement)
+    expect(summary).toMatchObject({ status: 'ok', backedUp: 3, unchanged: 0 })
+    expect(files(replacement)).toHaveLength(3)
+    expect(images(replacement)).toHaveLength(1)
+    // Each store has its own image row; the old store's rows and files are left as they were.
+    expect((await db.select({ storeId: backupImages.storeId }).from(backupImages)).map((r) => r.storeId).sort()).toEqual([replacement.id, store.id].sort())
+    expect(files(store)).toHaveLength(3)
+    // Pruning the new store never deletes the old store's rows.
+    await db.update(backups).set({ createdAt: new Date('2020-01-01T00:00:00Z') }).where(eq(backups.storeId, store.id))
+    await db.update(guests).set({ notes: 'x' }).where(eq(guests.id, a.guestIds.ann))
+    await run(replacement)
+    expect((await backupRows()).filter((r) => r.storeId === store.id)).toHaveLength(3)
+    // A wedding's newest backup in the new store is what "unchanged" compares with.
+    expect((await run(replacement)).results.find((r) => r.weddingId === b.weddingId)!.status).toBe('unchanged')
+  })
+
   it('stores each image once, across weddings and backups', async () => {
     const png = makeGridPng(80, 60)
     const a = await makeBackupWedding(db, owner.id, { png })
@@ -360,7 +408,7 @@ describe('pruneBackups', () => {
     ] as const) {
       const pathname = `backups/images/${sha}.png`
       await store.put(pathname, new Uint8Array([1]), 'image/png')
-      await db.insert(backupImages).values({ sha256: sha, pathname, contentType: 'image/png', byteSize: 1, createdAt })
+      await db.insert(backupImages).values({ storeId: store.id, sha256: sha, pathname, contentType: 'image/png', byteSize: 1, createdAt })
     }
     // The images a and b use are old too, but named by their kept backups.
     await db.update(backupImages).set({ createdAt: old(400) }).where(sql`sha256 not in (${orphanSha}, ${youngSha})`)
@@ -415,6 +463,7 @@ describe('pruneBackups', () => {
     await db.update(backups).set({ createdAt: new Date('2023-01-09T00:00:00Z') }).where(eq(backups.id, second!.id))
     const broken: BackupStore = {
       kind: 'memory',
+      id: store.id,
       put: (p, b, t, o) => store.put(p, b, t, o),
       get: (p) => store.get(p),
       delete: async () => Promise.reject(new BackupStoreError('Vercel Blob delete failed')),

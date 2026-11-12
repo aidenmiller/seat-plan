@@ -43,9 +43,10 @@ async function readAll(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> 
  * project provides; elsewhere, BLOB_READ_WRITE_TOKEN. Pathnames are used as
  * they are (no random suffix), so the database's pathname is the blob's.
  */
-export function createVercelBlobStore(load: () => Promise<BlobSdk> = loadSdk): BackupStore {
+export function createVercelBlobStore(storeId: string, load: () => Promise<BlobSdk> = loadSdk): BackupStore {
   return {
     kind: 'vercel-blob',
+    id: `vercel-blob:${storeId}`,
     async put(pathname, bytes, contentType, opts) {
       assertBackupPathname(pathname)
       const sdk = await load()

@@ -1,5 +1,5 @@
 {
-  "id": "ea41b0a9-9513-47d5-bec0-4defc27755ed",
+  "id": "9324fdfa-f946-44c1-ac5f-f8685855a6a9",
   "prevId": "7878cfda-44c8-45f5-8dfb-3a8ad4d199f8",
   "version": "7",
   "dialect": "postgresql",
@@ -165,10 +165,16 @@
       "name": "backup_images",
       "schema": "",
       "columns": {
+        "store_id": {
+          "name": "store_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "sha256": {
           "name": "sha256",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "pathname": {
@@ -199,18 +205,31 @@
       },
       "indexes": {},
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "backup_images_store_id_sha256_pk": {
+          "name": "backup_images_store_id_sha256_pk",
+          "columns": [
+            "store_id",
+            "sha256"
+          ]
+        }
+      },
       "uniqueConstraints": {
-        "backup_images_pathname_uq": {
-          "name": "backup_images_pathname_uq",
+        "backup_images_store_pathname_uq": {
+          "name": "backup_images_store_pathname_uq",
           "nullsNotDistinct": false,
           "columns": [
+            "store_id",
             "pathname"
           ]
         }
       },
       "policies": {},
       "checkConstraints": {
+        "backup_images_store_id_length": {
+          "name": "backup_images_store_id_length",
+          "value": "length(\"backup_images\".\"store_id\") between 1 and 300"
+        },
         "backup_images_sha256_hex": {
           "name": "backup_images_sha256_hex",
           "value": "\"backup_images\".\"sha256\" ~ '^[0-9a-f]{64}$'"
@@ -403,6 +422,12 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
+        },
+        "store_id": {
+          "name": "store_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         },
         "wedding_id": {
           "name": "wedding_id",
@@ -606,6 +631,10 @@
         "backups_counts_nonnegative": {
           "name": "backups_counts_nonnegative",
           "value": "\"backups\".\"byte_size\" >= 0 and \"backups\".\"guest_count\" >= 0 and \"backups\".\"layout_count\" >= 0"
+        },
+        "backups_store_id_length": {
+          "name": "backups_store_id_length",
+          "value": "length(\"backups\".\"store_id\") between 1 and 300"
         }
       },
       "isRLSEnabled": false

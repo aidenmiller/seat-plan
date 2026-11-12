@@ -1,4 +1,5 @@
 import 'server-only'
+import { randomUUID } from 'node:crypto'
 import { assertBackupPathname, BackupStoreError, type BackupStore } from './store'
 
 export type MemoryStore = BackupStore & {
@@ -18,6 +19,7 @@ export function createMemoryStore(): MemoryStore {
   const calls = { put: 0, get: 0, delete: 0 }
   return {
     kind: 'memory',
+    id: `memory:${randomUUID()}`,
     calls,
     async put(pathname, bytes, contentType, opts) {
       calls.put++

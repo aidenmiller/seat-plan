@@ -62,7 +62,7 @@ export async function restoreStoredBackup(
   const [backup] = await db
     .select({ id: backups.id, weddingId: backups.weddingId, pathname: backups.pathname, blobSha256: backups.blobSha256 })
     .from(backups)
-    .where(eq(backups.id, backupId))
+    .where(and(eq(backups.id, backupId), eq(backups.storeId, store.id)))
   if (!backup) return { status: 'not-found' }
 
   const opened = await openStoredBackup(store, backup)

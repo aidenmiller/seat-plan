@@ -14,9 +14,9 @@ import { getBackup } from '@/server/repo/backups'
 export const GET = withAdmin(async (_req: NextRequest, ctx: BackupIdContext) => {
   const backupId = await backupIdParam(ctx)
   if (!backupId) return notFound()
-  const backup = await getBackup(getDb(), backupId)
-  if (!backup) return notFound()
   const store = getBackupStore()
   if (!store) return notConfigured()
+  const backup = await getBackup(getDb(), backupId, store.id)
+  if (!backup) return notFound()
   return storedBackupDownload(store, backup)
 })

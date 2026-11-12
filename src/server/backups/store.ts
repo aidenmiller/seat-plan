@@ -28,6 +28,14 @@ export type BackupStoreKind = 'vercel-blob' | 'filesystem' | 'memory'
 
 export interface BackupStore {
   readonly kind: BackupStoreKind
+  /**
+   * Which store this is ('vercel-blob:<store id>', 'filesystem:<folder>',
+   * 'memory:<random>'). Every backup and image row records the store it went
+   * to, and only rows of this store are read, compared or reused: after the
+   * store is replaced, the next run backs everything up again instead of
+   * trusting files the new store does not have.
+   */
+  readonly id: string
   /** Writes the file. Throws when it already exists, unless `overwrite`. */
   put(pathname: string, bytes: Uint8Array, contentType: string, opts?: { overwrite?: boolean }): Promise<void>
   /** The file's bytes, or null when there is none. */
@@ -78,14 +86,27 @@ export function imagePathname(sha256: string, contentType: 'image/png' | 'image/
 }
 
 /**
+ * The id of the Blob store the SDK will use, worked out as the SDK does:
+ * BLOB_STORE_ID (with OIDC, what connecting a store provides), else the id
+ * inside BLOB_READ_WRITE_TOKEN ("vercel_blob_rw_<id>_<secret>"). Null when
+ * neither names one. Lower case, without a "store_" prefix.
+ */
+export function blobStoreId(env: Readonly<Record<string, string | undefined>>): string | null {
+  const raw = env.BLOB_STORE_ID?.trim() || env.BLOB_READ_WRITE_TOKEN?.trim().split('_')[3] || ''
+  const id = (raw.startsWith('store_') ? raw.slice('store_'.length) : raw).toLowerCase()
+  return /^[a-z0-9]{1,100}$/.test(id) ? id : null
+}
+
+/**
  * The store this deployment uses, or null when backups are not set up
  * (callers answer "Backups are not set up").
  *
  *  - The production deployment on Vercel (VERCEL=1 and VERCEL_ENV=production)
  *    uses Vercel Blob when a store is connected (BLOB_STORE_ID, which comes
  *    with the connection and authenticates through OIDC, or a
- *    BLOB_READ_WRITE_TOKEN). BACKUP_STORE_DIR is ignored there: a Vercel
- *    function's disk does not last.
+ *    BLOB_READ_WRITE_TOKEN; blobStoreId must find the store's id in one).
+ *    BACKUP_STORE_DIR is ignored there: a Vercel function's disk does not
+ *    last.
  *  - Any other Vercel deployment (preview, development) has none. A preview
  *    pruning against its own database could otherwise delete images that
  *    production's backups still use.
@@ -95,8 +116,8 @@ export function imagePathname(sha256: string, contentType: 'image/png' | 'image/
  */
 export function getBackupStore(env: Readonly<Record<string, string | undefined>> = process.env): BackupStore | null {
   if (env.VERCEL_ENV === 'production') {
-    const connected = Boolean(env.BLOB_STORE_ID || env.BLOB_READ_WRITE_TOKEN)
-    return env.VERCEL === '1' && connected ? createVercelBlobStore() : null
+    const storeId = blobStoreId(env)
+    return env.VERCEL === '1' && storeId ? createVercelBlobStore(storeId) : null
   }
   if (env.VERCEL_ENV === 'preview') return null
   const dir = env.BACKUP_STORE_DIR?.trim()
