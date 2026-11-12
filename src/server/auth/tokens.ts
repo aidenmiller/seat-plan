@@ -3,18 +3,19 @@
  * route handlers (both Node). No 'server-only' import so Vitest can load it;
  * it holds no secrets itself and reads them from the environment at call time.
  *
- * Three keys (PLAN change 23):
- *  - the site key comes from AUTH_SECRET and SITE_PASSWORD, so a new site
- *    password makes every old site cookie fail;
- *  - the share key comes from AUTH_SECRET alone, so changing the site password
- *    leaves venue viewers signed in;
- *  - the user session key comes from AUTH_SECRET alone too. A session cookie
- *    only carries a random secret; the sessions table decides whether it is
- *    still good (src/server/repo/sessions.ts).
+ * Two keys, both from AUTH_SECRET alone (PLAN change 23):
+ *  - the share key, for a share link's own cookie;
+ *  - the user session key. A session cookie only carries a random secret; the
+ *    sessions table decides whether it is still good (src/server/repo/sessions.ts).
  * Every payload names its type, so one kind of cookie can never pass as another.
+ *
+ * The site cookie (sp_site) from the shared-password days is gone: nothing
+ * makes or accepts one. Only its name is kept, so the proxy and the sign-in
+ * routes can clear one a browser still holds.
  */
 import { createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto'
 
+/** The old site-password cookie's name, kept only to clear it. */
 export const SITE_COOKIE = 'sp_site'
 export const COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 export function shareCookieName(linkId: string): string {
@@ -28,7 +29,6 @@ export const SESSION_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 3600
 /** Session, invite and reset tokens: 32 random bytes in base64url. */
 export const OPAQUE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/
 
-type SitePayload = { typ: 'site'; exp: number }
 type SharePayload = { typ: 'share'; linkId: string; cv: number; exp: number }
 type SessionPayload = { typ: 'user'; s: string; exp: number }
 
@@ -41,20 +41,13 @@ function authSecret(): string | null {
   return secret && secret.length >= 32 ? secret : null
 }
 
-function siteKey(): Buffer | null {
-  const secret = authSecret()
-  const password = process.env.SITE_PASSWORD
-  if (!secret || !password) return null
-  return Buffer.from(hkdfSync('sha256', secret, sha256(password), 'seat-plan site cookie v1', 32))
-}
-
 function shareKey(): Buffer | null {
   const secret = authSecret()
   if (!secret) return null
   return Buffer.from(hkdfSync('sha256', secret, Buffer.alloc(0), 'seat-plan share cookie v1', 32))
 }
 
-/** Does not depend on SITE_PASSWORD, which goes away once everyone has an account. */
+/** Does not depend on SITE_PASSWORD, which only first-run setup still reads. */
 function sessionKey(): Buffer | null {
   const secret = authSecret()
   if (!secret) return null
@@ -65,7 +58,7 @@ function mac(key: Buffer, body: string): Buffer {
   return createHmac('sha256', key).update(body, 'utf8').digest()
 }
 
-function sign(payload: SitePayload | SharePayload | SessionPayload, key: Buffer): string {
+function sign(payload: SharePayload | SessionPayload, key: Buffer): string {
   const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
   return `${body}.${mac(key, body).toString('base64url')}`
 }
@@ -88,27 +81,6 @@ function open(token: string, key: Buffer, now: number): Record<string, unknown> 
   const exp = (payload as { exp?: unknown }).exp
   if (typeof exp !== 'number' || !Number.isFinite(exp) || exp <= now) return null
   return payload as Record<string, unknown>
-}
-
-/**
- * Site tokens are from the shared-password days: nothing in the app makes or
- * accepts one any more (the proxy and the sign-in routes only clear an old
- * sp_site cookie). They stay, with the tests that show such a cookie opens
- * nothing, until the next phase removes them.
- */
-export function createSiteToken(now: number = Date.now()): string {
-  const key = siteKey()
-  if (!key) throw new Error('AUTH_SECRET (32+ characters) and SITE_PASSWORD must be set')
-  return sign({ typ: 'site', exp: now + COOKIE_MAX_AGE_SECONDS * 1000 }, key)
-}
-
-/** True only for an unexpired site token signed with the current key. Fails closed. */
-export function verifySiteToken(token: string | undefined | null, now: number = Date.now()): boolean {
-  if (!token) return false
-  const key = siteKey()
-  if (!key) return false
-  const payload = open(token, key, now)
-  return payload?.typ === 'site'
 }
 
 export function createShareToken(linkId: string, credentialVersion: number, now: number = Date.now()): string {
@@ -177,10 +149,4 @@ export function openSessionCookie(
  */
 export function passwordsMatch(input: string, expected: string): boolean {
   return timingSafeEqual(sha256(input), sha256(expected))
-}
-
-export function sitePasswordMatches(input: string): boolean {
-  const expected = process.env.SITE_PASSWORD
-  if (!expected) return false
-  return passwordsMatch(input, expected)
 }

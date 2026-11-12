@@ -1,26 +1,31 @@
 /**
  * The wedding and venue route handlers against the test database, signed in
  * as a test user, plus the 404 answer every [id] route gives to an
- * id that is not a uuid. (route-auth.test.ts covers the 401 without a cookie.)
+ * id that is not a uuid. Also: the creator of a wedding is its owner, the
+ * list holds only the caller's weddings, and an editor may not change the
+ * settings, delete or back up. (route-auth.test.ts covers the 401 without a
+ * cookie; src/server/auth/isolation.int.test.ts covers everyone else.)
  */
 import { randomUUID } from 'node:crypto'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../test/db'
-import { makeUser, sessionCookie } from '../../../../test/auth'
+import { makeMember, makeUser, makeWeddingFor, sessionCookie } from '../../../../test/auth'
 
 async function db() {
   return (await import('@/server/db/client')).getDb()
 }
 
-/** A signed-in user's cookie: for now any signed-in user may use these routes. */
+/** The cookie of the user every test acts as: the owner of each wedding it makes. */
 let signedIn = ''
+let me = ''
 
 beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'weddings-route-test-secret-32-chars-plus')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
   const database = await db()
-  signedIn = await sessionCookie(database, (await makeUser(database)).id)
+  me = (await makeUser(database)).id
+  signedIn = await sessionCookie(database, me)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -28,8 +33,8 @@ afterAll(() => {
 
 type Handler = (req: NextRequest, ctx: { params: Promise<{ id: string }> }) => Promise<Response>
 
-function request(method: string, path: string, body?: unknown): NextRequest {
-  const headers: Record<string, string> = { cookie: signedIn }
+function request(method: string, path: string, body?: unknown, cookie = signedIn): NextRequest {
+  const headers: Record<string, string> = { cookie }
   let payload: string | undefined
   if (body !== undefined) {
     headers['content-type'] = 'application/json'
@@ -40,8 +45,8 @@ function request(method: string, path: string, body?: unknown): NextRequest {
 
 const ctx = (id = '') => ({ params: Promise.resolve({ id }) })
 
-async function call(mod: Record<string, unknown>, method: string, path: string, id?: string, body?: unknown) {
-  const res = await (mod[method] as Handler)(request(method, path, body), ctx(id))
+async function call(mod: Record<string, unknown>, method: string, path: string, id?: string, body?: unknown, cookie = signedIn) {
+  const res = await (mod[method] as Handler)(request(method, path, body, cookie), ctx(id))
   const text = await res.text()
   return { status: res.status, cache: res.headers.get('cache-control'), body: text ? JSON.parse(text) : null }
 }
@@ -135,6 +140,48 @@ describe('/api/weddings', () => {
     expect((await call(one, 'GET', `/api/weddings/${id}`, id)).status).toBe(404)
     expect((await call(one, 'PATCH', `/api/weddings/${id}`, id, { name: 'X' })).status).toBe(404)
   })
+
+  it('makes the creator the owner; lists only the caller weddings; an id someone else holds is 409 with nothing about it', async () => {
+    const list = await import('./route')
+    const { weddingMembers } = await import('@/server/db/schema')
+    const { eq } = await import('drizzle-orm')
+    const database = await db()
+    const id = randomUUID()
+    expect((await call(list, 'POST', '/api/weddings', undefined, { id, name: 'Ours' })).status).toBe(201)
+    expect(await database.select({ userId: weddingMembers.userId, role: weddingMembers.role }).from(weddingMembers).where(eq(weddingMembers.weddingId, id))).toEqual([
+      { userId: me, role: 'owner' },
+    ])
+    // A retry gives it back.
+    expect(await call(list, 'POST', '/api/weddings', undefined, { id, name: 'Ours again' })).toMatchObject({ status: 201, body: { id, name: 'Ours' } })
+
+    const someone = await makeUser(database)
+    const theirCookie = await sessionCookie(database, someone.id)
+    const taken = await call(list, 'POST', '/api/weddings', undefined, { id, name: 'Theirs' }, theirCookie)
+    expect(taken).toEqual({ status: 409, cache: 'no-store', body: { error: 'id_taken' } })
+    expect(((await call(list, 'GET', '/api/weddings', undefined, undefined, theirCookie)).body as { id: string }[]).map((w) => w.id)).not.toContain(id)
+    expect(((await call(list, 'GET', '/api/weddings')).body as { id: string }[]).map((w) => w.id)).toContain(id)
+    const theirs = await makeWeddingFor(database, someone.id, 'Theirs')
+    expect(((await call(list, 'GET', '/api/weddings')).body as { id: string }[]).map((w) => w.id)).not.toContain(theirs)
+  })
+
+  it('lets an editor read and work in a wedding, but not change its settings, delete it or download a backup', async () => {
+    const one = await import('./[id]/route')
+    const summary = await import('./[id]/delete-summary/route')
+    const backup = await import('./[id]/backup/route')
+    const layouts = await import('./[id]/layouts/route')
+    const database = await db()
+    const owner = await makeUser(database)
+    const w = await makeWeddingFor(database, owner.id, 'Owned elsewhere')
+    await makeMember(database, w, me, 'editor')
+
+    expect((await call(one, 'GET', `/api/weddings/${w}`, w)).status).toBe(200)
+    expect((await call(layouts, 'GET', `/api/weddings/${w}/layouts`, w)).status).toBe(200)
+    expect(await call(one, 'PATCH', `/api/weddings/${w}`, w, { name: 'Mine now' })).toMatchObject({ status: 403, body: { error: 'forbidden' } })
+    expect((await call(one, 'DELETE', `/api/weddings/${w}`, w, { confirm: 'delete' })).status).toBe(403)
+    expect((await call(summary, 'GET', `/api/weddings/${w}/delete-summary`, w)).status).toBe(403)
+    expect((await call(backup, 'GET', `/api/weddings/${w}/backup`, w)).status).toBe(403)
+    expect((await call(one, 'GET', `/api/weddings/${w}`, w)).body).toMatchObject({ name: 'Owned elsewhere' })
+  })
 })
 
 describe('/api/venues', () => {
@@ -146,7 +193,21 @@ describe('/api/venues', () => {
     expect(Array.isArray(res.body)).toBe(true)
     for (const v of res.body) {
       expect(Object.keys(v).sort()).toEqual(
-        ['editedBy', 'editedById', 'fixedItemCount', 'hasReferenceImage', 'id', 'importedBy', 'name', 'updatedAt', 'usedBy', 'version'].sort(),
+        [
+          'access',
+          'canEdit',
+          'editedBy',
+          'editedById',
+          'fixedItemCount',
+          'hasReferenceImage',
+          'id',
+          'importedBy',
+          'name',
+          'ownerName',
+          'updatedAt',
+          'usedBy',
+          'version',
+        ].sort(),
       )
     }
   })

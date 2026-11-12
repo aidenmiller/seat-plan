@@ -121,14 +121,18 @@ export async function guestsByIds(conn: Conn, weddingId: string, ids: readonly s
   })
 }
 
-/** The live wedding a live guest belongs to, or null. */
-async function weddingOfGuest(conn: Conn, guestId: string): Promise<string | null> {
+/**
+ * True when the guest is a live guest of this live wedding. The routes pass
+ * the wedding their guard resolved, so a guest of any other wedding reads as
+ * missing.
+ */
+async function liveGuestOf(conn: Conn, weddingId: string, guestId: string): Promise<boolean> {
   const [row] = await conn
-    .select({ weddingId: guests.weddingId })
+    .select({ id: guests.id })
     .from(guests)
     .innerJoin(weddings, eq(weddings.id, guests.weddingId))
-    .where(and(eq(guests.id, guestId), isNull(guests.deletedAt), isNull(weddings.deletedAt)))
-  return row?.weddingId ?? null
+    .where(and(eq(guests.id, guestId), eq(guests.weddingId, weddingId), isNull(guests.deletedAt), isNull(weddings.deletedAt)))
+  return Boolean(row)
 }
 
 // ---------------------------------------------------------------------------
@@ -343,14 +347,13 @@ class PartnerConflict extends Error {
  * 'conflict' (nothing saved) when a link changed since the browser last saw
  * it (expectedPartners) or the new partner is gone.
  */
-export async function updateGuest(db: Db, guestId: string, body: UpdateGuestInput): Promise<UpdateGuestResult> {
+export async function updateGuest(db: Db, weddingId: string, guestId: string, body: UpdateGuestInput): Promise<UpdateGuestResult> {
   if (body.partnerId !== undefined && body.partnerId !== null && body.partnerId.toLowerCase() === guestId) {
     return { status: 'self-partner' }
   }
   try {
     return await db.transaction(async (tx): Promise<UpdateGuestResult> => {
-      const weddingId = await weddingOfGuest(tx, guestId)
-      if (!weddingId) return { status: 'not-found' }
+      if (!(await liveGuestOf(tx, weddingId, guestId))) return { status: 'not-found' }
       const newPartner = body.partnerId === undefined || body.partnerId === null ? body.partnerId : body.partnerId.toLowerCase()
       const linking = newPartner !== undefined || body.coupleRuleEnabled !== undefined
 
@@ -485,10 +488,9 @@ export function sortSeatPlaces<T extends GuestSeatPlace>(places: readonly T[]): 
   )
 }
 
-/** What the guest delete dialog lists. Null when the guest or the wedding is missing or deleted. */
-export async function guestDeleteSummary(db: Db, guestId: string): Promise<GuestDeleteSummary | null> {
-  const weddingId = await weddingOfGuest(db, guestId)
-  if (!weddingId) return null
+/** What the guest delete dialog lists. Null when the guest or the wedding is missing or deleted, or the guest is not in `weddingId`. */
+export async function guestDeleteSummary(db: Db, weddingId: string, guestId: string): Promise<GuestDeleteSummary | null> {
+  if (!(await liveGuestOf(db, weddingId, guestId))) return null
   const [me] = await guestsByIds(db, weddingId, [guestId])
   if (!me) return null
   const [partner] = me.partnerId ? await guestsByIds(db, weddingId, [me.partnerId]) : []
@@ -512,11 +514,11 @@ export async function guestDeleteSummary(db: Db, guestId: string): Promise<Guest
 
 /**
  * Removes one guest through removeGuests: seats cleared in every layout,
- * partner unlinked. Null when the guest or the wedding is missing or deleted.
+ * partner unlinked. Null when the guest or the wedding is missing or deleted,
+ * or the guest is not in `weddingId`.
  */
-export async function deleteGuest(db: Db, guestId: string): Promise<{ clearedSeats: GuestSeatPlace[] } | null> {
-  const weddingId = await weddingOfGuest(db, guestId)
-  if (!weddingId) return null
+export async function deleteGuest(db: Db, weddingId: string, guestId: string): Promise<{ clearedSeats: GuestSeatPlace[] } | null> {
+  if (!(await liveGuestOf(db, weddingId, guestId))) return null
   const result = await removeGuests(db, weddingId, [guestId])
   if (!result || result.removed.length === 0) return null
   return { clearedSeats: sortSeatPlaces(result.clearedSeats) }

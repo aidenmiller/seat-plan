@@ -7,17 +7,23 @@ import { randomUUID } from 'node:crypto'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../../test/db'
-import { makeUser, sessionCookie } from '../../../../../../test/auth'
+import { makeUser, makeWeddingFor, sessionCookie } from '../../../../../../test/auth'
+import type { Db } from '@/server/locks'
 import type { StoredRule } from '@/shared/api'
 
-/** A signed-in user's cookie: for now any signed-in user may use these routes. */
+/** The cookie of the user every test acts as: the owner of each wedding it makes. */
 let signedIn = ''
+let me = ''
+
+/** A wedding the signed-in user owns (routes answer 404 to anyone who is not a member). */
+const makeWedding = (database: Db, name?: string) => makeWeddingFor(database, me, name)
 
 beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'rules-route-test-secret-32-chars-plus')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
   const database = await db()
-  signedIn = await sessionCookie(database, (await makeUser(database)).id)
+  me = (await makeUser(database)).id
+  signedIn = await sessionCookie(database, me)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -48,7 +54,7 @@ const routes = async () => ({
 
 describe('/api/weddings/[id]/rules and /api/rules', () => {
   it('creates, lists, edits and deletes rules', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const { list, one } = await routes()
     const w = await makeWedding(await db())
     const ann = await makeGuest(await db(), w, 'Ann', 'Lee')
@@ -97,7 +103,7 @@ describe('/api/weddings/[id]/rules and /api/rules', () => {
   })
 
   it('keeps a rule whose guest was removed, as needing guests', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const { list, guest } = await routes()
     const w = await makeWedding(await db())
     const ann = await makeGuest(await db(), w, 'Ann', 'Lee')
@@ -109,7 +115,7 @@ describe('/api/weddings/[id]/rules and /api/rules', () => {
   })
 
   it('switches a couple rule on both partners, and refuses a pair that is not linked', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const { couple, guest } = await routes()
     const w = await makeWedding(await db())
     const ann = await makeGuest(await db(), w, 'Ann', 'Lee')

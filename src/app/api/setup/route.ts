@@ -5,9 +5,8 @@ import { json, notFound, readBody } from '@/server/api-route'
 import { publicRoute } from '@/server/auth/guards'
 import { hashUserPassword } from '@/server/auth/passwords'
 import { clearLegacySiteCookie, setSessionCookie } from '@/server/auth/session'
-import { checkBootstrapEmail, completeSetup, setupOpen } from '@/server/auth/setup'
+import { checkBootstrapEmail, completeSetup, setupOpen, setupPasswordMatches } from '@/server/auth/setup'
 import { addressKey, attemptSucceeded, beginAttempt, clientAddress, wrongGuessDelay } from '@/server/auth/throttle'
-import { sitePasswordMatches } from '@/server/auth/tokens'
 import { getDb } from '@/server/db/client'
 import { createSession } from '@/server/repo/sessions'
 
@@ -40,8 +39,8 @@ const SETUP_SCOPE = 'setup'
 /**
  * First-run setup (src/server/auth/setup.ts): 404 unless SITE_PASSWORD is set
  * and no account exists yet. The site password is counted (PLAN change 23)
- * and compared in constant time; in production the email must also be
- * BOOTSTRAP_ADMIN_EMAIL. The new admin is signed in on success.
+ * and compared in constant time; on Vercel (production and previews) the
+ * email must also be BOOTSTRAP_ADMIN_EMAIL. The new admin is signed in on success.
  */
 export const POST = publicRoute('First-run setup: makes the first account while none exists', async (req: NextRequest) => {
   const db = getDb()
@@ -57,7 +56,7 @@ export const POST = publicRoute('First-run setup: makes the first account while 
     res.headers.set('Retry-After', String(verdict.retryAfterSeconds))
     return res
   }
-  if (!sitePasswordMatches(sitePassword)) {
+  if (!setupPasswordMatches(sitePassword)) {
     await wrongGuessDelay()
     return json({ error: 'wrong_password' }, 401)
   }
@@ -68,14 +67,14 @@ export const POST = publicRoute('First-run setup: makes the first account while 
     return json(
       {
         error: 'bootstrap_email_missing',
-        message: 'Set BOOTSTRAP_ADMIN_EMAIL in the production settings to the first admin’s email, redeploy, then try again.',
+        message: 'Set BOOTSTRAP_ADMIN_EMAIL in the Vercel project’s settings to the first admin’s email, redeploy, then try again.',
       },
       403,
     )
   }
   if (bootstrap === 'mismatch') {
     return json(
-      { error: 'bootstrap_email_mismatch', message: 'In production the first account must use the email set in BOOTSTRAP_ADMIN_EMAIL.' },
+      { error: 'bootstrap_email_mismatch', message: 'On Vercel the first account must use the email set in BOOTSTRAP_ADMIN_EMAIL.' },
       403,
     )
   }

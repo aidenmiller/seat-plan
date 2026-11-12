@@ -1,7 +1,7 @@
 /**
  * First-run setup against the test database: open only while SITE_PASSWORD
- * is set and no account exists, the site password and (in production)
- * BOOTSTRAP_ADMIN_EMAIL checks, one winner when two people set up at once,
+ * is set and no account exists, the site password and (on Vercel, previews
+ * too) BOOTSTRAP_ADMIN_EMAIL checks, one winner when two people set up at once,
  * and the first admin taking over every wedding nobody owns. The wrong-guess
  * delay is switched off here.
  */
@@ -11,7 +11,7 @@ import { NextRequest } from 'next/server'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL, makeTestDb, truncateAll } from '../../../../test/db'
 import { makeUser } from '../../../../test/auth'
-import { SESSION_COOKIE, SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
+import { SESSION_COOKIE, SITE_COOKIE } from '@/server/auth/tokens'
 import { activityEvents, users, weddingMembers, weddings } from '@/server/db/schema'
 import { lookupSession } from '@/server/repo/sessions'
 import { makeWedding } from '@/server/repo/test-fixtures'
@@ -28,6 +28,7 @@ beforeEach(async () => {
   vi.stubEnv('AUTH_SECRET', 'setup-int-test-secret-of-32-chars-or-more')
   vi.stubEnv('SITE_PASSWORD', SITE_PASSWORD)
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
+  vi.stubEnv('VERCEL', '')
   vi.stubEnv('VERCEL_ENV', '')
   vi.stubEnv('BOOTSTRAP_ADMIN_EMAIL', '')
   await truncateAll(pool)
@@ -78,7 +79,8 @@ describe('POST /api/setup', () => {
     await testDb.update(weddings).set({ deletedAt: new Date() }).where(eq(weddings.id, deleted))
 
     const input = body({ email: ' First.Admin@Example.com ', displayName: '  Ada  ' })
-    const res = await setup(input, { cookie: `${SITE_COOKIE}=${createSiteToken()}` })
+    // A browser still holding the old site-password cookie: it is cleared.
+    const res = await setup(input, { cookie: `${SITE_COOKIE}=left-over-site-cookie` })
     expect(res.status).toBe(200)
     expect(res.body).toEqual({ ok: true, redirect: '/' })
     expect(res.headers.get('cache-control')).toBe('no-store')
@@ -148,9 +150,18 @@ describe('POST /api/setup', () => {
     expect(await userCount()).toBe(0)
   })
 
-  describe('in production', () => {
+  describe('on Vercel', () => {
     beforeEach(() => {
+      vi.stubEnv('VERCEL', '1')
       vi.stubEnv('VERCEL_ENV', 'production')
+    })
+
+    it('asks for BOOTSTRAP_ADMIN_EMAIL on a preview deployment too, so one pointed at an empty database cannot be claimed', async () => {
+      vi.stubEnv('VERCEL_ENV', 'preview')
+      expect(await setup(body())).toMatchObject({ status: 403, body: { error: 'bootstrap_email_missing' } })
+      vi.stubEnv('BOOTSTRAP_ADMIN_EMAIL', 'the-owner@example.com')
+      expect(await setup(body({ email: 'someone-else@example.com' }))).toMatchObject({ status: 403, body: { error: 'bootstrap_email_mismatch' } })
+      expect(await userCount()).toBe(0)
     })
 
     it('refuses without BOOTSTRAP_ADMIN_EMAIL, saying how to fix it', async () => {

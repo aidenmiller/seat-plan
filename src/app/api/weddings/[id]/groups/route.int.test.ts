@@ -9,18 +9,24 @@ import { eq } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../../test/db'
-import { makeUser, sessionCookie } from '../../../../../../test/auth'
+import { makeUser, makeWeddingFor, sessionCookie } from '../../../../../../test/auth'
+import type { Db } from '@/server/locks'
 import { GROUP_COLORS } from '@/domain/group-colors'
 import type { Group } from '@/shared/api'
 
-/** A signed-in user's cookie: for now any signed-in user may use these routes. */
+/** The cookie of the user every test acts as: the owner of each wedding it makes. */
 let signedIn = ''
+let me = ''
+
+/** A wedding the signed-in user owns (routes answer 404 to anyone who is not a member). */
+const makeWedding = (database: Db, name?: string) => makeWeddingFor(database, me, name)
 
 beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'groups-route-test-secret-32-chars-plus')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
   const database = await db()
-  signedIn = await sessionCookie(database, (await makeUser(database)).id)
+  me = (await makeUser(database)).id
+  signedIn = await sessionCookie(database, me)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -55,7 +61,6 @@ const routes = async () => ({
 
 describe('/api/weddings/[id]/groups and /api/groups', () => {
   it('creates groups with cycling palette colors and refuses a name already used, ignoring case', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { list, one } = await routes()
     const w = await makeWedding(await db())
 
@@ -107,7 +112,6 @@ describe('/api/weddings/[id]/groups and /api/groups', () => {
   })
 
   it('renames and recolors, refusing a rename onto another group name', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { list, one } = await routes()
     const w = await makeWedding(await db())
     const a = (await call(list, 'POST', { id: w }, { name: 'Noa Family' })).body as Group
@@ -126,7 +130,7 @@ describe('/api/weddings/[id]/groups and /api/groups', () => {
   })
 
   it('adds members in bulk, skips repeats, refuses guests of another wedding, removes one, deletes the group', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const { removeGuests } = await import('@/server/repo/guests')
     const { groupMembers } = await import('@/server/db/schema')
     const { list, one, members, member, guests } = await routes()
@@ -180,7 +184,6 @@ describe('/api/weddings/[id]/groups and /api/groups', () => {
   })
 
   it('hides groups of a deleted wedding', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { weddings } = await import('@/server/db/schema')
     const { list, one, members } = await routes()
     const d = await db()

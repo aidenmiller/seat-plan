@@ -71,7 +71,7 @@ describe('api helpers', () => {
         throw new TypeError('Failed to fetch')
       }),
     )
-    const error = await listVenues().catch((e: unknown) => e)
+    const error = await listVenues('w1').catch((e: unknown) => e)
     expect(error).toMatchObject({ status: 0 })
   })
 })

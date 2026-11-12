@@ -7,8 +7,9 @@ import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 import { makeTestDb } from '../../test/db'
+import { makeUser } from '../../test/auth'
 import { MAX_RECENT_SAVES, writeCanvas } from './canvas-write'
-import { guests, layouts, weddings } from './db/schema'
+import { guests, layouts, venueTemplates, weddings } from './db/schema'
 import { saveLayout, updateLayout } from './repo/layouts'
 import {
   canvasOf,
@@ -28,8 +29,10 @@ afterAll(async () => {
   await pool.end()
 })
 
-function save(layoutId: string, baseVersion: number, canvas: unknown, extra: { saveId?: string; editedBy?: 'Noa' | 'Aiden' } = {}) {
-  return saveLayout(db, layoutId, {
+async function save(layoutId: string, baseVersion: number, canvas: unknown, extra: { saveId?: string; editedBy?: 'Noa' | 'Aiden' } = {}) {
+  // The wedding a route's guard resolves from the layout; any wedding for a layout nobody made.
+  const [row] = await db.select({ weddingId: layouts.weddingId }).from(layouts).where(eq(layouts.id, layoutId))
+  return saveLayout(db, row?.weddingId ?? randomUUID(), layoutId, {
     baseVersion,
     saveId: extra.saveId ?? randomUUID(),
     editedBy: extra.editedBy ?? 'Noa',
@@ -271,13 +274,16 @@ describe('the layout row lock', () => {
   it('saves racing template changes always leave a thumbnail that matches the final template', async () => {
     const w = await makeWedding(db)
     const t = await makeTemplate(db)
+    // The template's owner changes the venue, so the layout may use it.
+    const owner = { userId: (await makeUser(db)).id, isAdmin: false }
+    await db.update(venueTemplates).set({ ownerUserId: owner.userId }).where(eq(venueTemplates.id, t))
     const layoutId = await makeLayout(db, w, canvasOf(roundTable('t1', 1, [null])))
     let version = 1
     for (let round = 0; round < 10; round++) {
       const target = round % 2 === 0 ? t : null
       const [saved] = await Promise.all([
         save(layoutId, version, canvasOf(roundTable('t1', 1, [null]))),
-        updateLayout(db, layoutId, { venueTemplateId: target }),
+        updateLayout(db, w, layoutId, { venueTemplateId: target }, owner),
       ])
       if (saved.status !== 'saved') throw new Error(saved.status)
       version = saved.version

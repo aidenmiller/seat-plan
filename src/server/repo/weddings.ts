@@ -4,10 +4,13 @@ import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import type { CreateWeddingBody, UpdateWeddingBody, WeddingDeleteSummary, WeddingSummary } from '@/shared/api'
 import { weddingMembers, weddings } from '../db/schema'
 import type { Db } from '../locks'
+import { recordEvent } from './activity'
 
 /**
  * Weddings. Deleting one marks only the wedding row (DECISIONS 32); every
- * other query skips rows whose wedding is marked.
+ * other query skips rows whose wedding is marked. Who may open a wedding is
+ * the guards' business (src/server/auth/guards.ts); the functions here that
+ * take a wedding id trust that the caller checked.
  */
 
 /*
@@ -71,7 +74,10 @@ export async function listWeddings(db: Db): Promise<WeddingSummary[]> {
   return rows.map(toSummary)
 }
 
-/** Live weddings the user is a member of, in the same order and shape as listWeddings. */
+/**
+ * The live weddings the user belongs to (any role), in listWeddings' order.
+ * An admin gets only their own memberships here too.
+ */
 export async function listWeddingsForUser(db: Db, userId: string): Promise<WeddingSummary[]> {
   const rows = await db
     .select(summaryColumns)
@@ -99,22 +105,39 @@ export async function weddingIsLive(db: Db, id: string): Promise<boolean> {
   return Boolean(row)
 }
 
+export type CreateWeddingResult = { status: 'created'; wedding: WeddingSummary; existed: boolean } | { status: 'id-taken' }
+
 /**
- * Creates a wedding. The browser may choose the id, so a retried create gives
- * back the wedding the first try made. 'id-taken' when that id belongs to a
- * deleted wedding.
+ * Creates a wedding with its creator as its owner, in one transaction, and
+ * logs wedding_created. The browser may choose the id, so a retried create
+ * gives back the wedding the first try made, but only to someone who already
+ * belongs to it. Anyone else gets 'id-taken' and learns nothing about the
+ * wedding (whether it is live, deleted, or whose); so does a retry for a
+ * wedding deleted since.
  */
-export async function createWedding(
-  db: Db,
-  body: CreateWeddingBody,
-): Promise<{ status: 'created'; wedding: WeddingSummary } | { status: 'id-taken' }> {
-  const id = body.id ?? randomUUID()
-  await db
-    .insert(weddings)
-    .values({ id, name: body.name, date: body.date ?? null, unit: body.unit ?? 'ft', partner1Name: body.partner1Name ?? null, partner2Name: body.partner2Name ?? null })
-    .onConflictDoNothing({ target: weddings.id })
+export async function createWedding(db: Db, body: CreateWeddingBody, userId: string): Promise<CreateWeddingResult> {
+  const id = (body.id ?? randomUUID()).toLowerCase()
+  const outcome = await db.transaction(async (tx): Promise<'created' | 'existed' | 'id-taken'> => {
+    const inserted = await tx
+      .insert(weddings)
+      .values({ id, name: body.name, date: body.date ?? null, unit: body.unit ?? 'ft', partner1Name: body.partner1Name ?? null, partner2Name: body.partner2Name ?? null })
+      .onConflictDoNothing({ target: weddings.id })
+      .returning({ id: weddings.id })
+    if (inserted.length === 0) {
+      const [mine] = await tx
+        .select({ id: weddings.id })
+        .from(weddings)
+        .innerJoin(weddingMembers, and(eq(weddingMembers.weddingId, weddings.id), eq(weddingMembers.userId, userId)))
+        .where(and(eq(weddings.id, id), isNull(weddings.deletedAt)))
+      return mine ? 'existed' : 'id-taken'
+    }
+    await tx.insert(weddingMembers).values({ weddingId: id, userId, role: 'owner', addedByUserId: null })
+    await recordEvent(tx, { kind: 'wedding_created', userId, weddingId: id })
+    return 'created'
+  })
+  if (outcome === 'id-taken') return { status: 'id-taken' }
   const wedding = await getWedding(db, id)
-  return wedding ? { status: 'created', wedding } : { status: 'id-taken' }
+  return wedding ? { status: 'created', wedding, existed: outcome === 'existed' } : { status: 'id-taken' }
 }
 
 /** Name, date, unit, minimum gap and the partners' names. Null when the wedding is missing or deleted. */

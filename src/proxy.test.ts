@@ -2,7 +2,8 @@ import { getRedirectUrl, unstable_doesMiddlewareMatch } from 'next/experimental/
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { config, proxy } from './proxy'
-import { SESSION_COOKIE, SITE_COOKIE, createShareToken, createSiteToken, newOpaqueToken, signSessionCookie } from './server/auth/tokens'
+import { legacySiteCookieValue } from '../test/legacy-site-cookie'
+import { SESSION_COOKIE, SITE_COOKIE, createShareToken, newOpaqueToken, signSessionCookie } from './server/auth/tokens'
 
 const TOKEN = 'T'.repeat(43)
 const DAY = 86_400_000
@@ -66,7 +67,7 @@ describe('proxy', () => {
       `f${value.slice(1)}`,
       session(Date.now() - 1000),
       createShareToken('link', 1),
-      createSiteToken(),
+      legacySiteCookieValue(),
     ]
     for (const cookie of refused) {
       expect(getRedirectUrl(proxy(req('/w/a', { session: cookie }))), cookie).toMatch(/\/login/)
@@ -77,8 +78,8 @@ describe('proxy', () => {
   })
 
   it('no longer takes the site cookie', () => {
-    expect(getRedirectUrl(proxy(req('/w/a', { cookies: { [SITE_COOKIE]: createSiteToken() } })))).toMatch(/\/login/)
-    expect(proxy(req('/api/weddings', { cookies: { [SITE_COOKIE]: createSiteToken() } })).status).toBe(401)
+    expect(getRedirectUrl(proxy(req('/w/a', { cookies: { [SITE_COOKIE]: legacySiteCookieValue() } })))).toMatch(/\/login/)
+    expect(proxy(req('/api/weddings', { cookies: { [SITE_COOKIE]: legacySiteCookieValue() } })).status).toBe(401)
   })
 
   it('renews the session cookie on a page request, as setSessionCookie sets it', () => {
@@ -116,7 +117,7 @@ describe('proxy', () => {
   })
 
   it('clears a cookie left from the site password, signed in, signed out or on a public page', () => {
-    const legacy = { [SITE_COOKIE]: createSiteToken() }
+    const legacy = { [SITE_COOKIE]: legacySiteCookieValue() }
     for (const r of [req('/w/a', { session: session(), cookies: legacy }), req('/w/a', { cookies: legacy }), req('/api/weddings', { cookies: legacy }), req('/login', { cookies: legacy })]) {
       const cleared = setCookies(proxy(r)).find((c) => c.startsWith(`${SITE_COOKIE}=`))
       expect(cleared, r.nextUrl.pathname).toMatch(new RegExp(`^${SITE_COOKIE}=;`))

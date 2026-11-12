@@ -120,11 +120,15 @@ export async function listWeddingShareLinks(db: Db, weddingId: string): Promise<
   return rows.map(toShareLink)
 }
 
-/** One layout's links that are on, oldest first. Null when the layout or its wedding is missing or deleted. */
-export async function listLayoutShareLinks(db: Db, layoutId: string): Promise<ShareLink[] | null> {
-  if (!(await liveLayoutWedding(db, layoutId))) return null
+/**
+ * One layout's links that are on, oldest first. Null when the layout or its
+ * wedding is missing or deleted, or the layout is not in `weddingId` (the
+ * wedding the route's guard resolved).
+ */
+export async function listLayoutShareLinks(db: Db, weddingId: string, layoutId: string): Promise<ShareLink[] | null> {
+  if ((await liveLayoutWedding(db, layoutId)) !== weddingId) return null
   const rows = await selectLinks(db)
-    .where(and(eq(shareLinks.layoutId, layoutId), isNull(shareLinks.revokedAt), liveParents))
+    .where(and(eq(shareLinks.layoutId, layoutId), eq(shareLinks.weddingId, weddingId), isNull(shareLinks.revokedAt), liveParents))
     .orderBy(asc(shareLinks.createdAt), asc(shareLinks.id))
   return rows.map(toShareLink)
 }
@@ -138,18 +142,20 @@ async function liveLayoutWedding(db: Db, layoutId: string): Promise<string | nul
   return row?.weddingId ?? null
 }
 
-/** One link (on or off) whose layout and wedding are live. */
-export async function getShareLink(db: Db, linkId: string): Promise<ShareLink | null> {
-  const [row] = await selectLinks(db).where(and(eq(shareLinks.id, linkId), liveParents))
+/** One link (on or off) of this wedding whose layout and wedding are live. */
+async function getShareLink(db: Db, weddingId: string, linkId: string): Promise<ShareLink | null> {
+  const [row] = await selectLinks(db).where(and(eq(shareLinks.id, linkId), eq(shareLinks.weddingId, weddingId), liveParents))
   return row ? toShareLink(row) : null
 }
 
 export type CreateShareLinkResult = { status: 'created'; link: ShareLink; existed: boolean } | { status: 'not-found' } | { status: 'id-taken' }
 
-/** A new link that is on, names shown and notes hidden unless the body says otherwise. */
-export async function createShareLink(db: Db, layoutId: string, body: CreateShareLinkBody): Promise<CreateShareLinkResult> {
-  const weddingId = await liveLayoutWedding(db, layoutId)
-  if (!weddingId) return { status: 'not-found' }
+/**
+ * A new link that is on, names shown and notes hidden unless the body says
+ * otherwise. 'not-found' unless the layout is live and in `weddingId`.
+ */
+export async function createShareLink(db: Db, weddingId: string, layoutId: string, body: CreateShareLinkBody): Promise<CreateShareLinkResult> {
+  if ((await liveLayoutWedding(db, layoutId)) !== weddingId) return { status: 'not-found' }
   const id = body.id ?? randomUUID()
   const passwordHash = await hashSharePassword(body.password)
   const inserted = await db
@@ -166,7 +172,7 @@ export async function createShareLink(db: Db, layoutId: string, body: CreateShar
     })
     .onConflictDoNothing({ target: shareLinks.id })
     .returning({ id: shareLinks.id })
-  const link = await getShareLink(db, id)
+  const link = await getShareLink(db, weddingId, id)
   // A retried create finds the link the first try made, on this same layout.
   if (!link || link.layoutId !== layoutId) return { status: 'id-taken' }
   return { status: 'created', link, existed: inserted.length === 0 }
@@ -176,10 +182,10 @@ export async function createShareLink(db: Db, layoutId: string, body: CreateShar
  * Changes a link. A new password, or turning the link off, raises the
  * credential version, so everyone using it is signed out. Turning it back on
  * keeps the raised version: viewers sign in again. Null when the link, its
- * layout or its wedding is gone.
+ * layout or its wedding is gone, or the link is not in `weddingId`.
  */
-export async function updateShareLink(db: Db, linkId: string, body: UpdateShareLinkBody): Promise<ShareLink | null> {
-  const current = await getShareLink(db, linkId)
+export async function updateShareLink(db: Db, weddingId: string, linkId: string, body: UpdateShareLinkBody): Promise<ShareLink | null> {
+  const current = await getShareLink(db, weddingId, linkId)
   if (!current) return null
   const set: PgUpdateSetSource<typeof shareLinks> = {}
   let signOut = false
@@ -196,13 +202,21 @@ export async function updateShareLink(db: Db, linkId: string, body: UpdateShareL
   }
   if (body.enabled === true && !current.enabled) set.revokedAt = null
   if (signOut) set.credentialVersion = sql`${shareLinks.credentialVersion} + 1`
-  if (Object.keys(set).length > 0) await db.update(shareLinks).set(set).where(eq(shareLinks.id, linkId))
-  return getShareLink(db, linkId)
+  if (Object.keys(set).length > 0) {
+    await db
+      .update(shareLinks)
+      .set(set)
+      .where(and(eq(shareLinks.id, linkId), eq(shareLinks.weddingId, weddingId)))
+  }
+  return getShareLink(db, weddingId, linkId)
 }
 
-/** Removes the link for good. False when there was no such link. */
-export async function deleteShareLink(db: Db, linkId: string): Promise<boolean> {
-  const deleted = await db.delete(shareLinks).where(eq(shareLinks.id, linkId)).returning({ id: shareLinks.id })
+/** Removes the link for good. False when this wedding has no such link. */
+export async function deleteShareLink(db: Db, weddingId: string, linkId: string): Promise<boolean> {
+  const deleted = await db
+    .delete(shareLinks)
+    .where(and(eq(shareLinks.id, linkId), eq(shareLinks.weddingId, weddingId)))
+    .returning({ id: shareLinks.id })
   return deleted.length > 0
 }
 

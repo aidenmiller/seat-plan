@@ -1,17 +1,21 @@
 /**
- * The venue route handlers against the test database, signed in with a
- * made-up password: list and create, open, save (200, 409, 410, 422), rename,
+ * The venue route handlers against the test database, signed in as a test
+ * planner: list and create, open, save (200, 409, 410, 422), rename,
  * duplicate, delete refused with the layout list, delete summary, image
  * upload (type, size and limit checks) and serving, Accept then "Undo
- * import" through the restore route, revisions and the wall check.
+ * import" through the restore route, revisions and the wall check. Also who
+ * may see, change and use a venue (src/server/auth/venue-access.ts): a
+ * co-planner reads and uses a venue their wedding uses but may not change it
+ * or take it elsewhere, and nobody but an admin changes the library.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../test/db'
-import { makeUser, sessionCookie } from '../../../../test/auth'
+import { makeMember, makeUser, makeWeddingFor, sessionCookie } from '../../../../test/auth'
 import { makeGridPng } from '@/domain/floorplan/__fixtures__/plans'
 import type { FixedItem } from '@/domain/venue-schema'
+import type { Db } from '@/server/locks'
 import {
   MAX_VENUE_IMAGE_BYTES,
   type SaveVenueConflict,
@@ -25,14 +29,19 @@ import {
   type VenueWallCheck,
 } from '@/shared/api'
 
-/** A signed-in user's cookie: for now any signed-in user may use these routes. */
+/** The cookie of the user every test acts as: the owner of each wedding it makes. */
 let signedIn = ''
+let me = ''
+
+/** A wedding the signed-in user owns (routes answer 404 to anyone who is not a member). */
+const makeWedding = (database: Db, name?: string) => makeWeddingFor(database, me, name)
 
 beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'venues-route-test-secret-32-chars-plus')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
   const database = await db()
-  signedIn = await sessionCookie(database, (await makeUser(database)).id)
+  me = (await makeUser(database)).id
+  signedIn = await sessionCookie(database, me)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -41,7 +50,7 @@ afterAll(() => {
 type Params = Record<string, string>
 type Handler = (req: NextRequest, ctx: { params: Promise<Params> }) => Promise<Response>
 
-type CallOptions = { body?: unknown; raw?: Uint8Array; headers?: Record<string, string> }
+type CallOptions = { body?: unknown; raw?: Uint8Array; headers?: Record<string, string>; query?: string }
 
 async function send(mod: Record<string, unknown>, method: string, params: Params, opts: CallOptions = {}) {
   const headers: Record<string, string> = { cookie: signedIn, ...opts.headers }
@@ -51,7 +60,7 @@ async function send(mod: Record<string, unknown>, method: string, params: Params
     headers['content-type'] = 'application/json'
     body = typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body)
   }
-  const req = new NextRequest(`https://seat.example/api/venues/${params.id ?? ''}`, { method, headers, body })
+  const req = new NextRequest(`https://seat.example/api/venues/${params.id ?? ''}${opts.query ?? ''}`, { method, headers, body })
   return (mod[method] as Handler)(req, { params: Promise.resolve(params) })
 }
 
@@ -101,13 +110,14 @@ describe('/api/venues', () => {
     expect(created.cache).toBe('no-store')
     const venue = created.body as VenueDetail
     expect(venue).toMatchObject({ id, name: 'Harbour Room', version: 1, fixedItems: [], reference: null, referenceImage: null, usedBy: 0 })
+    expect(venue).toMatchObject({ access: 'mine', ownerName: 'Pat', canEdit: true })
     expect((await call(r.list, 'POST', {}, { body: { id, name: 'Again' } })).status).toBe(201)
     expect((await call(r.list, 'POST', {}, { body: { name: '   ' } })).status).toBe(422)
     expect((await call(r.list, 'POST', {}, { body: '{not json' })).status).toBe(400)
 
     const listed = await call(r.list, 'GET', {})
     expect(listed.cache).toBe('no-store')
-    expect((listed.body as VenueSummary[]).find((v) => v.id === id)).toMatchObject({ name: 'Harbour Room', usedBy: 0, version: 1 })
+    expect((listed.body as VenueSummary[]).find((v) => v.id === id)).toMatchObject({ name: 'Harbour Room', usedBy: 0, version: 1, access: 'mine' })
 
     expect(await call(r.one, 'GET', { id })).toMatchObject({ status: 200, cache: 'no-store', body: { id } })
     expect((await call(r.one, 'GET', { id: 'not-a-uuid' })).status).toBe(404)
@@ -160,7 +170,7 @@ describe('/api/venues', () => {
 
   it('refuses to delete a template in use, listing the layouts, then deletes once it is free', async () => {
     const r = await routes()
-    const { makeWedding, makeLayout, canvasOf } = await import('@/server/repo/test-fixtures')
+    const { makeLayout, canvasOf } = await import('@/server/repo/test-fixtures')
     const { updateLayout } = await import('@/server/repo/layouts')
     const created = await call(r.list, 'POST', {}, { body: { name: 'Pavilion' } })
     const id = (created.body as VenueDetail).id
@@ -172,6 +182,7 @@ describe('/api/venues', () => {
       kind: 'venue',
       name: 'Pavilion',
       layouts: [{ weddingId: w, weddingName: 'Noa & Aiden', layoutId, layoutName: 'Reception' }],
+      hiddenLayouts: 0,
       images: 0,
       revisions: 1,
     })
@@ -183,16 +194,17 @@ describe('/api/venues', () => {
       error: 'in_use',
       message: 'One layout uses this venue. Pick another venue for it first.',
       layouts: [{ weddingId: w, weddingName: 'Noa & Aiden', layoutId, layoutName: 'Reception' }],
+      hiddenLayouts: 0,
     })
 
-    await updateLayout(await db(), layoutId, { venueTemplateId: null })
+    await updateLayout(await db(), w, layoutId, { venueTemplateId: null }, { userId: me, isAdmin: false })
     expect(await call(r.one, 'DELETE', { id }, { body: { confirm: 'delete' } })).toMatchObject({ status: 200, body: { ok: true } })
     expect((await call(r.one, 'DELETE', { id }, { body: { confirm: 'delete' } })).status).toBe(404)
     expect((await call(r.one, 'GET', { id })).status).toBe(404)
     expect((await call(r.summary, 'GET', { id })).status).toBe(404)
-    // A save to the deleted template: 410.
+    // A save to the deleted template: 404, which the template editor reads as gone, as it does 410.
     const gone = await call(r.one, 'PUT', { id }, { body: { baseVersion: 1, saveId: randomUUID(), editedBy: 'Noa', fixedItems: [], reference: null } })
-    expect(gone).toMatchObject({ status: 410, body: { error: 'gone' } })
+    expect(gone).toMatchObject({ status: 404, body: { error: 'not_found' } })
   })
 
   it('uploads images as raw bytes, checks type and size, and serves them privately', async () => {
@@ -294,12 +306,13 @@ describe('/api/venues', () => {
 
   it('lists the layouts and tables a saved wall runs through', async () => {
     const r = await routes()
-    const { makeWedding, makeLayout, canvasOf, roundTable } = await import('@/server/repo/test-fixtures')
+    const { makeLayout, canvasOf, roundTable } = await import('@/server/repo/test-fixtures')
     const id = ((await call(r.list, 'POST', {}, { body: { name: 'Wall route' } })).body as VenueDetail).id
     const w = await makeWedding(await db(), 'Walls')
     const layoutId = await makeLayout(await db(), w, canvasOf({ ...roundTable('t9', 9, [null]), x: 0, y: 0 }), { name: 'Dinner', venueTemplateId: id })
     expect((await call(r.wallCheck, 'GET', { id })).body as VenueWallCheck).toEqual({
       templateVersion: 1,
+      hiddenLayouts: 0,
       layouts: [{ weddingId: w, weddingName: 'Walls', layoutId, layoutName: 'Dinner', tables: [] }],
     })
     await call(r.one, 'PUT', { id }, { body: { baseVersion: 1, saveId: randomUUID(), editedBy: 'Noa', fixedItems: [wall('w1', -500, 0, 500, 0)], reference: null } })
@@ -307,8 +320,91 @@ describe('/api/venues', () => {
     expect(check.cache).toBe('no-store')
     expect(check.body as VenueWallCheck).toEqual({
       templateVersion: 2,
+      hiddenLayouts: 0,
       layouts: [{ weddingId: w, weddingName: 'Walls', layoutId, layoutName: 'Dinner', tables: [{ tableId: 't9', label: 'Table 9', wallIds: ['w1'] }] }],
     })
     expect((await call(r.wallCheck, 'GET', { id: randomUUID() })).status).toBe(404)
+  })
+})
+
+describe('who may see, change and use a venue', () => {
+  it('lets a co-planner read and use a venue their wedding uses, but not change it or take it to another wedding', async () => {
+    const r = await routes()
+    const weddingLayouts = await import('../weddings/[id]/layouts/route')
+    const database = await db()
+    const ed = await makeUser(database, { displayName: 'Ed' })
+    const as = (cookie: string) => ({ headers: { cookie } })
+    const edCookie = as(await sessionCookie(database, ed.id))
+    const w = await makeWedding(database, 'Shared wedding')
+    await makeMember(database, w, ed.id, 'editor')
+    const venue = (await call(r.list, 'POST', {}, { body: { name: 'My hall' } })).body as VenueDetail
+    const newLayout = (venueTemplateId: string) => ({ body: { name: 'Dinner', kind: 'reception', venueTemplateId, editedBy: 'Noa' } })
+
+    // Before the wedding uses it, it is private: Ed cannot open, list or use it.
+    expect((await call(r.one, 'GET', { id: venue.id }, edCookie)).status).toBe(404)
+    expect(((await call(r.list, 'GET', {}, { ...edCookie, query: `?weddingId=${w}` })).body as VenueSummary[]).map((v) => v.id)).not.toContain(venue.id)
+    const refused = await call(weddingLayouts, 'POST', { id: w }, { ...edCookie, ...newLayout(venue.id) })
+    expect(refused).toMatchObject({ status: 422, body: { error: 'invalid', issues: ['venueTemplateId: That venue no longer exists'] } })
+
+    // Its owner uses it in the wedding.
+    expect((await call(weddingLayouts, 'POST', { id: w }, newLayout(venue.id))).status).toBe(201)
+
+    // Now Ed may read it, see it in the wedding's list, and use it there.
+    expect(await call(r.one, 'GET', { id: venue.id }, edCookie)).toMatchObject({
+      status: 200,
+      body: { id: venue.id, access: 'shared', ownerName: 'Pat', canEdit: false, usedBy: 1 },
+    })
+    const forW = (await call(r.list, 'GET', {}, { ...edCookie, query: `?weddingId=${w}` })).body as VenueSummary[]
+    expect(forW.find((v) => v.id === venue.id)).toMatchObject({ access: 'shared', canEdit: false })
+    expect((await call(weddingLayouts, 'POST', { id: w }, { ...edCookie, ...newLayout(venue.id) })).status).toBe(201)
+    expect((await call(r.wallCheck, 'GET', { id: venue.id }, edCookie)).status).toBe(200)
+    expect((await call(r.revisions, 'GET', { id: venue.id }, edCookie)).status).toBe(200)
+
+    // But not change it: 403 on every change.
+    const save = { baseVersion: 1, saveId: randomUUID(), editedBy: 'Noa', fixedItems: [], reference: null }
+    expect((await call(r.one, 'PUT', { id: venue.id }, { ...edCookie, body: save })).status).toBe(403)
+    expect((await call(r.one, 'PATCH', { id: venue.id }, { ...edCookie, body: { name: 'Ed hall' } })).status).toBe(403)
+    expect((await call(r.one, 'DELETE', { id: venue.id }, { ...edCookie, body: { confirm: 'delete' } })).status).toBe(403)
+    expect((await call(r.images, 'POST', { id: venue.id }, { ...edCookie, raw: makeGridPng(10, 10) })).status).toBe(403)
+    expect((await call(r.one, 'GET', { id: venue.id })).body).toMatchObject({ name: 'My hall', version: 1 })
+
+    // Nor use it in a wedding of their own.
+    const edsOwn = await makeWeddingFor(database, ed.id, 'Ed only')
+    expect((await call(weddingLayouts, 'POST', { id: edsOwn }, { ...edCookie, ...newLayout(venue.id) })).status).toBe(422)
+    expect(((await call(r.list, 'GET', {}, { ...edCookie, query: `?weddingId=${edsOwn}` })).body as VenueSummary[]).map((v) => v.id)).not.toContain(
+      venue.id,
+    )
+
+    // A copy is Ed's own and private.
+    const copy = await call(r.duplicate, 'POST', { id: venue.id }, { ...edCookie, body: { name: 'Ed copy' } })
+    expect(copy).toMatchObject({ status: 201, body: { name: 'Ed copy', access: 'mine', ownerName: 'Ed', canEdit: true } })
+    expect((await call(r.one, 'GET', { id: copy.body.id })).status).toBe(404)
+  })
+
+  it('lets nobody but an admin change the library, and lists a wedding venues only for its members', async () => {
+    const r = await routes()
+    const database = await db()
+    const { venueTemplates } = await import('@/server/db/schema')
+    const { and, eq, isNull } = await import('drizzle-orm')
+    const [tbc] = await database
+      .select({ id: venueTemplates.id })
+      .from(venueTemplates)
+      .where(and(eq(venueTemplates.name, 'Toronto Beach Club'), eq(venueTemplates.isLibrary, true), isNull(venueTemplates.deletedAt)))
+    expect(await call(r.one, 'GET', { id: tbc!.id })).toMatchObject({ status: 200, body: { access: 'library', canEdit: false } })
+    const save = { baseVersion: 1, saveId: randomUUID(), editedBy: 'Noa', fixedItems: [], reference: null }
+    expect((await call(r.one, 'PUT', { id: tbc!.id }, { body: save })).status).toBe(403)
+    expect((await call(r.one, 'PATCH', { id: tbc!.id }, { body: { name: 'Mine now' } })).status).toBe(403)
+    expect((await call(r.one, 'DELETE', { id: tbc!.id }, { body: { confirm: 'delete' } })).status).toBe(403)
+
+    const admin = await makeUser(database, { isAdmin: true })
+    const adminCookie = { headers: { cookie: await sessionCookie(database, admin.id) } }
+    expect((await call(r.one, 'GET', { id: tbc!.id }, adminCookie)).body).toMatchObject({ access: 'library', canEdit: true })
+
+    // A wedding's list, only for its members (and admins): 404 for anyone else and for a bad id.
+    const stranger = await makeUser(database)
+    const theirs = await makeWeddingFor(database, stranger.id, 'Not yours')
+    expect(await call(r.list, 'GET', {}, { query: `?weddingId=${theirs}` })).toMatchObject({ status: 404, body: { error: 'not_found' } })
+    expect((await call(r.list, 'GET', {}, { query: '?weddingId=nope' })).status).toBe(404)
+    expect((await call(r.list, 'GET', {}, { ...adminCookie, query: `?weddingId=${theirs}` })).status).toBe(200)
   })
 })

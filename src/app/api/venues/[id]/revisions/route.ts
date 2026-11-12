@@ -1,13 +1,12 @@
 import type { NextRequest } from 'next/server'
-import { idParam, json, notFound, type IdContext } from '@/server/api-route'
-import { withSiteAuth } from '@/server/auth/require'
+import { json, notFound, type IdContext } from '@/server/api-route'
+import { withVenueAccess } from '@/server/auth/guards'
+import { byTemplateId } from '@/server/auth/resolvers'
 import { getDb } from '@/server/db/client'
 import { listRevisions } from '@/server/repo/venues'
 
 /** VenueRevisionList: newest first, with the revision "Undo import" restores. */
-export const GET = withSiteAuth(async (_req: NextRequest, ctx: IdContext) => {
-  const id = await idParam(ctx)
-  if (!id) return notFound()
-  const list = await listRevisions(getDb(), id)
+export const GET = withVenueAccess('read', byTemplateId, async (_req: NextRequest, _ctx: IdContext, { templateId }) => {
+  const list = await listRevisions(getDb(), templateId)
   return list ? json(list) : notFound()
 })

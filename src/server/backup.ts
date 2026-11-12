@@ -1,6 +1,6 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import {
   BACKUP_FORMAT,
   BACKUP_VERSION,
@@ -14,6 +14,7 @@ import { nameKey } from '@/domain/names'
 import { legacySide } from '@/domain/partners'
 import { fixedItemsSchema, type FixedItem } from '@/domain/venue-schema'
 import type { RestoredLayout, RestoredTemplate, RestoreStarted } from '@/shared/api'
+import { canUseTemplateInWedding, type Viewer } from './auth/venue-access'
 import { writeCanvas } from './canvas-write'
 import { editorName } from './editor-name'
 import {
@@ -31,6 +32,7 @@ import {
   weddings,
 } from './db/schema'
 import type { Db, Tx } from './locks'
+import { recordEvent } from './repo/activity'
 import { chunks } from './repo/guests'
 import { addTemplateImage, type AddImageResult } from './repo/venues'
 
@@ -42,7 +44,15 @@ import { addTemplateImage, type AddImageResult } from './repo/venues'
  * templates those layouts use, each with its current floor plan image as
  * base64 (images come last, one at a time, so a large file never sits in
  * memory whole). Share links are left out. The wedding's members are listed
- * for reading only: a restore never trusts them or adds anyone.
+ * for reading only: a restore never trusts them or adds anyone from them.
+ *
+ * Who may restore: the person who starts a restore becomes the only member
+ * (the owner) of the wedding it makes, and every later step is theirs alone
+ * (the routes check the job's wedding with byRestoreJob, owner only).
+ * Templates follow venue-access.ts: a restore reuses a template only when it
+ * is in the library or the restorer's own; anything else comes back as a
+ * private copy owned by the restorer, so a file naming someone else's
+ * template can never attach it.
  *
  * Restore makes a new wedding in steps, each its own request under Vercel's
  * 4.5 MB limit: the wedding's rows, then each template and its image, then
@@ -261,11 +271,15 @@ export type StartRestoreResult = ({ status: 'created' } & RestoreStarted & { exi
 /**
  * Step 1: a new wedding named "<name> (restored)", with the backup's partner
  * names, and its guests, groups, members, rules and rule guests under new
- * ids, all in one transaction. Sent again with the same job id, it gives back
- * the wedding the first try made. The file's list of wedding members is not
- * part of this step: who can open the restored wedding is never read from a file.
+ * ids, all in one transaction, with `userId` (the person restoring) as its
+ * owner and only member; wedding_restored is logged. Sent again with the
+ * same job id by someone who already belongs to that wedding, it gives back
+ * the wedding the first try made. Anyone else gets 'id-taken' and is never
+ * added to a wedding that already existed. The file's list of wedding
+ * members is not part of this step: who can open the restored wedding is
+ * never read from a file.
  */
-export async function startRestore(db: Db, body: RestoreStart, jobId: string): Promise<StartRestoreResult> {
+export async function startRestore(db: Db, body: RestoreStart, jobId: string, userId: string): Promise<StartRestoreResult> {
   const weddingId = restoredWeddingId(jobId)
   const weddingName = restoredName(body.wedding.name)
   const rows = remapWeddingRows(body, (old) => restoredId(jobId, old))
@@ -286,13 +300,17 @@ export async function startRestore(db: Db, body: RestoreStart, jobId: string): P
       .returning({ id: weddings.id, name: weddings.name })
     if (inserted.length === 0) {
       // The rows went in with the wedding, in one transaction, so a live wedding has them all.
+      // Only someone already in it gets it back: a retry of their own restore.
       const [existing] = await tx
-        .select({ name: weddings.name, deletedAt: weddings.deletedAt })
+        .select({ name: weddings.name })
         .from(weddings)
-        .where(eq(weddings.id, weddingId))
-      if (!existing || existing.deletedAt !== null) return { status: 'id-taken' }
+        .innerJoin(weddingMembers, and(eq(weddingMembers.weddingId, weddings.id), eq(weddingMembers.userId, userId)))
+        .where(and(eq(weddings.id, weddingId), isNull(weddings.deletedAt)))
+      if (!existing) return { status: 'id-taken' }
       return { status: 'created', existed: true, jobId, weddingId, weddingName: existing.name }
     }
+    await tx.insert(weddingMembers).values({ weddingId, userId, role: 'owner', addedByUserId: null })
+    await recordEvent(tx, { kind: 'wedding_restored', userId, weddingId, detail: { jobId } })
 
     // Guests first without partners: a partner may sit in a later chunk.
     for (const part of chunks(rows.guests)) {
@@ -371,10 +389,13 @@ function storedItems(value: unknown): FixedItem[] {
 
 /**
  * Step 2, once per template (PLAN change 5): the template still here with the
- * same walls is used as it is; otherwise a copy named "<name> (restored)" is
- * made from the backup. The copy needs its floor plan image next (step 3).
+ * same walls is used as it is, but only when it is in the library or belongs
+ * to `userId` (the person restoring); otherwise a private copy named
+ * "<name> (restored)", owned by them, is made from the backup. The copy needs
+ * its floor plan image next (step 3). Someone else's template is never read
+ * here beyond its owner and library flag, so the reply says nothing about it.
  */
-export async function restoreTemplate(db: Db, jobId: string, body: BackupTemplate): Promise<RestoreTemplateResult> {
+export async function restoreTemplate(db: Db, jobId: string, body: BackupTemplate, userId: string): Promise<RestoreTemplateResult> {
   if (!(await liveRestoredWedding(db, jobId))) return { status: 'not-found' }
   const copyId = restoredId(jobId, body.id)
 
@@ -383,13 +404,20 @@ export async function restoreTemplate(db: Db, jobId: string, body: BackupTemplat
     const [copy] = await tx
       .select({ referenceImageId: venueTemplates.referenceImageId })
       .from(venueTemplates)
-      .where(and(eq(venueTemplates.id, copyId), isNull(venueTemplates.deletedAt)))
+      .where(and(eq(venueTemplates.id, copyId), eq(venueTemplates.ownerUserId, userId), isNull(venueTemplates.deletedAt)))
     if (copy) return { status: 'ok', templateId: copyId, reused: false, needsImage: body.imageId !== null && copy.referenceImageId === null }
 
+    // Only the library or the restorer's own is a candidate, checked before the walls are compared.
     const [old] = await tx
       .select({ fixedItems: venueTemplates.fixedItems })
       .from(venueTemplates)
-      .where(and(eq(venueTemplates.id, body.id), isNull(venueTemplates.deletedAt)))
+      .where(
+        and(
+          eq(venueTemplates.id, body.id),
+          isNull(venueTemplates.deletedAt),
+          or(eq(venueTemplates.isLibrary, true), eq(venueTemplates.ownerUserId, userId)),
+        ),
+      )
     if (old && sameWalls(storedItems(old.fixedItems), body.fixedItems)) {
       return { status: 'ok', templateId: body.id, reused: true, needsImage: false }
     }
@@ -403,6 +431,8 @@ export async function restoreTemplate(db: Db, jobId: string, body: BackupTemplat
         reference: body.reference,
         importedBy: body.importedBy,
         editedBy: null,
+        ownerUserId: userId,
+        isLibrary: false,
       })
       .onConflictDoNothing({ target: venueTemplates.id })
       .returning({ id: venueTemplates.id })
@@ -423,10 +453,22 @@ export async function restoreTemplate(db: Db, jobId: string, body: BackupTemplat
 /**
  * Step 3: the floor plan image of a template step 2 made, as raw bytes. It
  * becomes the template's reference image. 'not-found' when this job made no
- * copy of that template (a reused template keeps its own image).
+ * copy of that template owned by `userId` (a reused template keeps its own
+ * image).
  */
-export async function restoreTemplateImage(db: Db, jobId: string, oldTemplateId: string, bytes: Uint8Array): Promise<AddImageResult> {
+export async function restoreTemplateImage(
+  db: Db,
+  jobId: string,
+  oldTemplateId: string,
+  bytes: Uint8Array,
+  userId: string,
+): Promise<AddImageResult> {
   const templateId = restoredId(jobId, oldTemplateId)
+  const [copy] = await db
+    .select({ id: venueTemplates.id })
+    .from(venueTemplates)
+    .where(and(eq(venueTemplates.id, templateId), eq(venueTemplates.ownerUserId, userId), isNull(venueTemplates.deletedAt)))
+  if (!copy) return { status: 'not-found' }
   const result = await addTemplateImage(db, templateId, bytes)
   if (result.status !== 'created' && result.status !== 'existed') return result
   const imageId = result.image.id
@@ -456,8 +498,11 @@ export type RestoreLayoutResult =
  * rewritten through the job's id map, written through writeCanvas() like any
  * other canvas. It uses the template step 2 settled on: this job's copy, or
  * the old template when it was reused, or a blank canvas when neither exists.
+ * Either one must be a template the restorer may use in the restored wedding
+ * (canUseTemplateInWedding, as for any layout), so a file that names someone
+ * else's private template gets a blank canvas, never that template.
  */
-export async function restoreLayout(db: Db, jobId: string, body: BackupLayout): Promise<RestoreLayoutResult> {
+export async function restoreLayout(db: Db, jobId: string, body: BackupLayout, viewer: Viewer): Promise<RestoreLayoutResult> {
   const weddingId = restoredWeddingId(jobId)
   const layoutId = restoredId(jobId, body.id)
   const canvas = remapCanvas(body.canvas, (old) => restoredId(jobId, old))
@@ -472,7 +517,7 @@ export async function restoreLayout(db: Db, jobId: string, body: BackupLayout): 
           .from(venueTemplates)
           .where(and(eq(venueTemplates.id, candidate), isNull(venueTemplates.deletedAt)))
           .for('share')
-        if (row) {
+        if (row && (await canUseTemplateInWedding(tx, viewer, row.id, weddingId))) {
           venueTemplateId = row.id
           break
         }

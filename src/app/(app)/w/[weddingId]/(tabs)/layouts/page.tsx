@@ -12,11 +12,11 @@ export const metadata = { title: 'Layouts' }
 
 export default async function LayoutsPage({ params }: PageProps<'/w/[weddingId]/layouts'>) {
   const { weddingId } = await params
-  await requireWeddingPage(weddingId, `/w/${weddingId}/layouts`)
+  const { user } = await requireWeddingPage(weddingId, `/w/${weddingId}/layouts`)
   if (!uuid.safeParse(weddingId).success) notFound()
   const id = weddingId.toLowerCase()
   const db = getDb()
-  const [layouts, venues] = await Promise.all([listLayouts(db, id), listVenues(db)])
+  const [layouts, venues] = await Promise.all([listLayouts(db, id), listVenues(db, { userId: user.id, isAdmin: user.isAdmin }, { weddingId: id })])
   if (!layouts) notFound()
 
   return (

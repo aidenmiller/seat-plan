@@ -1,6 +1,6 @@
 /**
- * Accounts for integration tests: users, a signed-in cookie for one, and
- * wedding members. Nothing in the app imports this file.
+ * Accounts for integration tests: users, a signed-in cookie for one, wedding
+ * members, and weddings a user belongs to. Nothing in the app imports this file.
  *
  * Session cookies are signed with AUTH_SECRET, so importing this file sets a
  * test secret when none (or too short a one) is set.
@@ -10,6 +10,7 @@ import { eq } from 'drizzle-orm'
 import { users, weddingMembers } from '../src/server/db/schema'
 import type { Db } from '../src/server/locks'
 import { createSession } from '../src/server/repo/sessions'
+import { makeWedding } from '../src/server/repo/test-fixtures'
 import { createUser, type UserDto } from '../src/server/repo/users'
 
 export const TEST_AUTH_SECRET = 'integration-test-secret-at-least-32-characters'
@@ -47,4 +48,11 @@ export async function sessionCookie(db: Db, userId: string): Promise<string> {
 
 export async function makeMember(db: Db, weddingId: string, userId: string, role: 'owner' | 'editor'): Promise<void> {
   await db.insert(weddingMembers).values({ weddingId, userId, role })
+}
+
+/** A wedding (as test-fixtures makes one) with this user in it: its owner, unless `role` says otherwise. */
+export async function makeWeddingFor(db: Db, userId: string, name?: string, role: 'owner' | 'editor' = 'owner'): Promise<string> {
+  const weddingId = await makeWedding(db, name)
+  await makeMember(db, weddingId, userId, role)
+  return weddingId
 }

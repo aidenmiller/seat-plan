@@ -11,10 +11,10 @@ export const metadata = { title: 'Venues' }
 /** Venue templates are shared by every wedding (PLAN change 5); each wedding's tab lists them all. */
 export default async function VenuesPage({ params }: PageProps<'/w/[weddingId]/venues'>) {
   const { weddingId } = await params
-  await requireWeddingPage(weddingId, `/w/${weddingId}/venues`)
+  const { user } = await requireWeddingPage(weddingId, `/w/${weddingId}/venues`)
   if (!uuid.safeParse(weddingId).success) notFound()
   const id = weddingId.toLowerCase()
-  const venues = await listVenues(getDb())
+  const venues = await listVenues(getDb(), { userId: user.id, isAdmin: user.isAdmin }, { weddingId: id })
 
   return (
     <TabPage title="Venues" actions={<NewVenueButton weddingId={id} />}>

@@ -1,22 +1,33 @@
 import { createHash, createHmac, hkdfSync } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  COOKIE_MAX_AGE_SECONDS,
   OPAQUE_TOKEN_PATTERN,
   createShareToken,
-  createSiteToken,
   hashOpaqueToken,
   newOpaqueToken,
   openSessionCookie,
   passwordsMatch,
   signSessionCookie,
-  sitePasswordMatches,
   verifyShareToken,
-  verifySiteToken,
 } from './tokens'
 
 const SECRET = 'test-secret-that-is-at-least-32-characters-long'
 const saved = { ...process.env }
+
+function signWith(key: Buffer, payload: object): string {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url')
+  return `${body}.${createHmac('sha256', key).update(body).digest('base64url')}`
+}
+
+/**
+ * A cookie as the shared-password days signed it (that code is gone): the
+ * old site key, from AUTH_SECRET and SITE_PASSWORD, over a 'site' payload.
+ */
+function oldSiteToken(): string {
+  const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest()
+  const siteKey = Buffer.from(hkdfSync('sha256', SECRET, sha('correct horse'), 'seat-plan site cookie v1', 32))
+  return signWith(siteKey, { typ: 'site', exp: Date.now() + 60_000 })
+}
 
 beforeEach(() => {
   process.env.AUTH_SECRET = SECRET
@@ -24,52 +35,6 @@ beforeEach(() => {
 })
 afterEach(() => {
   process.env = { ...saved }
-})
-
-describe('site tokens', () => {
-  it('verifies a fresh token', () => {
-    expect(verifySiteToken(createSiteToken())).toBe(true)
-  })
-
-  it('lasts 30 days and then expires', () => {
-    const now = Date.UTC(2026, 0, 1)
-    const token = createSiteToken(now)
-    expect(verifySiteToken(token, now + (COOKIE_MAX_AGE_SECONDS - 60) * 1000)).toBe(true)
-    expect(verifySiteToken(token, now + (COOKIE_MAX_AGE_SECONDS + 1) * 1000)).toBe(false)
-  })
-
-  it('rejects a tampered payload or signature', () => {
-    const token = createSiteToken()
-    const [body, sig] = token.split('.')
-    const longer = Buffer.from(JSON.stringify({ typ: 'site', exp: 9e15 })).toString('base64url')
-    expect(verifySiteToken(`${longer}.${sig}`)).toBe(false)
-    expect(verifySiteToken(`${body}.${sig}x`)).toBe(false)
-    expect(verifySiteToken(`${body}.`)).toBe(false)
-    expect(verifySiteToken(`${body}`)).toBe(false)
-    expect(verifySiteToken('')).toBe(false)
-    expect(verifySiteToken(undefined)).toBe(false)
-  })
-
-  it('stops working when the site password changes', () => {
-    const token = createSiteToken()
-    process.env.SITE_PASSWORD = 'a new password'
-    expect(verifySiteToken(token)).toBe(false)
-  })
-
-  it('stops working when AUTH_SECRET changes', () => {
-    const token = createSiteToken()
-    process.env.AUTH_SECRET = `${SECRET}-rotated`
-    expect(verifySiteToken(token)).toBe(false)
-  })
-
-  it('fails closed without a usable secret', () => {
-    const token = createSiteToken()
-    process.env.AUTH_SECRET = 'short'
-    expect(verifySiteToken(token)).toBe(false)
-    delete process.env.AUTH_SECRET
-    expect(verifySiteToken(token)).toBe(false)
-    expect(() => createSiteToken()).toThrow()
-  })
 })
 
 describe('share tokens', () => {
@@ -84,23 +49,14 @@ describe('share tokens', () => {
     expect(verifyShareToken(token)).toEqual({ linkId: 'link-1', credentialVersion: 1 })
   })
 
-  it('can never pass as a site token, and a site token never passes as a share token', () => {
-    expect(verifySiteToken(createShareToken('link-1', 1))).toBe(false)
-    expect(verifyShareToken(createSiteToken())).toBeNull()
+  it('never accepts an old site cookie (signed with the old site key) as a share token', () => {
+    expect(verifyShareToken(oldSiteToken())).toBeNull()
   })
 
   it('checks the payload type even when the signature is right', () => {
-    // Sign payloads of the wrong type with each cookie's own key, the way tokens.ts derives them.
-    const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest()
-    const siteKey = Buffer.from(hkdfSync('sha256', SECRET, sha('correct horse'), 'seat-plan site cookie v1', 32))
+    // Sign payloads of the wrong type with the share key, the way tokens.ts derives it.
     const shareKey = Buffer.from(hkdfSync('sha256', SECRET, Buffer.alloc(0), 'seat-plan share cookie v1', 32))
-    const signWith = (key: Buffer, payload: object) => {
-      const body = Buffer.from(JSON.stringify(payload)).toString('base64url')
-      return `${body}.${createHmac('sha256', key).update(body).digest('base64url')}`
-    }
     const exp = Date.now() + 60_000
-    expect(verifySiteToken(signWith(siteKey, { typ: 'site', exp }))).toBe(true)
-    expect(verifySiteToken(signWith(siteKey, { typ: 'share', linkId: 'x', cv: 1, exp }))).toBe(false)
     expect(verifyShareToken(signWith(shareKey, { typ: 'share', linkId: 'x', cv: 1, exp }))).not.toBeNull()
     expect(verifyShareToken(signWith(shareKey, { typ: 'site', linkId: 'x', cv: 1, exp }))).toBeNull()
   })
@@ -125,11 +81,6 @@ describe('session cookies', () => {
   const secret = 'A'.repeat(43)
   const now = Date.UTC(2026, 0, 1)
   const sessionKey = () => Buffer.from(hkdfSync('sha256', SECRET, Buffer.alloc(0), 'seat-plan user session v1', 32))
-  const signWith = (key: Buffer, payload: object) => {
-    const body = Buffer.from(JSON.stringify(payload)).toString('base64url')
-    return `${body}.${createHmac('sha256', key).update(body).digest('base64url')}`
-  }
-
   it('round-trip the secret and expiry', () => {
     const value = signSessionCookie(secret, now + 60_000)
     expect(openSessionCookie(value, now)).toEqual({ secret, exp: now + 60_000 })
@@ -155,12 +106,11 @@ describe('session cookies', () => {
     expect(openSessionCookie(undefined, now)).toBeNull()
   })
 
-  it('refuse a share or site token in their place, and are refused as either', () => {
+  it('refuse a share token or an old site cookie in their place, and are refused as a share token', () => {
     expect(openSessionCookie(createShareToken('link-1', 1))).toBeNull()
-    expect(openSessionCookie(createSiteToken())).toBeNull()
+    expect(openSessionCookie(oldSiteToken())).toBeNull()
     const value = signSessionCookie(secret, Date.now() + 60_000)
     expect(verifyShareToken(value)).toBeNull()
-    expect(verifySiteToken(value)).toBe(false)
   })
 
   it('check the payload type and secret shape even when the signature is right', () => {
@@ -209,10 +159,4 @@ describe('password compare', () => {
     expect(passwordsMatch('ABC', 'abc')).toBe(false)
   })
 
-  it('checks against SITE_PASSWORD and fails closed when it is missing', () => {
-    expect(sitePasswordMatches('correct horse')).toBe(true)
-    expect(sitePasswordMatches('wrong')).toBe(false)
-    delete process.env.SITE_PASSWORD
-    expect(sitePasswordMatches('')).toBe(false)
-  })
 })

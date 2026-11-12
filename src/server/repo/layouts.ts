@@ -14,6 +14,7 @@ import type {
   SaveLayoutBody,
   UpdateLayoutBody,
 } from '@/shared/api'
+import { canUseTemplateInWedding, type Viewer } from '../auth/venue-access'
 import { recentSavesOf, writeCanvas, type WriteCanvasResult } from '../canvas-write'
 import { layouts, venueTemplates, weddings } from '../db/schema'
 import { editorName } from '../editor-name'
@@ -22,12 +23,16 @@ import type { Db, Tx } from '../locks'
 /**
  * Layouts. Every read and write here skips deleted layouts and layouts whose
  * wedding is deleted. Canvas writes go through writeCanvas().
+ *
+ * Every function that takes a layout id also takes the wedding id the route's
+ * guard resolved, and only touches the layout when it belongs to that
+ * wedding: a layout of any other wedding reads as missing.
  */
 
 const MAX_NAME = 200
 
-const liveLayout = (layoutId: string) =>
-  and(eq(layouts.id, layoutId), isNull(layouts.deletedAt), isNull(weddings.deletedAt))
+const liveLayout = (weddingId: string, layoutId: string) =>
+  and(eq(layouts.id, layoutId), eq(layouts.weddingId, weddingId), isNull(layouts.deletedAt), isNull(weddings.deletedAt))
 
 const summaryColumns = {
   id: layouts.id,
@@ -97,7 +102,7 @@ export async function listLayouts(db: Db, weddingId: string): Promise<LayoutSumm
  * One layout with its canvas and template. The template is loaded whether or
  * not it was deleted, with a flag, so the editor can show the notice (DECISIONS 29).
  */
-export async function getLayoutDetail(db: Db, layoutId: string): Promise<LayoutDetail | null> {
+export async function getLayoutDetail(db: Db, weddingId: string, layoutId: string): Promise<LayoutDetail | null> {
   const [row] = await db
     .select({
       ...summaryColumns,
@@ -110,7 +115,7 @@ export async function getLayoutDetail(db: Db, layoutId: string): Promise<LayoutD
     .from(layouts)
     .innerJoin(weddings, eq(weddings.id, layouts.weddingId))
     .leftJoin(venueTemplates, eq(venueTemplates.id, layouts.venueTemplateId))
-    .where(liveLayout(layoutId))
+    .where(liveLayout(weddingId, layoutId))
   if (!row) return null
   const template =
     row.venueTemplateId && row.venueName !== null && row.templateVersion !== null
@@ -158,8 +163,20 @@ async function templateIsLive(tx: Tx, id: string): Promise<boolean> {
   return Boolean(row)
 }
 
-/** A new layout with an empty canvas. A chosen template must exist and not be deleted. */
-export async function createLayout(db: Db, weddingId: string, body: CreateLayoutBody): Promise<CreateLayoutResult> {
+/**
+ * True when a layout of this wedding may point at the template: it is live
+ * (templateIsLive, with its share lock) and the viewer may use it in this
+ * wedding (canUseTemplateInWedding: the library, the viewer's own, or one the
+ * wedding already uses). Both refusals read the same, so a template the
+ * viewer may not use cannot be told apart from one that does not exist.
+ */
+async function templateUsable(tx: Tx, viewer: Viewer, templateId: string, weddingId: string): Promise<boolean> {
+  if (!(await templateIsLive(tx, templateId))) return false
+  return canUseTemplateInWedding(tx, viewer, templateId, weddingId)
+}
+
+/** A new layout with an empty canvas. A chosen template must be live and one the viewer may use in this wedding. */
+export async function createLayout(db: Db, weddingId: string, body: CreateLayoutBody, viewer: Viewer): Promise<CreateLayoutResult> {
   const layoutId = body.id ?? randomUUID()
   const result = await db.transaction(async (tx): Promise<WriteCanvasResult | { status: 'bad-template' }> => {
     const [wedding] = await tx
@@ -167,7 +184,7 @@ export async function createLayout(db: Db, weddingId: string, body: CreateLayout
       .from(weddings)
       .where(and(eq(weddings.id, weddingId), isNull(weddings.deletedAt)))
     if (!wedding) return { status: 'gone' }
-    if (body.venueTemplateId && !(await templateIsLive(tx, body.venueTemplateId))) return { status: 'bad-template' }
+    if (body.venueTemplateId && !(await templateUsable(tx, viewer, body.venueTemplateId, weddingId))) return { status: 'bad-template' }
     return writeCanvas(tx, {
       mode: 'insert',
       weddingId,
@@ -179,17 +196,18 @@ export async function createLayout(db: Db, weddingId: string, body: CreateLayout
       editedBy: body.editedBy,
     })
   })
-  return afterInsert(db, layoutId, result)
+  return afterInsert(db, weddingId, layoutId, result)
 }
 
 async function afterInsert(
   db: Db,
+  weddingId: string,
   layoutId: string,
   result: WriteCanvasResult | { status: 'bad-template' | 'not-found' },
 ): Promise<CreateLayoutResult> {
   switch (result.status) {
     case 'created': {
-      const layout = await getLayoutDetail(db, layoutId)
+      const layout = await getLayoutDetail(db, weddingId, layoutId)
       return layout ? { status: 'created', layout } : { status: 'not-found' }
     }
     case 'bad-template':
@@ -207,15 +225,15 @@ export type SaveLayoutResult = Extract<
   { status: 'saved' | 'already-saved' | 'conflict' | 'gone' | 'invalid' }
 >
 
-/** The editor's save (PUT /api/layouts/:id). See writeCanvas() for the answers. */
-export async function saveLayout(db: Db, layoutId: string, body: SaveLayoutBody): Promise<SaveLayoutResult> {
-  // A layout never moves between weddings, so its wedding id is safe to read first.
-  const [row] = await db.select({ weddingId: layouts.weddingId }).from(layouts).where(eq(layouts.id, layoutId))
-  if (!row) return { status: 'gone' }
+/**
+ * The editor's save (PUT /api/layouts/:id). See writeCanvas() for the answers;
+ * a layout of another wedding is 'gone', as a missing one is.
+ */
+export async function saveLayout(db: Db, weddingId: string, layoutId: string, body: SaveLayoutBody): Promise<SaveLayoutResult> {
   const result = await db.transaction((tx) =>
     writeCanvas(tx, {
       mode: 'save',
-      weddingId: row.weddingId,
+      weddingId,
       layoutId,
       canvas: body.canvas,
       baseVersion: body.baseVersion,
@@ -238,17 +256,24 @@ export async function saveLayout(db: Db, layoutId: string, body: SaveLayoutBody)
 export type UpdateLayoutResult = { status: 'updated'; layout: LayoutDetail } | { status: 'not-found' } | { status: 'bad-template' }
 
 /**
- * Rename, or change the template (a live one, or null for a blank canvas).
- * Leaves the version, editor and last edited time alone: those follow canvas
- * saves only. A template change redraws the thumbnail.
+ * Rename, or change the template (a live one the viewer may use in this
+ * wedding, or null for a blank canvas). Leaves the version, editor and last
+ * edited time alone: those follow canvas saves only. A template change
+ * redraws the thumbnail.
  */
-export async function updateLayout(db: Db, layoutId: string, body: UpdateLayoutBody): Promise<UpdateLayoutResult> {
+export async function updateLayout(
+  db: Db,
+  weddingId: string,
+  layoutId: string,
+  body: UpdateLayoutBody,
+  viewer: Viewer,
+): Promise<UpdateLayoutResult> {
   const outcome = await db.transaction(async (tx): Promise<UpdateLayoutResult['status']> => {
     const [row] = await tx
       .select({ canvas: layouts.canvas, venueTemplateId: layouts.venueTemplateId })
       .from(layouts)
       .innerJoin(weddings, eq(weddings.id, layouts.weddingId))
-      .where(liveLayout(layoutId))
+      .where(liveLayout(weddingId, layoutId))
       .for('update', { of: layouts })
     if (!row) return 'not-found'
 
@@ -264,6 +289,7 @@ export async function updateLayout(db: Db, layoutId: string, body: UpdateLayoutB
           .where(and(eq(venueTemplates.id, body.venueTemplateId), isNull(venueTemplates.deletedAt)))
           .for('share')
         if (!template) return 'bad-template'
+        if (!(await canUseTemplateInWedding(tx, viewer, body.venueTemplateId, weddingId))) return 'bad-template'
         const parsed = fixedItemsSchema.safeParse(template.fixedItems)
         fixedItems = parsed.success ? parsed.data : []
       }
@@ -279,21 +305,22 @@ export async function updateLayout(db: Db, layoutId: string, body: UpdateLayoutB
     return 'updated'
   })
   if (outcome !== 'updated') return { status: outcome }
-  const layout = await getLayoutDetail(db, layoutId)
+  const layout = await getLayoutDetail(db, weddingId, layoutId)
   return layout ? { status: 'updated', layout } : { status: 'not-found' }
 }
 
 /**
  * A copy of a layout with its tables, seats and notes (spec section 10), or,
  * for "keep mine as a new copy", with the canvas the editor sends. Same kind
- * and template. The default name is "<name> copy". Seats are kept; writeCanvas
- * drops any a removed guest still held.
+ * and template: the copy stays in the source's wedding, which already uses
+ * that template. The default name is "<name> copy". Seats are kept;
+ * writeCanvas drops any a removed guest still held.
  *
  * With a canvas, the source layout may be deleted (its wedding must be live):
  * that is "Save as a copy" after a save answered 410. Without one, a deleted
  * source is not found.
  */
-export async function duplicateLayout(db: Db, layoutId: string, body: DuplicateLayoutBody): Promise<CreateLayoutResult> {
+export async function duplicateLayout(db: Db, weddingId: string, layoutId: string, body: DuplicateLayoutBody): Promise<CreateLayoutResult> {
   const newId = body.id ?? randomUUID()
   const result = await db.transaction(async (tx): Promise<WriteCanvasResult | { status: 'not-found' }> => {
     const [source] = await tx
@@ -308,8 +335,8 @@ export async function duplicateLayout(db: Db, layoutId: string, body: DuplicateL
       .innerJoin(weddings, eq(weddings.id, layouts.weddingId))
       .where(
         body.canvas
-          ? and(eq(layouts.id, layoutId), isNull(weddings.deletedAt))
-          : liveLayout(layoutId),
+          ? and(eq(layouts.id, layoutId), eq(layouts.weddingId, weddingId), isNull(weddings.deletedAt))
+          : liveLayout(weddingId, layoutId),
       )
     if (!source) return { status: 'not-found' }
     const canvas: Canvas = body.canvas ?? source.canvas
@@ -324,7 +351,7 @@ export async function duplicateLayout(db: Db, layoutId: string, body: DuplicateL
       editedBy: body.editedBy,
     })
   })
-  return afterInsert(db, newId, result)
+  return afterInsert(db, weddingId, newId, result)
 }
 
 export function copyName(name: string): string {
@@ -333,13 +360,14 @@ export function copyName(name: string): string {
 }
 
 /** Marks the layout deleted. Other layouts, its seats and its share links stay as they are. */
-export async function softDeleteLayout(db: Db, layoutId: string): Promise<boolean> {
+export async function softDeleteLayout(db: Db, weddingId: string, layoutId: string): Promise<boolean> {
   const updated = await db
     .update(layouts)
     .set({ deletedAt: sql`now()`, updatedAt: sql`${layouts.updatedAt}` })
     .where(
       and(
         eq(layouts.id, layoutId),
+        eq(layouts.weddingId, weddingId),
         isNull(layouts.deletedAt),
         sql`exists (select 1 from "weddings" w where w."id" = "layouts"."wedding_id" and w."deleted_at" is null)`,
       ),
@@ -349,7 +377,7 @@ export async function softDeleteLayout(db: Db, layoutId: string): Promise<boolea
 }
 
 /** What the delete dialog lists for a layout. */
-export async function layoutDeleteSummary(db: Db, layoutId: string): Promise<LayoutDeleteSummary | null> {
+export async function layoutDeleteSummary(db: Db, weddingId: string, layoutId: string): Promise<LayoutDeleteSummary | null> {
   const [row] = await db
     .select({
       name: layouts.name,
@@ -361,9 +389,9 @@ export async function layoutDeleteSummary(db: Db, layoutId: string): Promise<Lay
     })
     .from(layouts)
     .innerJoin(weddings, eq(weddings.id, layouts.weddingId))
-    .where(liveLayout(layoutId))
+    .where(liveLayout(weddingId, layoutId))
   if (!row) return null
-  const items = Array.isArray(row.canvas?.items) ? row.canvas.items : []
+  const items =Array.isArray(row.canvas?.items) ? row.canvas.items : []
   return {
     kind: 'layout',
     name: row.name,
@@ -375,7 +403,7 @@ export async function layoutDeleteSummary(db: Db, layoutId: string): Promise<Lay
 }
 
 /** The cheap check a tab makes when it regains focus. */
-export async function layoutVersion(db: Db, layoutId: string): Promise<LayoutVersionInfo | null> {
+export async function layoutVersion(db: Db, weddingId: string, layoutId: string): Promise<LayoutVersionInfo | null> {
   const [row] = await db
     .select({
       version: layouts.version,
@@ -387,7 +415,7 @@ export async function layoutVersion(db: Db, layoutId: string): Promise<LayoutVer
     })
     .from(layouts)
     .innerJoin(weddings, eq(weddings.id, layouts.weddingId))
-    .where(liveLayout(layoutId))
+    .where(liveLayout(weddingId, layoutId))
   if (!row) return null
   return {
     version: row.version,

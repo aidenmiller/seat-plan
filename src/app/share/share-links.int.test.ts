@@ -12,11 +12,11 @@ import { sql } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../test/db'
-import { makeMember, makeUser, sessionCookie } from '../../../test/auth'
+import { makeMember, makeUser, makeWeddingFor, sessionCookie } from '../../../test/auth'
 import type { ChairRow, Note } from '@/domain/canvas-schema'
 import { DEFAULT_RIGHT_LABEL, generateSeatingBlock } from '@/domain/ceremony'
 import { SESSION_COOKIE } from '@/server/auth/tokens'
-import { canvasOf, makeGuest, makeLayout, makeWedding, roundTable } from '@/server/repo/test-fixtures'
+import { canvasOf, makeGuest, makeLayout, roundTable } from '@/server/repo/test-fixtures'
 import type { ShareLink, ShareView } from '@/shared/api'
 
 vi.mock('@/server/auth/throttle', async (importOriginal) => ({
@@ -24,13 +24,17 @@ vi.mock('@/server/auth/throttle', async (importOriginal) => ({
   wrongGuessDelay: async () => {},
 }))
 
-/** A signed-in user who is no member of any wedding: for now any signed-in user may use the site routes. */
+/** The planner the site routes run as: the owner of every wedding this file makes. */
 let planner: Record<string, string> = {}
+let plannerId = ''
 
 beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'share-links-int-test-secret-32-chars-plus')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
-  planner = await signedInJar()
+  const database = await db()
+  plannerId = (await makeUser(database)).id
+  const pair = await sessionCookie(database, plannerId)
+  planner = { [SESSION_COOKIE]: pair.slice(pair.indexOf('=') + 1) }
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -94,7 +98,7 @@ const routes = {
 /** A wedding with Ann seated at a table and a private note on the plan. */
 async function setup() {
   const database = await db()
-  const weddingId = await makeWedding(database, 'Share test')
+  const weddingId = await makeWeddingFor(database, plannerId, 'Share test')
   const ann = await makeGuest(database, weddingId, 'Annabel', 'Quist')
   const note: Note = {
     id: 'n1',
@@ -247,8 +251,8 @@ describe('share links', () => {
     const { layoutId } = await setup()
     const other = await setup()
     const { token } = await makeLink(layoutId, { password: 'venue-pass' })
-    // The planner the site routes use, and a member of another wedding.
-    for (const jar of [planner, await signedInJar({ memberOf: other.weddingId })]) {
+    // Someone signed in who belongs to no wedding, and a member of another wedding.
+    for (const jar of [await signedInJar(), await signedInJar({ memberOf: other.weddingId })]) {
       const res = await data(token, jar)
       expect(res.status).toBe(401)
       expect(res.text).not.toContain('Annabel')
@@ -282,7 +286,7 @@ describe('share links', () => {
 
   it('shows a ceremony layout’s chair rows whole, with the seated guest under a key', async () => {
     const database = await db()
-    const weddingId = await makeWedding(database, 'Share ceremony test')
+    const weddingId = await makeWeddingFor(database, plannerId, 'Share ceremony test')
     const cy = await makeGuest(database, weddingId, 'Cyrille', 'Okafor')
     let n = 0
     const rows = generateSeatingBlock({ rows: 2, chairsPerRow: 4, origin: { x: 0, y: 0 } }, () => `row-${++n}`).map((row) =>

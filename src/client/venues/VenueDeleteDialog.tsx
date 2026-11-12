@@ -61,7 +61,8 @@ function DeleteForm({ venueId, onClose, onDeleted }: VenueDeleteDialogProps) {
   }, [venueId, attempt])
 
   const summary = load.kind === 'ready' ? load.summary : null
-  const blocked = summary !== null && summary.layouts.length > 0
+  // Layouts in weddings this person is not part of block it too; they are only counted.
+  const blocked = summary !== null && (summary.layouts.length > 0 || summary.hiddenLayouts > 0)
 
   async function submit() {
     if (!summary || blocked || typed !== CONFIRM_WORD || busy) return
@@ -72,7 +73,7 @@ function DeleteForm({ venueId, onClose, onDeleted }: VenueDeleteDialogProps) {
       onDeleted()
     } catch (err) {
       if (err instanceof ApiRequestError && err.status === 409 && isInUse(err.body)) {
-        setLoad({ kind: 'ready', summary: { ...summary, layouts: err.body.layouts } })
+        setLoad({ kind: 'ready', summary: { ...summary, layouts: err.body.layouts, hiddenLayouts: err.body.hiddenLayouts ?? 0 } })
       } else {
         setError(`Could not delete. ${errorMessage(err)}`)
       }
@@ -118,6 +119,7 @@ function DeleteForm({ venueId, onClose, onDeleted }: VenueDeleteDialogProps) {
                 {moving === l.layoutId && (
                   <div className="mt-2 rounded-lg border border-stone-200 p-3">
                     <VenuePicker
+                      weddingId={l.weddingId}
                       layoutId={l.layoutId}
                       current={venueId}
                       exclude={venueId}
