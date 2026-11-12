@@ -14,6 +14,8 @@
  * ANTHROPIC_BASE_URL and the app must never reach the real API from a test.
  */
 import { randomBytes } from 'node:crypto'
+import os from 'node:os'
+import path from 'node:path'
 import { defineConfig, devices } from '@playwright/test'
 
 const PORT = Number(process.env.E2E_PORT ?? 3100)
@@ -34,6 +36,9 @@ process.env.E2E_DATABASE_URL = E2E_DATABASE_URL
 process.env.E2E_BASE_URL = `http://localhost:${PORT}`
 process.env.E2E_STAND_IN_PORT = String(STAND_IN_PORT)
 process.env.E2E_STAND_IN_URL = `http://127.0.0.1:${STAND_IN_PORT}`
+// Stored backups: the run's own cron secret, and a fresh folder for the backup store (global setup makes it).
+process.env.E2E_CRON_SECRET ??= randomBytes(24).toString('hex')
+process.env.E2E_BACKUP_STORE_DIR ??= path.join(os.tmpdir(), `seat-plan-e2e-backups-${randomBytes(6).toString('hex')}`)
 
 export default defineConfig({
   testDir: 'e2e',
@@ -83,6 +88,8 @@ export default defineConfig({
       ANTHROPIC_BASE_URL: process.env.E2E_STAND_IN_URL,
       ANTHROPIC_API_KEY: 'stand-in-dummy-key',
       FLOORPLAN_MODEL: '',
+      CRON_SECRET: process.env.E2E_CRON_SECRET,
+      BACKUP_STORE_DIR: process.env.E2E_BACKUP_STORE_DIR,
     },
   },
 })

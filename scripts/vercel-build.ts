@@ -27,6 +27,18 @@ export function productionSettingsProblems(env: Readonly<Record<string, string |
   if (!env.DATABASE_URL) {
     problems.push('DATABASE_URL is not set. Open Storage, connect the Neon database to Production, then redeploy.')
   }
+  // The nightly backup (vercel.json crons, src/app/api/cron/backups). Vercel sends the secret in a header, so letters and digits only.
+  if (!/^[A-Za-z0-9]{32,}$/.test(env.CRON_SECRET ?? '')) {
+    problems.push(
+      'CRON_SECRET is missing, shorter than 32 characters, or holds characters other than letters and digits. Make one with: openssl rand -hex 32',
+    )
+  }
+  if (!env.BLOB_STORE_ID && !env.BLOB_READ_WRITE_TOKEN) {
+    problems.push('No Blob store is connected, so nightly backups have nowhere to go. Open Storage, create a PRIVATE Blob store and connect it to Production, then redeploy.')
+  }
+  if (env.BACKUP_STORE_DIR) {
+    problems.push('BACKUP_STORE_DIR is for local runs only (a Vercel function cannot keep files). Remove it from Production.')
+  }
   return problems
 }
 

@@ -46,3 +46,6 @@ next-env.d.ts
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# local stored backups (BACKUP_STORE_DIR)
+/.backups/

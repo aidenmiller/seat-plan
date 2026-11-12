@@ -1,30 +1,21 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
-import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
-import {
-  BACKUP_FORMAT,
-  BACKUP_VERSION,
-  type BackupFile,
-  type BackupLayout,
-  type BackupTemplate,
-  type RestoreStart,
-} from '@/domain/backup/schema'
+import { and, eq, isNull, or, sql } from 'drizzle-orm'
+import { type BackupLayout, type BackupTemplate, type RestoreStart } from '@/domain/backup/schema'
 import { partnerPairs, remapCanvas, remapWeddingRows, restoredName, sameWalls } from '@/domain/backup/remap'
 import { nameKey } from '@/domain/names'
-import { legacySide } from '@/domain/partners'
 import { fixedItemsSchema, type FixedItem } from '@/domain/venue-schema'
 import type { RestoredLayout, RestoredTemplate, RestoreStarted } from '@/shared/api'
 import { canUseTemplateInWedding, type Viewer } from './auth/venue-access'
+import { backupFileStream, type ImageReader } from './backups/assemble'
+import { buildBackup } from './backups/build'
 import { writeCanvas } from './canvas-write'
-import { editorName } from './editor-name'
 import {
   groupMembers,
   groups,
   guests,
-  layouts,
   ruleGuests,
   rules,
-  users,
   venueImages,
   venueTemplateRevisions,
   venueTemplates,
@@ -81,187 +72,33 @@ export function restoredWeddingId(jobId: string): string {
 
 // ---------------------------------------------------------------- backup
 
-type BackupHead = Omit<BackupFile, 'images'>
-type ImageRef = { id: string; templateId: string }
-
-/** The file's name: "<wedding> backup YYYY-MM-DD.json". */
-export function backupFileName(weddingName: string, now = new Date()): string {
+/** The file's name: "<wedding> backup YYYY-MM-DD.json", dated `when` (today, or a stored backup's day). */
+export function backupFileName(weddingName: string, when = new Date()): string {
   const safe = weddingName.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Wedding'
-  return `${safe} backup ${now.toISOString().slice(0, 10)}.json`
+  return `${safe} backup ${when.toISOString().slice(0, 10)}.json`
 }
 
-/** Everything but the image bytes. Null when the wedding is missing or deleted. */
-async function backupHead(db: Db, weddingId: string): Promise<{ head: BackupHead; images: ImageRef[] } | null> {
-  const [wedding] = await db
-    .select({
-      id: weddings.id,
-      name: weddings.name,
-      date: weddings.date,
-      unit: weddings.unit,
-      minGapCm: weddings.minGapCm,
-      partner1Name: weddings.partner1Name,
-      partner2Name: weddings.partner2Name,
-    })
-    .from(weddings)
-    .where(and(eq(weddings.id, weddingId), isNull(weddings.deletedAt)))
-  if (!wedding) return null
-
-  const liveGuest = and(eq(guests.weddingId, weddingId), isNull(guests.deletedAt))
-  const [guestRows, groupRows, memberRows, ruleRows, ruleGuestRows, layoutRows, weddingMemberRows] = await Promise.all([
-    db
-      .select({
-        id: guests.id,
-        firstName: guests.firstName,
-        lastName: guests.lastName,
-        nickname: guests.nickname,
-        partnerId: guests.partnerId,
-        coupleRuleEnabled: guests.coupleRuleEnabled,
-        household: guests.household,
-        side: guests.side,
-        rsvp: guests.rsvp,
-        meal: guests.meal,
-        isChild: guests.isChild,
-        notes: guests.notes,
-      })
-      .from(guests)
-      .where(liveGuest)
-      .orderBy(asc(guests.createdAt), asc(guests.id)),
-    db
-      .select({ id: groups.id, name: groups.name, color: groups.color })
-      .from(groups)
-      .where(eq(groups.weddingId, weddingId))
-      .orderBy(asc(groups.createdAt), asc(groups.id)),
-    db
-      .select({ groupId: groupMembers.groupId, guestId: groupMembers.guestId })
-      .from(groupMembers)
-      .innerJoin(guests, eq(guests.id, groupMembers.guestId))
-      .where(and(eq(groupMembers.weddingId, weddingId), liveGuest))
-      .orderBy(asc(groupMembers.groupId), asc(groupMembers.createdAt), asc(groupMembers.guestId)),
-    db
-      .select({
-        id: rules.id,
-        kind: rules.kind,
-        nextToEachOther: rules.nextToEachOther,
-        appliesTo: rules.appliesTo,
-        enabled: rules.enabled,
-        note: rules.note,
-      })
-      .from(rules)
-      .where(eq(rules.weddingId, weddingId))
-      .orderBy(asc(rules.createdAt), asc(rules.id)),
-    db
-      .select({ ruleId: ruleGuests.ruleId, guestId: ruleGuests.guestId })
-      .from(ruleGuests)
-      .innerJoin(guests, eq(guests.id, ruleGuests.guestId))
-      .where(and(eq(ruleGuests.weddingId, weddingId), liveGuest))
-      .orderBy(asc(ruleGuests.ruleId), asc(ruleGuests.guestId)),
-    db
-      .select({
-        id: layouts.id,
-        name: layouts.name,
-        kind: layouts.kind,
-        venueTemplateId: layouts.venueTemplateId,
-        editedBy: editorName(layouts),
-        canvas: layouts.canvas,
-      })
-      .from(layouts)
-      .where(and(eq(layouts.weddingId, weddingId), isNull(layouts.deletedAt)))
-      .orderBy(asc(layouts.createdAt), asc(layouts.id)),
-    // Who can open the wedding, for reading only (a restore never adds members). None for a wedding from before accounts.
-    db
-      .select({ userId: weddingMembers.userId, email: users.email, displayName: users.displayName, role: weddingMembers.role })
-      .from(weddingMembers)
-      .innerJoin(users, eq(users.id, weddingMembers.userId))
-      .where(eq(weddingMembers.weddingId, weddingId))
-      .orderBy(asc(weddingMembers.createdAt), asc(weddingMembers.userId)),
-  ])
-
-  // The templates the layouts use, deleted or not: a restore can bring a deleted one back as a copy.
-  const templateIds = [...new Set(layoutRows.flatMap((l) => (l.venueTemplateId ? [l.venueTemplateId] : [])))]
-  const templateRows =
-    templateIds.length === 0
-      ? []
-      : await db
-          .select({
-            id: venueTemplates.id,
-            name: venueTemplates.name,
-            fixedItems: venueTemplates.fixedItems,
-            reference: venueTemplates.reference,
-            importedBy: venueTemplates.importedBy,
-            imageId: venueTemplates.referenceImageId,
-          })
-          .from(venueTemplates)
-          .where(inArray(venueTemplates.id, templateIds))
-          .orderBy(asc(venueTemplates.createdAt), asc(venueTemplates.id))
-
-  const templates: BackupTemplate[] = templateRows.map((t) => {
-    const items = fixedItemsSchema.safeParse(t.fixedItems)
-    return { ...t, fixedItems: items.success ? items.data : [], reference: t.reference ?? null }
-  })
-  const layoutList: BackupLayout[] = layoutRows
-  const head: BackupHead = {
-    format: BACKUP_FORMAT,
-    version: BACKUP_VERSION,
-    exportedAt: new Date().toISOString(),
-    wedding,
-    // Old words an older deployment wrote during a build go out as codes (migration 0007).
-    guests: guestRows.map((g) => ({ ...g, side: legacySide(g.side) ?? 'both' })),
-    members: weddingMemberRows,
-    groups: groupRows,
-    groupMembers: memberRows,
-    rules: ruleRows,
-    ruleGuests: ruleGuestRows,
-    layouts: layoutList,
-    templates,
+/** An image's bytes from the database, for a download of the wedding as it is now. */
+export function databaseImageReader(db: Db): ImageReader {
+  return async (ref) => {
+    const [row] = await db
+      .select({ bytes: venueImages.bytes })
+      .from(venueImages)
+      .where(and(eq(venueImages.id, ref.id), eq(venueImages.templateId, ref.templateId)))
+    return row ? new Uint8Array(row.bytes) : null
   }
-  const images = templates.flatMap((t) => (t.imageId ? [{ id: t.imageId, templateId: t.id }] : []))
-  return { head, images }
 }
 
 /**
- * The backup file as a stream of UTF-8 JSON, with its file name. Null when the
- * wedding is missing or deleted. Images are read one at a time as the stream
- * is pulled.
+ * The backup file of the wedding as it is now, as a stream of UTF-8 JSON,
+ * with its file name. Null when the wedding is missing or deleted. The rows
+ * are read in one transaction (backups/build.ts); images are read one at a
+ * time as the stream is pulled (backups/assemble.ts).
  */
 export async function backupStream(db: Db, weddingId: string): Promise<{ fileName: string; stream: ReadableStream<Uint8Array> } | null> {
-  const found = await backupHead(db, weddingId)
-  if (!found) return null
-  const { head, images } = found
-  const encoder = new TextEncoder()
-  const opening = JSON.stringify(head)
-  let next = 0
-  let written = 0
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      // The head is one JSON object; the images list goes in before its closing brace.
-      controller.enqueue(encoder.encode(`${opening.slice(0, -1)},"images":[`))
-    },
-    async pull(controller) {
-      while (next < images.length) {
-        const ref = images[next++]!
-        const [row] = await db
-          .select({
-            id: venueImages.id,
-            templateId: venueImages.templateId,
-            contentType: venueImages.contentType,
-            width: venueImages.width,
-            height: venueImages.height,
-            sha256: venueImages.sha256,
-            bytes: venueImages.bytes,
-          })
-          .from(venueImages)
-          .where(and(eq(venueImages.id, ref.id), eq(venueImages.templateId, ref.templateId)))
-        if (!row) continue
-        const { bytes, ...meta } = row
-        const entry = JSON.stringify({ ...meta, data: Buffer.from(bytes).toString('base64') })
-        controller.enqueue(encoder.encode(`${written++ > 0 ? ',' : ''}${entry}`))
-        return
-      }
-      controller.enqueue(encoder.encode(']}'))
-      controller.close()
-    },
-  })
-  return { fileName: backupFileName(head.wedding.name), stream }
+  const built = await buildBackup(db, weddingId)
+  if (!built) return null
+  return { fileName: backupFileName(built.weddingName), stream: backupFileStream(built.head, databaseImageReader(db)) }
 }
 
 // ---------------------------------------------------------------- restore: the wedding's rows

@@ -10,7 +10,8 @@
  *     answers 403 { error: 'bad_origin' }, on every path, public and share
  *     paths included.
  *  2. /share/<token> goes to its own check (src/server/auth/share.ts).
- *  3. The public paths (paths.ts) go through.
+ *  3. The public paths and the cron route (paths.ts) go through; the cron
+ *     route checks its bearer secret itself.
  *  4. Anything else needs a validly signed, unexpired session cookie: a page
  *     request without one goes to /login?next=..., an API request gets 401.
  *     A page request with one renews the cookie's 30-day lifetime, as the
@@ -51,6 +52,11 @@ export function proxy(req: NextRequest) {
     const res = noindex(NextResponse.next())
     res.headers.set('Referrer-Policy', 'no-referrer')
     return res
+  }
+  if (kind === 'cron') {
+    // Vercel Cron sends no cookie; the route checks the cron secret itself
+    // (withCronSecret). Its POST has no Origin, so the check above lets it by.
+    return noindex(NextResponse.next())
   }
   if (kind === 'public') {
     const res = finish(req, NextResponse.next())

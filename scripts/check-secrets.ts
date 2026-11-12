@@ -2,7 +2,8 @@
  * Fails if a secret appears in the built browser files or in git history
  * (spec section 13). It looks for AUTH_SECRET (which signs every cookie), and
  * for SITE_PASSWORD and CHECK_PASSWORD when they are set (CI puts the real
- * site password in CHECK_PASSWORD). Reads them from the environment, never
+ * site password in CHECK_PASSWORD), and for the backup job's CRON_SECRET and
+ * BLOB_READ_WRITE_TOKEN when set. Reads them from the environment, never
  * from the command line, and never prints them.
  *
  *   npm run check:secrets -- --bundle     scan the build output (.next, except its cache) and public/
@@ -99,7 +100,7 @@ export function scanHistory(secret: string, cwd = process.cwd()): Promise<Hit[]>
 }
 
 /** The variables whose values must never show up, in the order they are named. */
-export const SECRET_NAMES = ['AUTH_SECRET', 'SITE_PASSWORD', 'CHECK_PASSWORD'] as const
+export const SECRET_NAMES = ['AUTH_SECRET', 'SITE_PASSWORD', 'CHECK_PASSWORD', 'CRON_SECRET', 'BLOB_READ_WRITE_TOKEN'] as const
 
 export type Secret = { name: (typeof SECRET_NAMES)[number]; value: string }
 

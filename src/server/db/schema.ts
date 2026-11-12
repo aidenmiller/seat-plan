@@ -10,6 +10,7 @@
 import { sql } from 'drizzle-orm'
 import {
   type AnyPgColumn,
+  bigint,
   boolean,
   check,
   customType,
@@ -543,6 +544,109 @@ export const shareLinks = pgTable(
     check('share_links_token_length', sql`length(${t.token}) >= 43`),
     index('share_links_layout_idx').on(t.layoutId),
     index('share_links_wedding_idx').on(t.weddingId),
+  ],
+)
+
+/** One wedding a backup run could not back up. The message never holds guest data (runner.ts, safeFailureMessage). */
+export type BackupFailure = { weddingId: string; message: string }
+
+/**
+ * One run of the backup job (src/server/backups/runner.ts): the nightly cron,
+ * an admin's "run now", or an owner's "back up now". Only one run is ever
+ * 'running' (the partial unique index, and the lease taken under an advisory
+ * lock); a run whose heartbeat is older than 6 minutes is marked 'failed' by
+ * the next one.
+ */
+export const backupRuns = pgTable(
+  'backup_runs',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    trigger: text({ enum: ['cron', 'admin', 'owner'] }).notNull(),
+    /** The admin or owner who started it; null for the cron. */
+    startedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+    startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    heartbeatAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp({ withTimezone: true }),
+    status: text({ enum: ['running', 'ok', 'partial', 'failed'] }).notNull().default('running'),
+    backedUp: integer().notNull().default(0),
+    unchanged: integer().notNull().default(0),
+    failed: integer().notNull().default(0),
+    failures: jsonb().$type<BackupFailure[]>().notNull().default([]),
+    /** Weddings left for the next run when this one reached its deadline. */
+    remaining: integer().notNull().default(0),
+    error: text(),
+  },
+  (t) => [
+    check('backup_runs_trigger_valid', sql`${t.trigger} in ('cron', 'admin', 'owner')`),
+    check('backup_runs_status_valid', sql`${t.status} in ('running', 'ok', 'partial', 'failed')`),
+    check('backup_runs_failures_array', sql`jsonb_typeof(${t.failures}) = 'array'`),
+    check('backup_runs_counts_nonnegative', sql`${t.backedUp} >= 0 and ${t.unchanged} >= 0 and ${t.failed} >= 0 and ${t.remaining} >= 0`),
+    check('backup_runs_error_length', sql`${t.error} is null or length(${t.error}) <= 1000`),
+    uniqueIndex('backup_runs_one_running_uq')
+      .on(t.status)
+      .where(sql`${t.status} = 'running'`),
+    index('backup_runs_started_idx').on(t.startedAt),
+  ],
+)
+
+/**
+ * A backup stored in the backup store (src/server/backups/store.ts): the
+ * wedding's backup file without its images, gzipped, at `pathname`. The
+ * images are stored once each by content (backup_images) and named by
+ * `image_sha256s`. wedding_id has no foreign key, so backups outlive the
+ * wedding (as activity_events do); wedding_name is the name at backup time.
+ */
+export const backups = pgTable(
+  'backups',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    weddingId: uuid().notNull(),
+    weddingName: text().notNull(),
+    kind: text({ enum: ['nightly', 'manual', 'final'] }).notNull(),
+    pathname: text().notNull(),
+    /** Size of the stored (gzipped) file. */
+    byteSize: bigint({ mode: 'number' }).notNull(),
+    /** sha256 of the stored (gzipped) bytes, checked on every read. */
+    blobSha256: text().notNull(),
+    /** What the backup holds (build.ts, contentSha256): equal means nothing changed. */
+    contentSha256: text().notNull(),
+    imageSha256s: text().array().notNull().default(sql`'{}'::text[]`),
+    formatVersion: integer().notNull(),
+    guestCount: integer().notNull(),
+    layoutCount: integer().notNull(),
+    createdAt: createdAt(),
+    /** The last time a run found the wedding unchanged since this backup (created_at at first). */
+    checkedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+    runId: uuid().references(() => backupRuns.id, { onDelete: 'set null' }),
+  },
+  (t) => [
+    unique('backups_pathname_uq').on(t.pathname),
+    check('backups_kind_valid', sql`${t.kind} in ('nightly', 'manual', 'final')`),
+    check('backups_blob_sha256_hex', sql`${t.blobSha256} ~ '^[0-9a-f]{64}$'`),
+    check('backups_content_sha256_hex', sql`${t.contentSha256} ~ '^[0-9a-f]{64}$'`),
+    check('backups_counts_nonnegative', sql`${t.byteSize} >= 0 and ${t.guestCount} >= 0 and ${t.layoutCount} >= 0`),
+    index('backups_wedding_created_idx').on(t.weddingId, t.createdAt.desc()),
+    index('backups_created_idx').on(t.createdAt),
+    index('backups_image_sha256s_idx').using('gin', t.imageSha256s),
+  ],
+)
+
+/** A floor plan image in the backup store, stored once by its content (backups/images/<sha256>.<ext>). */
+export const backupImages = pgTable(
+  'backup_images',
+  {
+    sha256: text().primaryKey(),
+    pathname: text().notNull(),
+    contentType: text({ enum: ['image/png', 'image/jpeg'] }).notNull(),
+    byteSize: bigint({ mode: 'number' }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('backup_images_pathname_uq').on(t.pathname),
+    check('backup_images_sha256_hex', sql`${t.sha256} ~ '^[0-9a-f]{64}$'`),
+    check('backup_images_content_type_valid', sql`${t.contentType} in ('image/png', 'image/jpeg')`),
+    check('backup_images_byte_size_nonnegative', sql`${t.byteSize} >= 0`),
   ],
 )
 
