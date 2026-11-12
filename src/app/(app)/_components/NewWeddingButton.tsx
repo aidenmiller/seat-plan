@@ -7,14 +7,18 @@ import { randomId } from '@/client/sync/random-id'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { ChoiceGroup, TextField, UNIT_CHOICES } from '@/client/ui/fields'
 import { PartnerNameFields } from '@/client/ui/PartnerNameFields'
-import { errorClass, primaryButton, secondaryButton } from '@/client/ui/styles'
+import { errorClass, primaryButton, primaryButtonOnNavy, secondaryButton } from '@/client/ui/styles'
 
-/** "New wedding": name, optional date, the partners' names, feet or meters. Opens the new wedding once made. */
+/**
+ * "New wedding": name, optional date, the partners' names, feet or meters.
+ * Opens the new wedding once made. The button sits on the home page's navy;
+ * the dialog's own buttons are the usual ones.
+ */
 export function NewWeddingButton() {
   const [open, setOpen] = useState(false)
   return (
     <>
-      <button type="button" className={primaryButton} onClick={() => setOpen(true)}>
+      <button type="button" className={primaryButtonOnNavy} onClick={() => setOpen(true)}>
         New wedding
       </button>
       <Dialog open={open} onClose={() => setOpen(false)} title="New wedding">
