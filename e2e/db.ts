@@ -83,3 +83,47 @@ export async function dbMarkTemplateDeleted(templateId: string): Promise<void> {
     await client.end()
   }
 }
+
+/** Runs one statement against the end-to-end database. */
+async function dbQuery<T extends pg.QueryResultRow>(text: string, values: unknown[]): Promise<T[]> {
+  const url = process.env.E2E_DATABASE_URL
+  if (!url) throw new Error('E2E_DATABASE_URL is not set; run through playwright.config.ts')
+  assertLocalDatabase(url)
+  const client = new pg.Client({ connectionString: url })
+  await client.connect()
+  try {
+    return (await client.query<T>(text, values)).rows
+  } finally {
+    await client.end()
+  }
+}
+
+/** The id of the account with this email. */
+export async function dbUserId(email: string): Promise<string> {
+  const rows = await dbQuery<{ id: string }>('select id from users where email = $1', [normalizeEmail(email)])
+  if (!rows[0]) throw new Error(`dbUserId: no account for ${email}`)
+  return rows[0].id
+}
+
+/** Makes the user a member of the wedding, or changes their role. */
+export async function dbAddMember(weddingId: string, userId: string, role: 'owner' | 'editor'): Promise<void> {
+  await dbQuery(
+    `insert into wedding_members (wedding_id, user_id, role) values ($1, $2, $3)
+     on conflict (wedding_id, user_id) do update set role = excluded.role`,
+    [weddingId, userId, role],
+  )
+}
+
+/** Takes the user out of the wedding. */
+export async function dbRemoveMember(weddingId: string, userId: string): Promise<void> {
+  await dbQuery('delete from wedding_members where wedding_id = $1 and user_id = $2', [weddingId, userId])
+}
+
+/** How many events of this kind the user has logged for the wedding. */
+export async function dbCountActivity(kind: string, userId: string, weddingId: string): Promise<number> {
+  const rows = await dbQuery<{ n: string }>(
+    'select count(*)::text as n from activity_events where kind = $1 and user_id = $2 and wedding_id = $3',
+    [kind, userId, weddingId],
+  )
+  return Number(rows[0]!.n)
+}
