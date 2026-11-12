@@ -33,6 +33,9 @@ export const ACTIVITY_KINDS = [
   'wedding_deleted',
   'wedding_restored',
   'admin_access',
+  'backup_created',
+  'backup_restored',
+  'backup_run',
 ] as const
 
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number]

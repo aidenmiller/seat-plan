@@ -47,7 +47,8 @@ const PUBLIC_ROUTES = new Set([
  *  - 'share': a share link's cookie, or a member's session (share.ts);
  *  - 'wedding:<least role>:<resolver>': a member of the wedding the resolver
  *    finds, with at least that role (an admin always; logged);
- *  - 'venue:<mode>': venue template access (venue-access.ts).
+ *  - 'venue:<mode>': venue template access (venue-access.ts);
+ *  - 'cron': Vercel Cron's bearer secret, and nothing else (withCronSecret).
  */
 const EXPECTED_POLICY: Record<string, Partial<Record<(typeof METHODS)[number], string>>> = {
   'api/auth/login/route.ts': { POST: 'public' },
@@ -134,6 +135,19 @@ const EXPECTED_POLICY: Record<string, Partial<Record<(typeof METHODS)[number], s
   'api/venues/[id]/accept-import/route.ts': { POST: 'venue:write' },
   // Copying needs only read access: the copy is the caller's own, and private.
   'api/venues/[id]/duplicate/route.ts': { POST: 'venue:read' },
+
+  // ---- Stored backups (mu-p9-backups). The cron route takes only its bearer
+  // secret (no cookie gets in: without it, 401 as above); the wedding's
+  // backups are its owners'; the admin's backup routes are admins'.
+  'api/cron/backups/route.ts': { GET: 'cron', POST: 'cron' },
+  'api/weddings/[id]/backups/route.ts': { GET: 'wedding:owner:byWeddingId', POST: 'wedding:owner:byWeddingId' },
+  'api/weddings/[id]/backups/[backupId]/route.ts': { GET: 'wedding:owner:byWeddingId' },
+  'api/weddings/[id]/backups/[backupId]/restore/route.ts': { POST: 'wedding:owner:byWeddingId' },
+  'api/admin/backups/route.ts': { GET: 'admin' },
+  'api/admin/backups/run/route.ts': { POST: 'admin' },
+  'api/admin/backups/[backupId]/route.ts': { GET: 'admin' },
+  'api/admin/backups/[backupId]/restore/route.ts': { POST: 'admin' },
+  // ---- End of stored backups.
 }
 
 /** A policy as one short string, the way EXPECTED_POLICY writes it. */

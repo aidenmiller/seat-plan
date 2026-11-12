@@ -264,6 +264,35 @@ export const backupFileV2Schema = z
 /** A whole backup file of either version, read as version 2. */
 export const backupFileSchema = z.discriminatedUnion('version', [backupFileV1Schema.transform(upgradeV1), backupFileV2Schema])
 
+/** An image as a stored backup lists it: everything but its bytes, which the backup store keeps once, by sha256. */
+export const storedBackupImageSchema = backupImageSchema.omit({ data: true })
+
+/**
+ * A backup as the backup store keeps it (src/server/backups): a version 2
+ * file whose images hold no data. Each image's bytes are stored once, by
+ * sha256, and backups/assemble.ts puts them back in, which makes a normal
+ * version 2 file again. The keys are in the order a downloaded file writes
+ * them (Zod writes its output in this order).
+ */
+export const storedBackupHeadSchema = z
+  .object({
+    format,
+    version: z.literal(BACKUP_VERSION),
+    exportedAt: fileRows.exportedAt,
+    wedding: weddingRows.wedding,
+    guests: weddingRows.guests,
+    members: z.array(backupMemberSchema).max(BACKUP_LIMITS.members),
+    groups: weddingRows.groups,
+    groupMembers: weddingRows.groupMembers,
+    rules: weddingRows.rules,
+    ruleGuests: weddingRows.ruleGuests,
+    layouts: fileRows.layouts,
+    templates: fileRows.templates,
+    images: z.array(storedBackupImageSchema).max(BACKUP_LIMITS.templates),
+  })
+  .superRefine(checkWeddingRows)
+  .superRefine(checkFileRows)
+
 export type BackupWedding = z.output<typeof backupWeddingSchema>
 export type BackupGuest = z.output<typeof backupGuestSchema>
 export type BackupMember = z.output<typeof backupMemberSchema>
@@ -275,6 +304,8 @@ export type BackupImage = z.output<typeof backupImageSchema>
 /** A file as version 2, whichever version it was written in (backupFileSchema's output). */
 export type BackupFile = z.output<typeof backupFileV2Schema>
 export type BackupFileV1 = z.output<typeof backupFileV1Schema>
+export type StoredBackupHead = z.output<typeof storedBackupHeadSchema>
+export type StoredBackupImage = z.output<typeof storedBackupImageSchema>
 /** The first restore step as version 2 (restoreStartSchema's output). */
 export type RestoreStart = z.output<typeof restoreStartV2Schema>
 export type RestoreStartV1 = z.output<typeof restoreStartV1Schema>

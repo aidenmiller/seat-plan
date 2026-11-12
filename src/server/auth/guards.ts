@@ -1,4 +1,5 @@
 import 'server-only'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { NextResponse, type NextRequest } from 'next/server'
 import { json, notFound } from '../api-route'
 import { runAfterResponse } from '../after-response'
@@ -24,7 +25,8 @@ import { requireTemplate, type TemplateAccess, type Viewer } from './venue-acces
  * handler runs, and tags the handler with its policy (AUTH_POLICY) so a test
  * can read every route's policy without calling it.
  *
- * Every wrapper but publicRoute, in this order:
+ * Every wrapper but publicRoute and withCronSecret (which takes no session,
+ * only the cron secret), in this order:
  *  1. The session cookie: none, forged, expired, or a disabled user answers
  *     401 { error: 'unauthorized' }, the reply the proxy gives too. A missing
  *     or forged cookie is answered before the database is touched.
@@ -111,6 +113,35 @@ async function afterSignedIn(req: NextRequest, session: SessionLookup, res: Resp
 export function publicRoute<Ctx>(reason: string, handler: (req: NextRequest, ctx: Ctx) => MaybePromise<Response>): Guarded<Ctx> {
   if (!reason.trim()) throw new Error('publicRoute needs a reason')
   return tagPolicy({ kind: 'public', reason }, async (req, ctx) => handler(req, ctx))
+}
+
+/** The shortest CRON_SECRET the cron route accepts (the production build also insists on letters and digits only). */
+export const CRON_SECRET_MIN_LENGTH = 32
+
+/**
+ * True when the Authorization header is exactly "Bearer <CRON_SECRET>". False
+ * when CRON_SECRET is unset or shorter than CRON_SECRET_MIN_LENGTH, whatever
+ * is sent. The two are compared as SHA-256 digests with timingSafeEqual, so
+ * the time taken says nothing about the secret, not even its length.
+ */
+export function cronSecretMatches(authorization: string | null, secret: string | undefined): boolean {
+  if (!secret || secret.length < CRON_SECRET_MIN_LENGTH || authorization === null) return false
+  const sent = createHash('sha256').update(authorization, 'utf8').digest()
+  const expected = createHash('sha256').update(`Bearer ${secret}`, 'utf8').digest()
+  return timingSafeEqual(sent, expected)
+}
+
+/**
+ * Vercel Cron only: the request must carry Authorization: Bearer <CRON_SECRET>
+ * (Vercel sends it on every cron call when the variable is set). Decided
+ * before anything else, the database included; a session cookie counts for
+ * nothing here. Anything else gets the same 401 as a signed-out request.
+ */
+export function withCronSecret<Ctx>(handler: (req: NextRequest, ctx: Ctx) => MaybePromise<Response>): Guarded<Ctx> {
+  return tagPolicy({ kind: 'cron' }, async (req, ctx) => {
+    if (!cronSecretMatches(req.headers.get('authorization'), process.env.CRON_SECRET)) return unauthorized()
+    return handler(req, ctx)
+  })
 }
 
 /** Any signed-in user. */
