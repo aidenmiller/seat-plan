@@ -4,7 +4,7 @@ import { getDb } from '@/server/db/client'
 import { listInvites } from '@/server/repo/invites'
 import { listUsersForAdmin } from '@/server/repo/users'
 
-export const metadata = { title: 'Users · Admin · Seat Plan' }
+export const metadata = { title: 'Users · Admin' }
 
 /** Everyone with an account, and the invites for new planners nobody has used yet. */
 export default async function AdminUsersPage() {

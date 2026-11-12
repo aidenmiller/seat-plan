@@ -3,7 +3,7 @@ import { requireAdminPage } from '@/server/auth/pages'
 import { getDb } from '@/server/db/client'
 import { listWeddingsForAdmin } from '@/server/repo/admin-weddings'
 
-export const metadata = { title: 'Weddings · Admin · Seat Plan' }
+export const metadata = { title: 'Weddings · Admin' }
 
 /** Every wedding, deleted ones too, with who belongs to it. */
 export default async function AdminWeddingsPage() {

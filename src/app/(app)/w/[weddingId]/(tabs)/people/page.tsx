@@ -8,7 +8,7 @@ import { listMembers } from '@/server/repo/members'
 import { uuid } from '@/shared/api'
 import { TabPage } from '../../_components/TabPage'
 
-export const metadata = { title: 'People · Seat Plan' }
+export const metadata = { title: 'People' }
 
 /** Who can open the wedding, and (for owners) the invites nobody has used yet. */
 export default async function PeoplePage({ params }: PageProps<'/w/[weddingId]/people'>) {

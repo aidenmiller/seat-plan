@@ -1,8 +1,9 @@
 import { CurrentUserProvider } from '@/client/current-user'
+import { SignedOutShell } from '@/client/ui/SignedOutShell'
 import { getSessionUser } from '@/server/auth/pages'
 import { InviteScreen } from './InviteScreen'
 
-export const metadata = { title: 'Invite · Seat Plan' }
+export const metadata = { title: 'Invite' }
 
 // Whether someone is signed in depends on the request, never on the build.
 export const dynamic = 'force-dynamic'
@@ -19,17 +20,15 @@ export default async function InvitePage() {
   const user = await getSessionUser()
   const screen = <InviteScreen signedIn={user ? { displayName: user.displayName, email: user.email } : null} />
   return (
-    <main className="flex flex-1 items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
-        {user ? (
-          // Accepting and signing out are changes: they carry the user's id (src/client/http.ts).
-          <CurrentUserProvider user={{ id: user.id, displayName: user.displayName, email: user.email, isAdmin: user.isAdmin }}>
-            {screen}
-          </CurrentUserProvider>
-        ) : (
-          screen
-        )}
-      </div>
-    </main>
+    <SignedOutShell size="md">
+      {user ? (
+        // Accepting and signing out are changes: they carry the user's id (src/client/http.ts).
+        <CurrentUserProvider user={{ id: user.id, displayName: user.displayName, email: user.email, isAdmin: user.isAdmin }}>
+          {screen}
+        </CurrentUserProvider>
+      ) : (
+        screen
+      )}
+    </SignedOutShell>
   )
 }

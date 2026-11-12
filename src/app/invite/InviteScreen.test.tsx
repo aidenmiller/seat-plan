@@ -111,8 +111,8 @@ describe('InviteView', () => {
     expect(wrong).toContain('Sign out')
 
     const planner = view({ kind: 'ready', invite: plannerInvite }, PAT)
-    expect(planner).toContain('Make your Seat Plan account')
-    expect(planner).toContain('Ada invited you to plan weddings with Seat Plan.')
+    expect(planner).toContain('Make your account')
+    expect(planner).toContain('Ada invited you to plan weddings with Something Blueprint.')
     expect(planner).toContain('This invite makes a new account.')
     expect(planner).not.toContain('Accept invite')
   })

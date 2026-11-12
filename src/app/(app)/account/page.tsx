@@ -4,7 +4,7 @@ import { getDb } from '@/server/db/client'
 import { listUserSessions } from '@/server/repo/sessions'
 import type { AccountSession } from '@/shared/accounts-api'
 
-export const metadata = { title: 'Account · Seat Plan' }
+export const metadata = { title: 'Account' }
 
 /** Your name, your password, and the devices signed in to your account. */
 export default async function AccountPage() {

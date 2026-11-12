@@ -147,9 +147,9 @@ export function InviteIntro({ invite }: { invite: OpenInvite }) {
   if (invite.kind === 'planner') {
     return (
       <>
-        <h1 className="text-2xl font-semibold tracking-tight">Make your Seat Plan account</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Make your account</h1>
         <p className="mt-2 text-stone-700" data-testid="invite-intro">
-          {invite.inviterName} invited you to plan weddings with Seat Plan.
+          {invite.inviterName} invited you to plan weddings with Something Blueprint.
         </p>
       </>
     )

@@ -1,6 +1,7 @@
+import { SignedOutShell } from '@/client/ui/SignedOutShell'
 import { ResetForm } from './ResetForm'
 
-export const metadata = { title: 'Reset password · Seat Plan' }
+export const metadata = { title: 'Reset password' }
 
 /**
  * A reset link an admin made: /reset#<token>. Open to everyone, since the
@@ -11,10 +12,8 @@ export const metadata = { title: 'Reset password · Seat Plan' }
  */
 export default function ResetPage() {
   return (
-    <main className="flex flex-1 items-center justify-center px-4 py-12">
-      <div className="w-full max-w-sm rounded-2xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
-        <ResetForm />
-      </div>
-    </main>
+    <SignedOutShell>
+      <ResetForm />
+    </SignedOutShell>
   )
 }
