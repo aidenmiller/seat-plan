@@ -141,7 +141,9 @@ async function snapshot(weddingId: string) {
         .sort((a, b) => a.name.localeCompare(b.name))
         .map(async (l) => {
           const template = l.venueTemplateId ? templateNames.get(l.venueTemplateId) : undefined
-          return { name: l.name, kind: l.kind, editedBy: l.editedBy, canvas: canvasByName(l.canvas), venue: template?.name ?? null, venueImage: await imageSha(template?.imageId) }
+          // Who saved it last, all three columns: the old edited_by, and the name and user that writes since accounts record.
+          const editor = { old: l.editedBy, name: l.editedByName, userId: l.editedByUserId }
+          return { name: l.name, kind: l.kind, editor, canvas: canvasByName(l.canvas), venue: template?.name ?? null, venueImage: await imageSha(template?.imageId) }
         }),
     ),
     seats: seatRows.map((s) => `${layoutRows.find((l) => l.id === s.layoutId)!.name} ${s.itemLabel} ${s.seatIndex}: ${named(s.guestId)}`).sort(),
@@ -157,6 +159,8 @@ async function members(weddingId: string) {
 describe('restoreStoredBackup', () => {
   it('makes the same wedding as restoring the downloaded file through the browser’s steps', async () => {
     const w = await makeBackupWedding(db, owner.id)
+    // The dinner layout last saved by a signed-in user, as every save since accounts is.
+    await db.update(layouts).set({ editedBy: null, editedByName: 'Olive', editedByUserId: owner.id }).where(eq(layouts.id, w.dinnerId))
     const backup = await storedBackupOf(w)
     // The walls change after the backup, so both restores copy the venue with its floor plan image.
     await db.update(venueTemplates).set({ fixedItems: [] }).where(eq(venueTemplates.id, w.templateId))
@@ -179,6 +183,11 @@ describe('restoreStoredBackup', () => {
     expect(b.seats).toEqual(source.seats)
     expect(b.layouts.map((l) => l.canvas)).toEqual(source.layouts.map((l) => l.canvas))
     expect(b.layouts.find((l) => l.name === 'Dinner')!.venueImage).toBe(sha256Hex(w.png))
+    // A restored layout keeps the name the file gives, with no user, and never writes the old edited_by column.
+    expect(b.layouts.map((l) => [l.name, l.editor])).toEqual([
+      ['Ceremony', { old: null, name: 'Noa', userId: null }],
+      ['Dinner', { old: null, name: 'Olive', userId: null }],
+    ])
     expect(await members(stored.weddingId)).toEqual([{ userId: owner.id, role: 'owner' }])
   })
 

@@ -12,6 +12,8 @@ import { backupFileSchema } from '@/domain/backup/schema'
 import { makeGridPng } from '@/domain/floorplan/__fixtures__/plans'
 import { databaseImageReader } from '../backup'
 import { groupMembers, guests, layouts, rules, shareLinks, users, venueTemplates, weddings } from '../db/schema'
+import { editorOf } from '../editor-name'
+import { saveLayout } from '../repo/layouts'
 import { canvasOf, makeTemplate, roundTable } from '../repo/test-fixtures'
 import { addTemplateImage } from '../repo/venues'
 import { backupFileStream } from './assemble'
@@ -130,6 +132,28 @@ describe('contentSha256', () => {
     ).toBe(true)
     expect(await changes(w, () => db.update(layouts).set({ name: 'Dinner party' }).where(eq(layouts.id, w.dinnerId)))).toBe(true)
     expect(await changes(w, () => db.update(layouts).set({ deletedAt: new Date() }).where(eq(layouts.id, w.ceremonyId)))).toBe(true)
+  })
+
+  it('names the signed-in user who last saved a layout, as the editor readers do, and changes when someone else saves it', async () => {
+    const w = await makeBackupWedding(db, owner.id)
+    const editor = await makeUser(db, { displayName: 'Edie' })
+    await makeMember(db, w.weddingId, editor.id, 'editor')
+    const dinner = async () => (await buildBackup(db, w.weddingId))!.head.layouts.find((l) => l.id === w.dinnerId)!
+    // makeLayout wrote a name with no user (as a restored layout has).
+    expect((await dinner()).editedBy).toBe('Noa')
+    const save = (who: TestUser, version: number) =>
+      saveLayout(db, w.weddingId, w.dinnerId, { baseVersion: version, saveId: randomUUID(), tabId: 'tab', canvas: canvasOf() }, editorOf(who))
+    expect(await changes(w, async () => expect((await save(editor, 1)).status).toBe('saved'))).toBe(true)
+    // The save wrote edited_by_user_id and edited_by_name, never the old edited_by column.
+    const [row] = await db
+      .select({ editedBy: layouts.editedBy, editedByName: layouts.editedByName, editedByUserId: layouts.editedByUserId })
+      .from(layouts)
+      .where(eq(layouts.id, w.dinnerId))
+    expect(row).toEqual({ editedBy: null, editedByName: 'Edie', editedByUserId: editor.id })
+    expect((await dinner()).editedBy).toBe('Edie')
+    // Saved again by the owner: the backup now names them.
+    expect(await changes(w, async () => expect((await save(owner, 2)).status).toBe('saved'))).toBe(true)
+    expect((await dinner()).editedBy).toBe('Olive')
   })
 
   it('changes when a rule, a group or a group member changes', async () => {
