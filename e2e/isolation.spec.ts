@@ -28,6 +28,7 @@ import { E2E_USERS, apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayou
 import { API_ROUTES, apiCalls, pagePaths, type ApiCall, type Ids } from './routes'
 import { apiCreateVenue, apiGetVenue, apiVenueRevisions } from './venues'
 import { USER_HEADER } from '../src/shared/user-header'
+import type { CreatedInvite, InviteSummary } from '../src/shared/accounts-api'
 import type { ShareLink, StoredRule, VenueImageInfo } from '../src/shared/api'
 
 type World = {
@@ -115,6 +116,11 @@ test.beforeAll(async ({ browser }, testInfo) => {
   expect(linkRes.status(), await linkRes.text()).toBe(201)
   const link = (await linkRes.json()) as ShareLink
   const token = link.path.split('/')[2]!
+  // An invite link the owner made and never sent: its token is shown to the owner once, and must reach no one else.
+  const inviteRes = await request.post(`/api/weddings/${wedding.id}/invites`, { data: { role: 'editor' } })
+  expect(inviteRes.status(), await inviteRes.text()).toBe(201)
+  const invite = (await inviteRes.json()) as CreatedInvite
+  const ownerId = await dbUserId(E2E_USERS.b.email)
 
   world = {
     ids: {
@@ -128,8 +134,13 @@ test.beforeAll(async ({ browser }, testInfo) => {
       revision: revision!.id,
       link: link.id,
       job: randomUUID(),
+      // Another person's id, an invite that exists and a backup and session that do not: the outsider gets 404 for all of them.
+      user: ownerId,
+      invite: invite.invite.id,
+      backup: randomUUID(),
+      session: randomUUID(),
     },
-    secrets: [weddingName, layoutName, venueName, guests[0]!.lastName, guests[1]!.lastName, group.name, ruleNote, linkLabel, token, image.sha256],
+    secrets: [weddingName, layoutName, venueName, guests[0]!.lastName, guests[1]!.lastName, group.name, ruleNote, linkLabel, token, image.sha256, invite.token],
     weddingName,
     layoutName,
     layoutVersion: (await apiGetLayout(request, layout.id)).version,
@@ -167,6 +178,7 @@ async function ownerView() {
   const rules = (await (await request.get(`/api/weddings/${ids.wedding}/rules`)).json()) as StoredRule[]
   const groups = (await (await request.get(`/api/weddings/${ids.wedding}/groups`)).json()) as { id: string; name: string; memberIds: string[] }[]
   const weddings = (await (await request.get('/api/weddings')).json()) as { id: string; name: string }[]
+  const invites = (await (await request.get(`/api/weddings/${ids.wedding}/invites`)).json()) as InviteSummary[]
   return {
     weddingName: (wedding as { name: string }).name,
     guests: guests.map((g) => [g.id, g.firstName, g.lastName]).sort(),
@@ -176,6 +188,7 @@ async function ownerView() {
     rules: rules.map((r) => [r.id, r.enabled, r.note]),
     groups: groups.map((g) => [g.id, g.name, g.memberIds]),
     weddingNames: weddings.map((w) => w.name).sort(),
+    invites: invites.map((i) => [i.id, i.state]),
   }
 }
 
@@ -218,14 +231,25 @@ test('the outsider sees none of the owner’s wedding on any page or route, and 
     },
   }
   const replies: string[] = []
+  let skipped = 0
   for (const route of apiCalls(ids)) {
     const label = `${route.method} ${route.path}`
-    if (route.access === 'session') continue // signing the outsider out would end this test's session
+    // Signing the outsider out would end this test's session; a change to the account routes would change the outsider's own account, which other specs use.
+    if (route.access === 'session' || (route.access === 'account' && route.method !== 'GET')) {
+      skipped++
+      continue
+    }
     const hijack = hijacks[`${route.method} ${route.template}`]
     const res = await call(outsider.request, outsiderId, hijack === undefined ? route : { ...route, body: hijack })
     replies.push(res.text)
     expectNothingSecret(res.text, `reply to ${label}`)
-    if (route.access === 'user') {
+    if (route.access === 'account') {
+      // The caller's own sign-ins: the list holds the outsider's and no one else's (nothing secret in it).
+      expect(res.status, label).toBe(200)
+    } else if (route.access === 'cron') {
+      // The nightly job takes only Vercel's bearer secret: a signed-in session counts for nothing.
+      expect(res.status, label).toBe(401)
+    } else if (route.access === 'user') {
       // Routes about the caller, not one wedding: lists hold only the caller's own, and a create with the owner's id is refused.
       if (route.method === 'GET') expect(res.status, label).toBe(200)
       else if (route.template === '/api/weddings/restore') {
@@ -238,7 +262,7 @@ test('the outsider sees none of the owner’s wedding on any page or route, and 
     }
     seen.routes++
   }
-  expect(seen.routes).toBeGreaterThanOrEqual(API_ROUTES.length - 1)
+  expect(seen.routes + skipped).toBe(API_ROUTES.length)
   // The share link's data route answers 401 without the link's cookie, for a signed-in non-member too.
   const shareData = await call(outsider.request, outsiderId, { method: 'GET', path: `/share/${world.token}/data` })
   expect(shareData.status).toBe(401)
@@ -336,6 +360,7 @@ test('an editor added in the database gets in at once, owner-only things stay cl
     expect((await as('GET', `/api/weddings/${ids.wedding}`)).status).toBe(200)
     expect((await as('GET', `/api/weddings/${ids.wedding}/layouts`)).status).toBe(200)
     expect((await as('GET', `/api/weddings/${ids.wedding}/guests`)).status).toBe(200)
+    expect((await as('GET', `/api/weddings/${ids.wedding}/members`)).status).toBe(200)
     expect((await as('GET', `/api/layouts/${ids.layout}`)).status).toBe(200)
     expect((await as('GET', `/api/venues/${ids.venue}`)).status).toBe(200)
     const added = await as('POST', `/api/weddings/${ids.wedding}/guests`, { id: randomUUID(), firstName: 'Editor', lastName: `Added${randomBytes(3).toString('hex')}` })
@@ -350,6 +375,12 @@ test('an editor added in the database gets in at once, owner-only things stay cl
       ['DELETE', `/api/weddings/${ids.wedding}`, { confirm: 'delete' }],
       ['GET', `/api/weddings/${ids.wedding}/delete-summary`],
       ['GET', `/api/weddings/${ids.wedding}/backup`],
+      ['GET', `/api/weddings/${ids.wedding}/backups`],
+      ['POST', `/api/weddings/${ids.wedding}/backups`],
+      ['GET', `/api/weddings/${ids.wedding}/invites`],
+      ['POST', `/api/weddings/${ids.wedding}/invites`, { role: 'editor' }],
+      ['DELETE', `/api/invites/${ids.invite}`],
+      ['PATCH', `/api/weddings/${ids.wedding}/members/${ids.user}`, { role: 'editor' }],
       ['POST', `/api/layouts/${ids.layout}/share-links`, { id: randomUUID(), password: 'editor-made-password' }],
       ['PATCH', `/api/share-links/${ids.link}`, { enabled: false }],
       ['DELETE', `/api/share-links/${ids.link}`],

@@ -15,18 +15,35 @@ import { apiAddGuests, apiCreateGroup, apiListGroups, apiListGuests } from './gu
 import { makePlanPng } from './fixtures/floorplan-png'
 import { apiCreateLayout, apiCreateWedding, signIn, signInRequest, sitePassword, userPassword } from './helpers'
 import { apiCreateVenue, apiGetVenue, apiSaveVenue, apiVenueRevisions } from './venues'
-import { API_ROUTES, LINK_PASSWORD, NO_IDS, PAGE_PATHS, fill, type Ids } from './routes'
+import { ACCOUNT_PAGE_PATHS, API_ROUTES, LINK_PASSWORD, NO_IDS, PAGE_PATHS, PUBLIC_API_ROUTES, PUBLIC_PAGE_PATHS, fill, type Ids } from './routes'
 import { SESSION_COOKIE } from '../src/server/auth/tokens'
 import type { ShareLink, StoredRule, VenueImageInfo } from '../src/shared/api'
 
 
 test.describe('without the cookie', () => {
-  for (const path of PAGE_PATHS) {
-    test(`page ${fill(path, NO_IDS)} goes to the password page`, async ({ request }) => {
+  for (const path of [...PAGE_PATHS, ...ACCOUNT_PAGE_PATHS]) {
+    test(`page ${fill(path, NO_IDS)} goes to the sign-in page`, async ({ request }) => {
       const res = await request.get(fill(path, NO_IDS), { maxRedirects: 0 })
       expect(res.status()).toBe(307)
       expect(res.headers()['location']).toMatch(/\/login/)
       expect(res.headers()['x-robots-tag']).toContain('noindex')
+    })
+  }
+
+  // Public by design: for people who cannot have a session yet.
+  for (const { path, status } of PUBLIC_PAGE_PATHS) {
+    test(`public page ${path} answers ${status}, with noindex and nothing private`, async ({ request }) => {
+      const res = await request.get(path, { maxRedirects: 0 })
+      expect(res.status()).toBe(status)
+      expect(res.headers()['x-robots-tag']).toContain('noindex')
+      if (path === '/invite' || path === '/reset') expect(res.headers()['referrer-policy']).toBe('no-referrer')
+    })
+  }
+
+  for (const { method, path, body, status } of PUBLIC_API_ROUTES) {
+    test(`public ${method} ${path} answers ${status} for a made-up token`, async ({ request }) => {
+      const res = await request.fetch(path, { method, data: body, maxRedirects: 0 })
+      expect(res.status()).toBe(status)
     })
   }
 
@@ -85,6 +102,10 @@ test.describe('without the cookie', () => {
         revision: revision.id,
         link: link.id,
         job: randomUUID(),
+        user: randomUUID(),
+        invite: randomUUID(),
+        backup: randomUUID(),
+        session: randomUUID(),
       }
       const hidden = [
         secret,
@@ -101,7 +122,7 @@ test.describe('without the cookie', () => {
         token,
       ]
 
-      for (const path of PAGE_PATHS) {
+      for (const path of [...PAGE_PATHS, ...ACCOUNT_PAGE_PATHS]) {
         const res = await request.get(fill(path, ids), { maxRedirects: 0 })
         expect(res.status(), path).toBe(307)
         const text = await res.text()
