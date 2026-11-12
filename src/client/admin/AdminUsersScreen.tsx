@@ -70,7 +70,8 @@ export function AdminUsersScreen({
             Invite a new planner
           </button>
         </div>
-        <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-xl border border-stone-200 bg-white" data-testid="admin-users-box">
+        {/* Positioned, so the table's sr-only text stays inside its own sideways scroll instead of widening the page. */}
+        <div className="relative mt-4 overflow-x-auto overscroll-x-contain rounded-xl border border-stone-200 bg-white" data-testid="admin-users-box">
           <table className="w-full min-w-[1000px] border-separate border-spacing-0 text-sm" data-testid="admin-users">
             <thead className="text-left text-xs uppercase tracking-wide text-stone-600">
               <tr>

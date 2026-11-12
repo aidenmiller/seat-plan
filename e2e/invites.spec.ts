@@ -11,7 +11,7 @@
 import { expect, test } from '@playwright/test'
 import { madeUpPassword, newDevice, readOneTimeLink, uniqueEmail } from './accounts'
 import { dbAddMember, dbClearAttemptCounts, dbCreateWedding } from './db'
-import { E2E_USERS, presetAuthor, signIn, uniqueName } from './helpers'
+import { E2E_USERS, presetAuthor, signIn, uniqueName, userPassword } from './helpers'
 
 test.beforeEach(async ({ context }) => {
   await presetAuthor(context, 'Noa')
@@ -117,6 +117,31 @@ test('a cancelled invite link is refused', async ({ page, browser }, testInfo) =
     await expect(guest.page.getByRole('button', { name: 'Create account' })).toHaveCount(0)
   } finally {
     await guest.context.close()
+  }
+})
+
+test('someone with an account signs in on the invite page, stays on it, and accepts', async ({ page, browser }, testInfo) => {
+  const name = uniqueName('Signed in there', testInfo)
+  const weddingId = await ownersPeopleTab(page, name)
+  const link = await makeEditorInvite(page)
+
+  const casey = await newDevice(browser)
+  try {
+    await casey.page.goto(link)
+    await expect(casey.page.getByRole('heading', { name: `Join ${name}` })).toBeVisible()
+    await casey.page.getByRole('button', { name: 'I already have an account' }).click()
+    const form = casey.page.getByTestId('invite-sign-in')
+    await form.getByLabel('Email').fill(E2E_USERS.c.email)
+    await form.getByLabel('Password').fill(userPassword('c'))
+    await form.getByRole('button', { name: 'Sign in' }).click()
+    // Back on the same invite, now signed in.
+    await expect(casey.page.getByTestId('invite-signed-in')).toContainText('You are signed in as Casey')
+    expect(new URL(casey.page.url()).pathname).toBe('/invite')
+    await casey.page.getByRole('button', { name: 'Accept invite' }).click()
+    await expect(casey.page).toHaveURL(new RegExp(`/w/${weddingId}/layouts$`))
+    await expect(casey.page.getByTestId('wedding-title')).toHaveText(name)
+  } finally {
+    await casey.context.close()
   }
 })
 

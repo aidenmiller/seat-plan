@@ -44,7 +44,8 @@ export function AdminWeddingsScreen({ initialWeddings }: { initialWeddings: Admi
       {weddings.length === 0 ? (
         <p className="mt-4 rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center text-stone-600">No weddings yet.</p>
       ) : (
-        <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-xl border border-stone-200 bg-white" data-testid="admin-weddings-box">
+        // Positioned, so the table's sr-only text stays inside its own sideways scroll instead of widening the page.
+        <div className="relative mt-4 overflow-x-auto overscroll-x-contain rounded-xl border border-stone-200 bg-white" data-testid="admin-weddings-box">
           <table className="w-full min-w-[900px] border-separate border-spacing-0 text-sm" data-testid="admin-weddings">
             <thead className="text-left text-xs uppercase tracking-wide text-stone-600">
               <tr>

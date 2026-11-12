@@ -26,6 +26,16 @@ test('only an admin sees the admin pages', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Not found' })).toBeVisible()
 })
 
+test('the admin pages never scroll sideways as a whole: their tables scroll in their own box', async ({ page }) => {
+  await signIn(page, 'a', '/admin/users')
+  for (const path of ['/admin/users', '/admin/weddings']) {
+    await page.goto(path)
+    await expect(page.getByRole('heading', { name: 'Admin', level: 1 })).toBeVisible()
+    const widths = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, view: document.documentElement.clientWidth }))
+    expect(widths.page, path).toBeLessThanOrEqual(widths.view)
+  }
+})
+
 test('a reset link sets a new password and signs out the old sessions', async ({ page, browser }) => {
   const account = await newAccount('Forgetful')
   const theirs = await newDevice(browser)
