@@ -6,7 +6,7 @@ import { listWeddingShareLinks } from '@/server/repo/share-links'
 import { uuid } from '@/shared/api'
 import { TabPage } from '../../_components/TabPage'
 
-export const metadata = { title: 'Links · Seat Plan' }
+export const metadata = { title: 'Links' }
 
 /** The wedding's venue share links that are on (PLAN change 25). */
 export default async function LinksPage({ params }: PageProps<'/w/[weddingId]/links'>) {

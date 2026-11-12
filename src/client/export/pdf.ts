@@ -85,7 +85,7 @@ async function newDocument(format: { width: number; height: number }, title: str
   doc.addFileToVFS('NotoSans-Bold.ttf', fonts.bold)
   doc.addFont('NotoSans-Bold.ttf', PDF_FONT, 'bold')
   doc.setFont(PDF_FONT, 'normal')
-  doc.setProperties({ title, creator: 'Seat Plan' })
+  doc.setProperties({ title, creator: 'Something Blueprint.' })
   return doc
 }
 

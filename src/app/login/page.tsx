@@ -1,11 +1,12 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import { SignedOutBrand } from '@/client/ui/Logo'
 import { getSessionUser } from '@/server/auth/pages'
 import { safeNextPath } from '@/server/auth/paths'
 import { setupOpen } from '@/server/auth/setup'
 import { LoginForm } from './LoginForm'
 
-export const metadata = { title: 'Sign in · Seat Plan' }
+export const metadata = { title: 'Sign in' }
 
 export default async function LoginPage({ searchParams }: PageProps<'/login'>) {
   const params = await searchParams
@@ -17,9 +18,10 @@ export default async function LoginPage({ searchParams }: PageProps<'/login'>) {
   const offerSetup = await setupOpen()
 
   return (
-    <main className="flex flex-1 items-center justify-center px-4 py-12">
+    <main className="flex flex-1 flex-col items-center justify-center px-4 py-12">
+      <SignedOutBrand tagline="Romance meets precision." />
       <div className="w-full max-w-sm rounded-2xl border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Sign in to Seat Plan</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
         <p className="mt-1 text-sm text-stone-600">Guest lists and seating plans.</p>
         <LoginForm next={next} />
         {offerSetup && (

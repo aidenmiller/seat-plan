@@ -1,6 +1,8 @@
-# Seat Plan
+# Something Blueprint.
 
 Guest list and seating planner for Noa and Aiden's wedding: an overhead floor plan of the venue where you place tables and fixtures, drag guests onto seats, and check seating rules. See `docs/SPEC.md` for the brief, `PLAN.md` for how it is built and `DECISIONS.md` for choices the brief left open.
+
+It was called Seat Plan. The repository, the npm package and the stored identifiers (the backup format, browser storage keys, cookie names) keep the `seat-plan` name. The brand's artwork and name are in `src/brand/`, its colors in `src/app/globals.css` and its fonts in `src/app/fonts/`.
 
 Next.js 16 (App Router, TypeScript), Postgres with Drizzle, Tailwind, Vitest and Playwright. Hosted on Vercel with Neon.
 

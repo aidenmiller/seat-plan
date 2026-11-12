@@ -11,7 +11,7 @@ import { getWedding } from '@/server/repo/weddings'
 import { uuid } from '@/shared/api'
 import { EditorShell } from '@/client/editor/EditorShell'
 
-export const metadata = { title: 'Layout · Seat Plan' }
+export const metadata = { title: 'Layout' }
 
 /**
  * The layout editor. A missing or deleted layout, one from another wedding,

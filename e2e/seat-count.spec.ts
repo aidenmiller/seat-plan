@@ -50,7 +50,7 @@ import {
   waitForEditor,
 } from './helpers'
 
-const EMPTY_SEAT = '#9ca3af'
+const EMPTY_SEAT = '#7b879a'
 
 test('+ on an 8-seat round table gives 9 evenly spaced seats, and a count of 12 spaces 12 evenly', async ({ context, page }, testInfo) => {
   await presetAuthor(context, 'Noa')

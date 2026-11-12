@@ -8,7 +8,7 @@ import { listGuests, seatPlaces } from '@/server/repo/guests'
 import { uuid } from '@/shared/api'
 import { TabPage } from '../../_components/TabPage'
 
-export const metadata = { title: 'Guests · Seat Plan' }
+export const metadata = { title: 'Guests' }
 
 /** The guest list: the guests, their groups, and where each one sits in the wedding's layouts. */
 export default async function GuestsPage({ params }: PageProps<'/w/[weddingId]/guests'>) {

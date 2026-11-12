@@ -6,7 +6,7 @@ import { listWeddingsForUser } from '@/server/repo/weddings'
 import { NewWeddingButton } from './_components/NewWeddingButton'
 import { WeddingCard } from './_components/WeddingCard'
 
-export const metadata = { title: 'Weddings · Seat Plan' }
+export const metadata = { title: 'Weddings' }
 
 /** Only the weddings the signed-in person belongs to (an admin sees theirs here too). */
 export default async function HomePage() {
