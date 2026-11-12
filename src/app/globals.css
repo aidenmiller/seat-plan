@@ -93,6 +93,20 @@ body {
   color: var(--sb-text);
 }
 
+/*
+ * The editors' chrome is plain: cool neutrals beside the canvas, not the
+ * ivory. The root of the layout and venue editors (src/app/(editor)/layout.tsx)
+ * carries data-surface="plain", which re-points stone-50 (Tailwind's classes
+ * read the variable) to the brand's muted surface for everything inside it,
+ * and through <body> for the dialogs and menus they open, which render in a
+ * portal on <body>; so that root must stay a child of <body>. The rest of the
+ * app keeps the ivory. The canvas is not affected: its colors are literal.
+ */
+[data-surface="plain"],
+body:has(> [data-surface="plain"]) {
+  --color-stone-50: #f3f6fb;
+}
+
 @layer base {
   /* Tailwind 4 gives buttons the default cursor; a hand reads as tappable. */
   button:not(:disabled),

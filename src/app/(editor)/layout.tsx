@@ -8,7 +8,7 @@ export default async function EditorLayout({ children }: LayoutProps<'/'>) {
   const user = await requireUser('/')
   return (
     <CurrentUserProvider user={{ id: user.id, displayName: user.displayName, email: user.email, isAdmin: user.isAdmin }}>
-      <div className="flex h-dvh flex-col overflow-hidden bg-stone-100">{children}</div>
+      <div className="flex h-dvh flex-col overflow-hidden bg-stone-100" data-surface="plain">{children}</div>
     </CurrentUserProvider>
   )
 }
