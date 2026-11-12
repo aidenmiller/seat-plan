@@ -139,7 +139,9 @@ export function listenForAuthChanges(handlers: AuthListenerHandlers, channel: Ch
  * answers: up to `waitMs` in all, and at least `answerMs` for the first
  * answers to come in. Anything a tab reports unsaved, or a tab that started
  * and did not finish in time, counts as unsaved. Tabs the browser has frozen
- * in the background cannot answer and are not counted.
+ * in the background cannot answer, so silence is never taken as saved: the
+ * sign-out also reads this person's storage, where every tab keeps its
+ * edits as it makes them (src/client/sign-out.ts).
  */
 export function flushOtherTabs(
   userId: string,
