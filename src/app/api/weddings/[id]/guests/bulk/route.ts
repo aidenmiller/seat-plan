@@ -1,21 +1,20 @@
 import type { NextRequest } from 'next/server'
 import { bulkGuestsBody } from '@/shared/api'
-import { idParam, json, notFound, refuseUnstorableText, type IdContext } from '@/server/api-route'
-import { withSiteAuth } from '@/server/auth/require'
+import { json, notFound, refuseUnstorableText, type IdContext } from '@/server/api-route'
+import { withWeddingRole } from '@/server/auth/guards'
+import { byWeddingId } from '@/server/auth/resolvers'
 import { getDb } from '@/server/db/client'
 import { addGuestsBulk } from '@/server/repo/guests'
 import { readRowsBody } from '../_rows-body'
 
 /**
  * 201 Guest[]: pasted names, added in one transaction (all or nothing), in
- * the order sent. Over 5,000 names gives 413.
+ * the order sent. Over 5,000 names gives 413. Any member.
  */
-export const POST = withSiteAuth(async (req: NextRequest, ctx: IdContext) => {
-  const id = await idParam(ctx)
-  if (!id) return notFound()
+export const POST = withWeddingRole(byWeddingId, 'editor', async (req: NextRequest, _ctx: IdContext, access) => {
   const body = await readRowsBody(req, bulkGuestsBody, 'guests')
   if (!body.ok) return body.response
-  const write = await refuseUnstorableText(() => addGuestsBulk(getDb(), id, body.data.guests))
+  const write = await refuseUnstorableText(() => addGuestsBulk(getDb(), access.weddingId, body.data.guests))
   if (!write.ok) return write.response
   const result = write.value
   switch (result.status) {

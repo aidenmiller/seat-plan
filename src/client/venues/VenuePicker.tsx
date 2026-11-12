@@ -1,7 +1,8 @@
 'use client'
 
 /**
- * Picks the venue a layout uses: any venue template, or Blank canvas (spec
+ * Picks the venue a layout uses: a venue the layout's wedding may use (the
+ * library, your own, or one the wedding already uses), or Blank canvas (spec
  * section 5; DECISIONS 29). Used in the layout editor (Properties with
  * nothing selected, and the notice on a layout whose venue was deleted) and
  * in the venue delete dialog, so a layout can move off a venue before it is
@@ -17,6 +18,8 @@ import type { LayoutDetail, VenueSummary } from '@/shared/api'
 const BLANK = ''
 
 export type VenuePickerProps = {
+  /** The layout's wedding: the venues offered are those a layout there may use. */
+  weddingId: string
   layoutId: string
   /** The layout's template now, or null for a blank canvas. */
   current: string | null
@@ -29,7 +32,7 @@ export type VenuePickerProps = {
 
 type Load = { kind: 'loading' } | { kind: 'ready'; venues: VenueSummary[] } | { kind: 'error'; message: string }
 
-export function VenuePicker({ layoutId, current, exclude, onChanged, onCancel, testId = 'venue-picker' }: VenuePickerProps) {
+export function VenuePicker({ weddingId, layoutId, current, exclude, onChanged, onCancel, testId = 'venue-picker' }: VenuePickerProps) {
   const [load, setLoad] = useState<Load>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
   const [choice, setChoice] = useState<string | null>(null)
@@ -39,7 +42,7 @@ export function VenuePicker({ layoutId, current, exclude, onChanged, onCancel, t
 
   useEffect(() => {
     let live = true
-    listVenues().then(
+    listVenues(weddingId).then(
       (venues) => {
         if (live) setLoad({ kind: 'ready', venues: venues.filter((v) => v.id !== exclude) })
       },
@@ -50,7 +53,7 @@ export function VenuePicker({ layoutId, current, exclude, onChanged, onCancel, t
     return () => {
       live = false
     }
-  }, [exclude, attempt])
+  }, [weddingId, exclude, attempt])
 
   const venues = load.kind === 'ready' ? load.venues : []
   // Until the person picks: the layout's venue when it is offered, else the first other venue, else Blank canvas.

@@ -46,8 +46,9 @@ afterAll(async () => {
 
 const DUMMY_KEY = 'sk-test-not-a-real-key'
 
-/** A signed-in user's cookie, made once: for now any signed-in user may use these routes. */
+/** The cookie of the user every test acts as, made once: the owner of each venue it makes. */
 let signedIn = ''
+let me = ''
 
 beforeEach(async () => {
   seen.length = 0
@@ -58,7 +59,8 @@ beforeEach(async () => {
   vi.stubEnv('FLOORPLAN_MODEL', '')
   if (!signedIn) {
     const { getDb } = await import('@/server/db/client')
-    signedIn = await sessionCookie(getDb(), (await makeUser(getDb())).id)
+    me = (await makeUser(getDb())).id
+    signedIn = await sessionCookie(getDb(), me)
   }
 })
 afterEach(() => {
@@ -155,7 +157,7 @@ async function setup(): Promise<{ id: string; image: VenueImageInfo }> {
 async function templateVersion(id: string): Promise<number> {
   const { getTemplate } = await import('@/server/repo/venues')
   const { getDb } = await import('@/server/db/client')
-  return (await getTemplate(getDb(), id))!.version
+  return (await getTemplate(getDb(), id, { userId: me, isAdmin: false }))!.version
 }
 
 const flags = { unsure: false, unsure_note: '' }

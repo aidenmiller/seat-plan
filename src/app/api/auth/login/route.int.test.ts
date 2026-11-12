@@ -10,10 +10,11 @@ import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../test/db'
 import { makeUser, sessionCookie, type TestUser } from '../../../../../test/auth'
+import { legacySiteCookieValue } from '../../../../../test/legacy-site-cookie'
 import { PASSWORD_MAX } from '@/domain/accounts'
 import { verifyUserPassword } from '@/server/auth/passwords'
 import { SCOPE_LIMIT } from '@/server/auth/throttle'
-import { SESSION_COOKIE, SITE_COOKIE, createSiteToken, openSessionCookie } from '@/server/auth/tokens'
+import { SESSION_COOKIE, SITE_COOKIE, openSessionCookie } from '@/server/auth/tokens'
 import { activityEvents } from '@/server/db/schema'
 import { lookupSession } from '@/server/repo/sessions'
 
@@ -187,7 +188,7 @@ describe('POST /api/auth/login', () => {
   })
 
   it('clears a cookie left from the site password', async () => {
-    const res = await login({ email: pat.email, password: pat.password }, { ip: ip(), cookie: `${SITE_COOKIE}=${createSiteToken()}` })
+    const res = await login({ email: pat.email, password: pat.password }, { ip: ip(), cookie: `${SITE_COOKIE}=${legacySiteCookieValue()}` })
     expect(res.status).toBe(200)
     const cleared = res.headers.getSetCookie().find((c) => c.startsWith(`${SITE_COOKIE}=`))
     expect(cleared).toMatch(new RegExp(`^${SITE_COOKIE}=;`))

@@ -8,16 +8,23 @@ import {
   type SaveLayoutOk,
 } from '@/shared/api'
 import { idParam, json, notFound, readBody, refuseUnstorableText, type IdContext } from '@/server/api-route'
-import { withSiteAuth } from '@/server/auth/require'
+import { withWeddingRole } from '@/server/auth/guards'
+import { byLayoutId } from '@/server/auth/resolvers'
 import { toDroppedSeats } from '@/server/canvas-write'
 import { getDb } from '@/server/db/client'
 import { getLayoutDetail, saveLayout, softDeleteLayout, updateLayout } from '@/server/repo/layouts'
 
+/*
+ * Every handler here is for any member of the layout's wedding. The guard
+ * finds the wedding from the layout (deleted layouts too, so a save to one
+ * answers 410); each call below is held to that wedding.
+ */
+
 /** LayoutDetail: the layout, its canvas and its template. */
-export const GET = withSiteAuth(async (_req: NextRequest, ctx: IdContext) => {
+export const GET = withWeddingRole(byLayoutId, 'editor', async (_req: NextRequest, ctx: IdContext, access) => {
   const id = await idParam(ctx)
   if (!id) return notFound()
-  const layout = await getLayoutDetail(getDb(), id)
+  const layout = await getLayoutDetail(getDb(), access.weddingId, id)
   return layout ? json(layout) : notFound()
 })
 
@@ -26,12 +33,12 @@ export const GET = withSiteAuth(async (_req: NextRequest, ctx: IdContext) => {
  * 200 SaveLayoutOk, 409 SaveLayoutConflict, 410 { error: 'gone' }, 422 { error: 'invalid', issues }.
  * Text Postgres refuses is a 422 too, never a 500 the browser would retry forever.
  */
-export const PUT = withSiteAuth(async (req: NextRequest, ctx: IdContext) => {
+export const PUT = withWeddingRole(byLayoutId, 'editor', async (req: NextRequest, ctx: IdContext, access) => {
   const id = await idParam(ctx)
   if (!id) return notFound()
   const body = await readBody(req, saveLayoutBody)
   if (!body.ok) return body.response
-  const write = await refuseUnstorableText(() => saveLayout(getDb(), id, body.data))
+  const write = await refuseUnstorableText(() => saveLayout(getDb(), access.weddingId, id, body.data))
   if (!write.ok) return write.response
   const result = write.value
   switch (result.status) {
@@ -70,13 +77,19 @@ export const PUT = withSiteAuth(async (req: NextRequest, ctx: IdContext) => {
   }
 })
 
-/** Rename, or change the template. Leaves the version alone. Replies with the LayoutDetail. */
-export const PATCH = withSiteAuth(async (req: NextRequest, ctx: IdContext) => {
+/**
+ * Rename, or change the template. Leaves the version alone. Replies with the
+ * LayoutDetail. The venue must be one the caller may use in this wedding (the
+ * library, their own, or one the wedding already uses); any other is the
+ * same 422 as a deleted one.
+ */
+export const PATCH = withWeddingRole(byLayoutId, 'editor', async (req: NextRequest, ctx: IdContext, access) => {
   const id = await idParam(ctx)
   if (!id) return notFound()
   const body = await readBody(req, updateLayoutBody)
   if (!body.ok) return body.response
-  const write = await refuseUnstorableText(() => updateLayout(getDb(), id, body.data))
+  const viewer = { userId: access.user.id, isAdmin: access.user.isAdmin }
+  const write = await refuseUnstorableText(() => updateLayout(getDb(), access.weddingId, id, body.data, viewer))
   if (!write.ok) return write.response
   const result = write.value
   switch (result.status) {
@@ -90,10 +103,10 @@ export const PATCH = withSiteAuth(async (req: NextRequest, ctx: IdContext) => {
 })
 
 /** Needs { confirm: "delete" }. Other layouts stay exactly as they are. */
-export const DELETE = withSiteAuth(async (req: NextRequest, ctx: IdContext) => {
+export const DELETE = withWeddingRole(byLayoutId, 'editor', async (req: NextRequest, ctx: IdContext, access) => {
   const id = await idParam(ctx)
   if (!id) return notFound()
   const body = await readBody(req, deleteBody)
   if (!body.ok) return body.response
-  return (await softDeleteLayout(getDb(), id)) ? json({ ok: true }) : notFound()
+  return (await softDeleteLayout(getDb(), access.weddingId, id)) ? json({ ok: true }) : notFound()
 })

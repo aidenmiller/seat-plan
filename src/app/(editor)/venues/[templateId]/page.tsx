@@ -17,9 +17,9 @@ export default async function TemplateEditorPage({ params, searchParams }: PageP
   const { templateId } = await params
   const query = await searchParams
   const from = typeof query.from === 'string' && uuid.safeParse(query.from).success ? query.from.toLowerCase() : null
-  await requireSiteSession(`/venues/${templateId}${from ? `?from=${from}` : ''}`)
+  const user = await requireSiteSession(`/venues/${templateId}${from ? `?from=${from}` : ''}`)
   if (!uuid.safeParse(templateId).success) notFound()
-  const venue = await getTemplate(getDb(), templateId.toLowerCase())
+  const venue = await getTemplate(getDb(), templateId.toLowerCase(), { userId: user.id, isAdmin: user.isAdmin })
   if (!venue) notFound()
   return <TemplateEditorScreen key={venue.id} venue={venue} backHref={from ? `/w/${from}/venues` : '/'} />
 }

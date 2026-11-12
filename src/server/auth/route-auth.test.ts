@@ -3,22 +3,108 @@
  * whatever the proxy does. This test imports every route file, calls every
  * exported HTTP method with no cookie and with forged ones, and expects 401
  * before the database is touched (there is no database here: a handler that
- * reaches for one throws instead of passing). It also reads each handler's
- * policy tag (guards.ts): only the sign-in, setup and share-password routes
- * are public.
+ * reaches for one throws instead of passing).
+ *
+ * It also reads each handler's policy tag (guards.ts) and holds it to
+ * EXPECTED_POLICY below, route by route and method by method, so a new
+ * route, a new method or a changed policy fails here until the table says
+ * so too, and shows up in review. Only the sign-in, setup and share-password
+ * routes are public.
  */
 import { readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { policyOf } from './guards'
-import { SESSION_COOKIE, SITE_COOKIE, createShareToken, createSiteToken, newOpaqueToken, shareCookieName, signSessionCookie } from './tokens'
+import { legacySiteCookieValue } from '../../../test/legacy-site-cookie'
+import { policyOf, type AuthPolicy } from './guards'
+import { SESSION_COOKIE, SITE_COOKIE, createShareToken, newOpaqueToken, shareCookieName, signSessionCookie } from './tokens'
 
 const APP_DIR = path.resolve(__dirname, '../../app')
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const
 
 /** Routes anyone may call: signing in, first-run setup (404 once an account exists), and a share link's own password. */
 const PUBLIC_ROUTES = new Set(['api/auth/login/route.ts', 'api/setup/route.ts', 'share/[token]/login/route.ts'])
+
+/**
+ * Who may call each route, as policyKey() writes a policy:
+ *  - 'public': anyone (PUBLIC_ROUTES only);
+ *  - 'user': any signed-in user;
+ *  - 'share': a share link's cookie, or a member's session (share.ts);
+ *  - 'wedding:<least role>:<resolver>': a member of the wedding the resolver
+ *    finds, with at least that role (an admin always; logged);
+ *  - 'venue:<mode>': venue template access (venue-access.ts).
+ */
+const EXPECTED_POLICY: Record<string, Partial<Record<(typeof METHODS)[number], string>>> = {
+  'api/auth/login/route.ts': { POST: 'public' },
+  'api/auth/logout/route.ts': { POST: 'user' },
+  'api/setup/route.ts': { POST: 'public' },
+  'share/[token]/login/route.ts': { POST: 'public' },
+  'share/[token]/data/route.ts': { GET: 'share' },
+
+  'api/weddings/route.ts': { GET: 'user', POST: 'user' },
+  'api/weddings/[id]/route.ts': { GET: 'wedding:editor:byWeddingId', PATCH: 'wedding:owner:byWeddingId', DELETE: 'wedding:owner:byWeddingId' },
+  'api/weddings/[id]/delete-summary/route.ts': { GET: 'wedding:owner:byWeddingId' },
+  'api/weddings/[id]/backup/route.ts': { GET: 'wedding:owner:byWeddingId' },
+  'api/weddings/[id]/layouts/route.ts': { GET: 'wedding:editor:byWeddingId', POST: 'wedding:editor:byWeddingId' },
+  'api/weddings/[id]/guests/route.ts': { GET: 'wedding:editor:byWeddingId', POST: 'wedding:editor:byWeddingId' },
+  'api/weddings/[id]/guests/bulk/route.ts': { POST: 'wedding:editor:byWeddingId' },
+  'api/weddings/[id]/guests/import/preview/route.ts': { POST: 'wedding:editor:byWeddingId' },
+  'api/weddings/[id]/guests/import/commit/route.ts': { POST: 'wedding:editor:byWeddingId' },
+  'api/weddings/[id]/guests/export/route.ts': { GET: 'wedding:editor:byWeddingId' },
+  'api/weddings/[id]/guests/seats/route.ts': { GET: 'wedding:editor:byWeddingId' },
+  'api/weddings/[id]/groups/route.ts': { GET: 'wedding:editor:byWeddingId', POST: 'wedding:editor:byWeddingId' },
+  'api/weddings/[id]/rules/route.ts': { GET: 'wedding:editor:byWeddingId', POST: 'wedding:editor:byWeddingId' },
+  'api/weddings/[id]/share-links/route.ts': { GET: 'wedding:editor:byWeddingId' },
+  'api/weddings/restore/route.ts': { POST: 'user' },
+  'api/weddings/restore/[jobId]/templates/route.ts': { POST: 'wedding:owner:byRestoreJob' },
+  'api/weddings/restore/[jobId]/templates/[templateId]/image/route.ts': { PUT: 'wedding:owner:byRestoreJob' },
+  'api/weddings/restore/[jobId]/layouts/route.ts': { POST: 'wedding:owner:byRestoreJob' },
+
+  'api/layouts/[id]/route.ts': {
+    GET: 'wedding:editor:byLayoutId',
+    PUT: 'wedding:editor:byLayoutId',
+    PATCH: 'wedding:editor:byLayoutId',
+    DELETE: 'wedding:editor:byLayoutId',
+  },
+  'api/layouts/[id]/version/route.ts': { GET: 'wedding:editor:byLayoutId' },
+  'api/layouts/[id]/duplicate/route.ts': { POST: 'wedding:editor:byLayoutId' },
+  'api/layouts/[id]/delete-summary/route.ts': { GET: 'wedding:editor:byLayoutId' },
+  'api/layouts/[id]/share-links/route.ts': { GET: 'wedding:editor:byLayoutId', POST: 'wedding:owner:byLayoutId' },
+  'api/share-links/[id]/route.ts': { PATCH: 'wedding:owner:byShareLinkId', DELETE: 'wedding:owner:byShareLinkId' },
+
+  'api/guests/[id]/route.ts': { PATCH: 'wedding:editor:byGuestId', DELETE: 'wedding:editor:byGuestId' },
+  'api/guests/[id]/delete-summary/route.ts': { GET: 'wedding:editor:byGuestId' },
+  'api/groups/[id]/route.ts': { PATCH: 'wedding:editor:byGroupId', DELETE: 'wedding:editor:byGroupId' },
+  'api/groups/[id]/members/route.ts': { POST: 'wedding:editor:byGroupId' },
+  'api/groups/[id]/members/[guestId]/route.ts': { DELETE: 'wedding:editor:byGroupId' },
+  'api/rules/[id]/route.ts': { PATCH: 'wedding:editor:byRuleId', DELETE: 'wedding:editor:byRuleId' },
+  'api/rules/couple/route.ts': { PATCH: 'wedding:editor:byCouplePair' },
+
+  'api/venues/route.ts': { GET: 'venue:list', POST: 'venue:create' },
+  'api/venues/[id]/route.ts': { GET: 'venue:read', PUT: 'venue:write', PATCH: 'venue:write', DELETE: 'venue:write' },
+  'api/venues/[id]/delete-summary/route.ts': { GET: 'venue:read' },
+  'api/venues/[id]/wall-check/route.ts': { GET: 'venue:read' },
+  'api/venues/[id]/revisions/route.ts': { GET: 'venue:read' },
+  'api/venues/[id]/revisions/[revisionId]/restore/route.ts': { POST: 'venue:write' },
+  'api/venues/[id]/images/route.ts': { POST: 'venue:write' },
+  'api/venues/[id]/images/[imageId]/route.ts': { GET: 'venue:read' },
+  'api/venues/[id]/import/route.ts': { POST: 'venue:write' },
+  'api/venues/[id]/accept-import/route.ts': { POST: 'venue:write' },
+  // Copying needs only read access: the copy is the caller's own, and private.
+  'api/venues/[id]/duplicate/route.ts': { POST: 'venue:read' },
+}
+
+/** A policy as one short string, the way EXPECTED_POLICY writes it. */
+function policyKey(policy: AuthPolicy): string {
+  switch (policy.kind) {
+    case 'wedding':
+      return `wedding:${policy.minRole}:${policy.resolver}`
+    case 'venue':
+      return `venue:${policy.mode}`
+    default:
+      return policy.kind
+  }
+}
 
 function routeFiles(dir: string): string[] {
   const out: string[] = []
@@ -60,8 +146,8 @@ function refusedCookies(): [string, string | null][] {
     ['a session cookie with a changed body', `${SESSION_COOKIE}=f${signed.slice(1)}`],
     ['an expired session cookie', `${SESSION_COOKIE}=${signSessionCookie(newOpaqueToken(), Date.now() - 1000)}`],
     ['a share token as the session cookie', `${SESSION_COOKIE}=${createShareToken('link', 1)}`],
-    ['a site token as the session cookie', `${SESSION_COOKIE}=${createSiteToken()}`],
-    ['the old site cookie', `${SITE_COOKIE}=${createSiteToken()}`],
+    ['an old site cookie as the session cookie', `${SESSION_COOKIE}=${legacySiteCookieValue()}`],
+    ['the old site cookie', `${SITE_COOKIE}=${legacySiteCookieValue()}`],
     ['a link cookie with a forged signature', `${shareCookieName('link')}=${createShareToken('link', 1).split('.')[0]}.AAAA`],
   ]
 }
@@ -114,12 +200,28 @@ describe('every route handler carries its policy', () => {
     }
   })
 
-  it('tags share routes share and every other route as needing a signed-in user (for now)', async () => {
-    for (const file of files) {
-      if (PUBLIC_ROUTES.has(file)) continue
+  it('lists every route file in EXPECTED_POLICY, and nothing else', () => {
+    expect([...files].sort(), 'a route file was added or removed: give it a row in EXPECTED_POLICY').toEqual(Object.keys(EXPECTED_POLICY).sort())
+  })
+
+  for (const file of files) {
+    it(`${file} has exactly the policies EXPECTED_POLICY gives it`, async () => {
+      const expected = EXPECTED_POLICY[file]
+      expect(expected, `${file} has no row in EXPECTED_POLICY`).toBeDefined()
+      const actual: Record<string, string> = {}
       for (const [method, handler] of await handlersOf(file)) {
-        expect(policyOf(handler)?.kind, `${method} ${file}`).toBe(file.startsWith('share/') ? 'share' : 'user')
+        const policy = policyOf(handler)
+        expect(policy, `${method} ${file} has no policy tag`).not.toBeNull()
+        actual[method] = policyKey(policy!)
       }
-    }
+      expect(actual, file).toEqual(expected)
+    })
+  }
+
+  it('keeps the public routes to the allowlist', () => {
+    const publicInTable = Object.entries(EXPECTED_POLICY)
+      .filter(([, methods]) => Object.values(methods).includes('public'))
+      .map(([file]) => file)
+    expect(publicInTable.sort()).toEqual([...PUBLIC_ROUTES].sort())
   })
 })

@@ -1,7 +1,8 @@
 import type { NextRequest } from 'next/server'
 import { MAX_VENUE_IMAGE_BYTES } from '@/shared/api'
 import { json, notFound } from '@/server/api-route'
-import { withSiteAuth } from '@/server/auth/require'
+import { withWeddingRole } from '@/server/auth/guards'
+import { byRestoreJob } from '@/server/auth/resolvers'
 import { restoreTemplateImage } from '@/server/backup'
 import { getDb } from '@/server/db/client'
 import { readCappedBody } from '@/app/api/venues/_venue-route'
@@ -10,9 +11,9 @@ import { uuidOrNull, type JobContext } from '../../../../_job'
 /**
  * Restore step 3: the floor plan image of a template step 2 copied, as the
  * raw request body (PNG or JPEG). `templateId` is the template's id in the
- * backup file. 200 { ok: true }.
+ * backup file. Owners of the job's wedding only. 200 { ok: true }.
  */
-export const PUT = withSiteAuth(async (req: NextRequest, ctx: JobContext) => {
+export const PUT = withWeddingRole<JobContext>(byRestoreJob, 'owner', async (req: NextRequest, ctx: JobContext, access) => {
   const params = await ctx.params
   const jobId = uuidOrNull(params.jobId)
   const templateId = uuidOrNull(params.templateId)
@@ -23,7 +24,7 @@ export const PUT = withSiteAuth(async (req: NextRequest, ctx: JobContext) => {
       ? json({ error: 'too_large', message: 'The floor plan image is too large to restore.' }, 413)
       : json({ error: 'unsupported_type', message: 'The floor plan image must be a PNG or JPEG.' }, 415)
   }
-  const result = await restoreTemplateImage(getDb(), jobId, templateId, body.bytes)
+  const result = await restoreTemplateImage(getDb(), jobId, templateId, body.bytes, access.user.id)
   switch (result.status) {
     case 'created':
     case 'existed':

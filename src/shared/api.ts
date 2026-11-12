@@ -210,19 +210,28 @@ export type LayoutDeleteSummary = {
 
 // ---------- Venues ----------
 //
-// Venue templates are shared by all weddings (PLAN change 5). A template's
-// fixed items, reference meta and reference image change only through a save,
-// an accepted import or a restored revision; each raises the version, uses the
-// same conflict check as layouts (DECISIONS 28) and writes a revision row.
-// Renames leave the version alone.
+// Venue templates belong to a planner, sit in the shared library, or (from
+// before accounts) belong to no one; who may see, change and use each is set
+// out in src/server/auth/venue-access.ts. A template's fixed items, reference
+// meta and reference image change only through a save, an accepted import or
+// a restored revision; each raises the version, uses the same conflict check
+// as layouts (DECISIONS 28) and writes a revision row. Renames leave the
+// version alone.
 
 export type VenueImportedBy = (typeof importedByValues)[number]
+
+/**
+ * Whose template it is, as the person asking sees it: in the shared library,
+ * their own, someone else's (readable because a wedding they belong to uses
+ * it), or one from before accounts that belongs to no one.
+ */
+export type VenueAccess = 'library' | 'mine' | 'shared' | 'unowned'
 
 export type VenueSummary = {
   id: string
   name: string
   updatedAt: string
-  /** Live layouts in live weddings that use this template. */
+  /** Live layouts that use this template, in live weddings the person asking belongs to (every wedding for an admin). */
   usedBy: number
   version: number
   editedBy: string | null
@@ -230,6 +239,11 @@ export type VenueSummary = {
   importedBy: VenueImportedBy
   fixedItemCount: number
   hasReferenceImage: boolean
+  access: VenueAccess
+  /** The owner's display name; null for a template that belongs to no one. */
+  ownerName: string | null
+  /** True when the person asking may change it (their own, or any template for an admin). */
+  canEdit: boolean
 }
 
 /** The largest floor plan image the server stores (PLAN change 6: the browser aims for about 3 MB). */
@@ -264,8 +278,13 @@ export type VenueDetail = {
   reference: ReferenceMeta | null
   /** The original plan the template points at (set on Accept), or null. */
   referenceImage: VenueImageInfo | null
-  /** Live layouts in live weddings that use this template. */
+  /** Live layouts that use this template, in live weddings the person asking belongs to (every wedding for an admin). */
   usedBy: number
+  access: VenueAccess
+  /** The owner's display name; null for a template that belongs to no one. */
+  ownerName: string | null
+  /** True when the person asking may change it (their own, or any template for an admin). */
+  canEdit: boolean
 }
 
 /** POST /api/venues. 201 VenueDetail. A retry with the same id gives the same template back. */
@@ -353,25 +372,36 @@ export type VenueRevisionList = {
 }
 export const MAX_LISTED_REVISIONS = 200
 
-/** A live layout in a live wedding that uses a template. */
+/**
+ * A live layout in a live wedding that uses a template. Replies list only
+ * layouts in weddings the person asking belongs to (every wedding for an
+ * admin); the rest are only counted, in `hiddenLayouts`, never named.
+ */
 export type VenueUse = { weddingId: string; weddingName: string; layoutId: string; layoutName: string }
 
-/** 409 reply to DELETE /api/venues/:id while layouts use the template. */
-export type VenueInUse = { error: 'in_use'; message: string; layouts: VenueUse[] }
+/** 409 reply to DELETE /api/venues/:id while layouts use the template (listed or hidden). */
+export type VenueInUse = { error: 'in_use'; message: string; layouts: VenueUse[]; hiddenLayouts: number }
 
-/** GET /api/venues/:id/delete-summary. Delete is blocked while `layouts` is not empty. */
+/** GET /api/venues/:id/delete-summary. Delete is blocked while `layouts` is not empty or `hiddenLayouts` is above 0. */
 export type VenueDeleteSummary = {
   kind: 'venue'
   name: string
   layouts: VenueUse[]
+  /** Layouts in weddings the person asking does not belong to that use the template too. */
+  hiddenLayouts: number
   images: number
   revisions: number
 }
 
-/** GET /api/venues/:id/wall-check: every live layout using the template, with the tables a wall runs through. */
+/**
+ * GET /api/venues/:id/wall-check: every live layout using the template that
+ * the person asking may see, with the tables a wall runs through, and how
+ * many others there are.
+ */
 export type VenueWallCheck = {
   templateVersion: number
   layouts: (VenueUse & { tables: { tableId: string; label: string; wallIds: string[] }[] })[]
+  hiddenLayouts: number
 }
 
 // ---------- Floor plan import ----------

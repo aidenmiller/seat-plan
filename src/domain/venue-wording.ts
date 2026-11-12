@@ -14,11 +14,23 @@ export function venueItemCount(count: number): string {
   return count === 0 ? 'Empty' : plural(count, 'item')
 }
 
-/** What the delete dialog says. Layouts that still use the venue block the delete (spec section 5). */
+/**
+ * What the delete dialog says. Layouts that still use the venue block the
+ * delete (spec section 5), those in weddings you are not part of too: those
+ * are only counted, never named.
+ */
 export function venueDeleteMessage(s: VenueDeleteSummary): string {
+  const others =
+    s.hiddenLayouts > 0
+      ? `${s.hiddenLayouts === 1 ? 'One layout' : `${s.hiddenLayouts} layouts`} in weddings you are not part of ${s.hiddenLayouts === 1 ? 'uses' : 'use'} it too, so it cannot be deleted for now.`
+      : ''
   if (s.layouts.length > 0) {
     const n = s.layouts.length
-    return `${n === 1 ? 'One layout still uses' : `${n} layouts still use`} “${s.name}”. Pick another venue for ${n === 1 ? 'it' : 'them'} before you delete this one.`
+    const mine = `${n === 1 ? 'One layout still uses' : `${n} layouts still use`} “${s.name}”. Pick another venue for ${n === 1 ? 'it' : 'them'} before you delete this one.`
+    return others ? `${mine} ${others}` : mine
+  }
+  if (s.hiddenLayouts > 0) {
+    return `${s.hiddenLayouts === 1 ? 'One layout' : `${s.hiddenLayouts} layouts`} in weddings you are not part of ${s.hiddenLayouts === 1 ? 'uses' : 'use'} “${s.name}”, so it cannot be deleted for now.`
   }
   const parts = [plural(s.revisions, 'saved version'), plural(s.images, 'floor plan image')]
   return `This deletes “${s.name}” with its ${parts.join(' and ')}. No layout uses it.`

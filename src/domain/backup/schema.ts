@@ -82,7 +82,7 @@ const backupGuestV1Schema = z.object({
 
 export const backupGuestSchema = backupGuestV1Schema.extend({ side: z.enum(guestSides) })
 
-/** Who could open the wedding when it was backed up. For reading only: a restore never makes anyone a member. */
+/** Who could open the wedding when it was backed up. For reading only: a restore never makes anyone on this list a member. */
 export const backupMemberSchema = z.object({
   userId: z.uuid(),
   email: line(254),

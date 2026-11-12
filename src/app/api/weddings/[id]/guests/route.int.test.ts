@@ -9,17 +9,23 @@ import { eq } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../../test/db'
-import { makeUser, sessionCookie } from '../../../../../../test/auth'
+import { makeUser, makeWeddingFor, sessionCookie } from '../../../../../../test/auth'
+import type { Db } from '@/server/locks'
 import type { Guest, GuestDeleteSummary, UpdateGuestReply } from '@/shared/api'
 
-/** A signed-in user's cookie: for now any signed-in user may use these routes. */
+/** The cookie of the user every test acts as: the owner of each wedding it makes. */
 let signedIn = ''
+let me = ''
+
+/** A wedding the signed-in user owns (routes answer 404 to anyone who is not a member). */
+const makeWedding = (database: Db, name?: string) => makeWeddingFor(database, me, name)
 
 beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'guests-route-test-secret-32-chars-plus')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
   const database = await db()
-  signedIn = await sessionCookie(database, (await makeUser(database)).id)
+  me = (await makeUser(database)).id
+  signedIn = await sessionCookie(database, me)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -72,7 +78,6 @@ async function patch(id: string, body: unknown) {
 
 describe('/api/weddings/[id]/guests', () => {
   it('creates guests with defaults and cleaned text, lists them, and takes a retried create', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { list } = await routes()
     const w = await makeWedding(await db())
 
@@ -132,7 +137,6 @@ describe('/api/weddings/[id]/guests', () => {
   })
 
   it('edits in place: only the fields sent, name_key follows the name', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const w = await makeWedding(await db())
     const ann = await add(w, 'Ann', 'Lee', { meal: 'Fish', household: 'Lee' })
 
@@ -155,7 +159,6 @@ describe('/api/weddings/[id]/guests', () => {
   })
 
   it('reads the old side words an older deployment may still write during a build as codes', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { sql } = await import('drizzle-orm')
     const { list } = await routes()
     const w = await makeWedding(await db())
@@ -171,7 +174,6 @@ describe('/api/weddings/[id]/guests', () => {
   })
 
   it('links partners both ways, relinks, unlinks, and keeps the couple rule switch the same on both', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const w = await makeWedding(await db())
     const [ann, ben, cy, dee] = [await add(w, 'Ann'), await add(w, 'Ben'), await add(w, 'Cy'), await add(w, 'Dee')]
 
@@ -209,7 +211,6 @@ describe('/api/weddings/[id]/guests', () => {
   })
 
   it('answers 409 with a plain message when a link changed since the browser saw it, and saves nothing', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { removeGuests } = await import('@/server/repo/guests')
     const w = await makeWedding(await db())
     const [ann, ben, cy] = [await add(w, 'Ann'), await add(w, 'Ben'), await add(w, 'Cy')]
@@ -248,7 +249,6 @@ describe('/api/weddings/[id]/guests', () => {
   })
 
   it('adds pasted names in one transaction, in order, and refuses more than 5,000', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { bulk, list } = await routes()
     const w = await makeWedding(await db())
     const names = Array.from({ length: 10 }, (_, i) => ({ firstName: `Guest${i}`, lastName: 'van der Berg' }))
@@ -293,7 +293,7 @@ describe('/api/weddings/[id]/guests', () => {
   })
 
   it('summarises and deletes a guest: seats cleared in every layout, partner unlinked, versions kept', async () => {
-    const { makeWedding, makeLayout, canvasOf, roundTable, chairRow, layoutRow, canvasSeats } = await import(
+    const { makeLayout, canvasOf, roundTable, chairRow, layoutRow, canvasSeats } = await import(
       '@/server/repo/test-fixtures'
     )
     const { groupMembers, groups, ruleGuests, rules, layouts } = await import('@/server/db/schema')
@@ -353,7 +353,7 @@ describe('/api/weddings/[id]/guests', () => {
   })
 
   it('lists where every live guest sits, for the Guests page after a browser Back (review finding)', async () => {
-    const { makeWedding, makeLayout, canvasOf, roundTable, chairRow } = await import('@/server/repo/test-fixtures')
+    const { makeLayout, canvasOf, roundTable, chairRow } = await import('@/server/repo/test-fixtures')
     const { layouts, weddings } = await import('@/server/db/schema')
     const { seats, one } = await routes()
     const d = await db()

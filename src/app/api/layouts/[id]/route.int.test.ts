@@ -8,17 +8,23 @@ import { randomUUID } from 'node:crypto'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../test/db'
-import { makeUser, sessionCookie } from '../../../../../test/auth'
+import { makeUser, makeWeddingFor, sessionCookie } from '../../../../../test/auth'
+import type { Db } from '@/server/locks'
 import type { LayoutDetail, LayoutVersionInfo, SaveLayoutConflict, SaveLayoutOk } from '@/shared/api'
 
-/** A signed-in user's cookie: for now any signed-in user may use these routes. */
+/** The cookie of the user every test acts as: the owner of each wedding it makes. */
 let signedIn = ''
+let me = ''
+
+/** A wedding the signed-in user owns (routes answer 404 to anyone who is not a member). */
+const makeWedding = (database: Db, name?: string) => makeWeddingFor(database, me, name)
 
 beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'layouts-route-test-secret-32-chars-plus')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
   const database = await db()
-  signedIn = await sessionCookie(database, (await makeUser(database)).id)
+  me = (await makeUser(database)).id
+  signedIn = await sessionCookie(database, me)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -64,7 +70,7 @@ function table(id: string, number: number, seated: (string | null)[]) {
 
 describe('/api/layouts/[id]', () => {
   it('runs the whole life of a layout', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const { removeGuests } = await import('@/server/repo/guests')
     const w = await makeWedding(await db())
     const [ann, ben] = [await makeGuest(await db(), w, 'Ann'), await makeGuest(await db(), w, 'Ben')]
@@ -199,7 +205,7 @@ describe('/api/layouts/[id]', () => {
     expect((await call(one, 'GET', copy.body.id)).body).toMatchObject({ version: 1, name: 'Plan B copy' })
   })
 
-  it('a save to a layout id nobody made is gone, and other reads are 404', async () => {
+  it('a layout id nobody made is 404 everywhere, a save included (the editor reads 404 as gone)', async () => {
     const one = await import('./route')
     const id = randomUUID()
     const res = await call(one, 'PUT', id, {
@@ -209,7 +215,7 @@ describe('/api/layouts/[id]', () => {
       tabId: 't',
       canvas: { schemaVersion: 1, items: [] },
     })
-    expect(res).toMatchObject({ status: 410, body: { error: 'gone' } })
+    expect(res).toMatchObject({ status: 404, body: { error: 'not_found' } })
     expect((await call(one, 'GET', id)).status).toBe(404)
     expect((await call(one, 'PATCH', id, { name: 'X' })).status).toBe(404)
     expect((await call(one, 'DELETE', id, { confirm: 'delete' })).status).toBe(404)
@@ -242,7 +248,7 @@ function saveBody(baseVersion: number, items: unknown[], saveId = randomUUID()) 
 
 describe('text Postgres cannot store', () => {
   it('a save holding a NUL or a lone surrogate lands with clean text, never a 500', async () => {
-    const { makeWedding, makeGuest, makeLayout, layoutRow, seatRows } = await import('@/server/repo/test-fixtures')
+    const { makeGuest, makeLayout, layoutRow, seatRows } = await import('@/server/repo/test-fixtures')
     const one = await import('./route')
     const w = await makeWedding(await db())
     const ann = await makeGuest(await db(), w, 'Ann')
@@ -275,7 +281,7 @@ describe('text Postgres cannot store', () => {
   })
 
   it('an item id with a NUL is refused with 422, not stored and not a 500', async () => {
-    const { makeWedding, makeLayout, layoutRow } = await import('@/server/repo/test-fixtures')
+    const { makeLayout, layoutRow } = await import('@/server/repo/test-fixtures')
     const one = await import('./route')
     const w = await makeWedding(await db())
     const id = await makeLayout(await db(), w)
@@ -288,7 +294,7 @@ describe('text Postgres cannot store', () => {
 
 describe('POST /api/layouts/[id]/duplicate', () => {
   it('saves a copy of a deleted layout when the canvas comes with it, and 404s without one', async () => {
-    const { makeWedding, makeGuest, makeLayout } = await import('@/server/repo/test-fixtures')
+    const { makeGuest, makeLayout } = await import('@/server/repo/test-fixtures')
     const { softDeleteLayout } = await import('@/server/repo/layouts')
     const { softDeleteWedding } = await import('@/server/repo/weddings')
     const one = await import('./route')
@@ -296,7 +302,7 @@ describe('POST /api/layouts/[id]/duplicate', () => {
     const w = await makeWedding(await db())
     const ann = await makeGuest(await db(), w, 'Ann')
     const id = await makeLayout(await db(), w, undefined, { name: 'Dinner' })
-    expect(await softDeleteLayout(await db(), id)).toBe(true)
+    expect(await softDeleteLayout(await db(), w, id)).toBe(true)
 
     // The tab's save now answers 410, and the editor offers "Save as a copy".
     expect((await call(one, 'PUT', id, saveBody(1, []))).status).toBe(410)
@@ -317,7 +323,7 @@ describe('POST /api/layouts/[id]/duplicate', () => {
 
 describe('recent save ids', () => {
   it('a retry of an older save after another save answers already-saved with that save\'s version', async () => {
-    const { makeWedding, makeLayout } = await import('@/server/repo/test-fixtures')
+    const { makeLayout } = await import('@/server/repo/test-fixtures')
     const one = await import('./route')
     const version = await import('./version/route')
     const w = await makeWedding(await db())

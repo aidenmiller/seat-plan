@@ -721,6 +721,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
             <ConflictDialog conflict={conflict} me={author} onLoadTheirs={loadTheirs} onKeepMine={keepMine} />
             <VenuePickerDialog
               open={pickingVenue}
+              weddingId={initial.weddingId}
               layoutId={initial.id}
               current={venueInfo.venueTemplateId}
               onCancel={() => setPickingVenue(false)}

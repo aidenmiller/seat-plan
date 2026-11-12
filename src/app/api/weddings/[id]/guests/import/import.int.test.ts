@@ -13,7 +13,8 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../../../test/db'
-import { makeUser, sessionCookie } from '../../../../../../../test/auth'
+import { makeUser, makeWeddingFor, sessionCookie } from '../../../../../../../test/auth'
+import type { Db } from '@/server/locks'
 import { applyMapping, guessMapping, type ImportRow } from '@/domain/csv/columns'
 import { CSV_BOM, EXPORT_COLUMNS } from '@/domain/csv/export'
 import { MAX_IMPORT_ROWS, parseCsv } from '@/domain/csv/parse'
@@ -22,14 +23,19 @@ import { GROUP_COLORS } from '@/domain/group-colors'
 import type { PartnerNames } from '@/domain/partners'
 import { MAX_GUEST_ROWS, type Guest, type ImportCommitResult, type ImportPreview } from '@/shared/api'
 
-/** A signed-in user's cookie: for now any signed-in user may use these routes. */
+/** The cookie of the user every test acts as: the owner of each wedding it makes. */
 let signedIn = ''
+let me = ''
+
+/** A wedding the signed-in user owns (routes answer 404 to anyone who is not a member). */
+const makeWedding = (database: Db, name?: string) => makeWeddingFor(database, me, name)
 
 beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'import-route-test-secret-32-chars-plus')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
   const database = await db()
-  signedIn = await sessionCookie(database, (await makeUser(database)).id)
+  me = (await makeUser(database)).id
+  signedIn = await sessionCookie(database, me)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -103,7 +109,6 @@ const byName = (list: Guest[], first: string, last?: string) =>
 
 describe('guest CSV import', () => {
   it('imports the sample file, and importing it again gives 0 new and 0 changed (check 13)', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { groups } = await routes()
     const w = await makeWedding(await db())
     const rows = rowsOf(SAMPLE_CSV_FILE)
@@ -174,7 +179,7 @@ describe('guest CSV import', () => {
   })
 
   it('blocks the commit while a needs-review row has no pick, then applies the pick', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const { commit: commitRoute } = await routes()
     const d = await db()
     const w = await makeWedding(d)
@@ -213,7 +218,7 @@ describe('guest CSV import', () => {
   })
 
   it('links an unmatched partner through a pick', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const d = await db()
     const w = await makeWedding(d)
     const bob = await makeGuest(d, w, 'Bob', 'Stone')
@@ -234,7 +239,7 @@ describe('guest CSV import', () => {
   })
 
   it('links many couples at once: earlier partners unlinked, couple rule back on for all (review finding)', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const { guest: guestRoute } = await routes()
     const d = await db()
     const w = await makeWedding(d)
@@ -259,7 +264,7 @@ describe('guest CSV import', () => {
   })
 
   it('removes guests missing from the file only when asked, clearing the seats the summary names', async () => {
-    const { makeWedding, makeLayout, canvasOf, roundTable, chairRow, layoutRow, canvasSeats } = await import(
+    const { makeLayout, canvasOf, roundTable, chairRow, layoutRow, canvasSeats } = await import(
       '@/server/repo/test-fixtures'
     )
     const { layouts, guests } = await import('@/server/db/schema')
@@ -322,7 +327,6 @@ describe('guest CSV import', () => {
   })
 
   it('exports CSV that re-imports with 0 new and 0 changed', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { weddings } = await import('@/server/db/schema')
     const { exporter, guests: guestsRoute, guest: guestRoute, groups: groupsRoute } = await routes()
     const d = await db()
@@ -403,7 +407,6 @@ describe('guest CSV import', () => {
   })
 
   it('refuses bad bodies: 400, 404, 413 over 5,000 rows, 422', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { preview: previewRoute, commit: commitRoute } = await routes()
     const w = await makeWedding(await db())
     expect(MAX_GUEST_ROWS).toBe(MAX_IMPORT_ROWS)

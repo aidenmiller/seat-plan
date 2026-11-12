@@ -13,7 +13,8 @@ import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { touchShareLink } from '@/server/repo/share-links'
 import { policyOf } from './guards'
-import { SESSION_COOKIE, SITE_COOKIE, createShareToken, createSiteToken, newOpaqueToken, shareCookieName, signSessionCookie } from './tokens'
+import { legacySiteCookieValue } from '../../../test/legacy-site-cookie'
+import { SESSION_COOKIE, SITE_COOKIE, createShareToken, newOpaqueToken, shareCookieName, signSessionCookie } from './tokens'
 
 const TOKEN = 'A'.repeat(43)
 const LINK = '11111111-1111-4111-8111-111111111111'
@@ -137,9 +138,9 @@ describe('share routes need this link’s cookie or a member’s session', () =>
           ['a link cookie from before a password change', { [thisLink]: createShareToken(LINK, VERSION - 1) }],
           ['another link’s cookie', { [shareCookieName(OTHER_LINK)]: createShareToken(OTHER_LINK, VERSION) }],
           ['another link’s token under this link’s name', { [thisLink]: createShareToken(OTHER_LINK, VERSION) }],
-          ['a site token in the link cookie', { [thisLink]: createSiteToken() }],
+          ['an old site cookie in the link cookie', { [thisLink]: legacySiteCookieValue() }],
           ['a link token in the session cookie', { [SESSION_COOKIE]: createShareToken(LINK, VERSION) }],
-          ['the old site cookie', { [SITE_COOKIE]: createSiteToken() }],
+          ['the old site cookie', { [SITE_COOKIE]: legacySiteCookieValue() }],
           ['a forged session cookie', { [SESSION_COOKIE]: `${member.split('.')[0]}.AAAA` }],
           ['a session the database no longer holds', { [SESSION_COOKIE]: ended }],
           ['a signed-in user who is not a member of the wedding', { [SESSION_COOKIE]: nonMember }],

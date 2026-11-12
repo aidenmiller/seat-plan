@@ -24,7 +24,7 @@ export default async function LayoutEditorPage({ params }: PageProps<'/w/[weddin
   const db = getDb()
   const id = weddingId.toLowerCase()
   const [layout, wedding, guests, groups, rules] = await Promise.all([
-    getLayoutDetail(db, layoutId.toLowerCase()),
+    getLayoutDetail(db, id, layoutId.toLowerCase()),
     getWedding(db, id),
     listGuests(db, id),
     listGroups(db, id),

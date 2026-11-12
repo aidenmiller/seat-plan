@@ -1,24 +1,23 @@
 import type { NextRequest } from 'next/server'
 import { importCommitBody, type ImportNeedsReview } from '@/shared/api'
-import { idParam, json, notFound, refuseUnstorableText, type IdContext } from '@/server/api-route'
-import { withSiteAuth } from '@/server/auth/require'
+import { json, notFound, refuseUnstorableText, type IdContext } from '@/server/api-route'
+import { withWeddingRole } from '@/server/auth/guards'
+import { byWeddingId } from '@/server/auth/resolvers'
 import { getDb } from '@/server/db/client'
 import { commitImport } from '@/server/repo/guest-import'
 import { readRowsBody } from '../../_rows-body'
 
 /**
  * ImportCommitResult: applies the import in one transaction. The server
- * builds the plan again and never trusts one the browser holds.
+ * builds the plan again and never trusts one the browser holds. Any member.
  * 422 ImportNeedsReview while a needs-review row has no pick; 409
  * { error: 'stale' } when removeMissing is on and the missing guests differ
  * from missingGuestIds; 413 over 5,000 rows.
  */
-export const POST = withSiteAuth(async (req: NextRequest, ctx: IdContext) => {
-  const id = await idParam(ctx)
-  if (!id) return notFound()
+export const POST = withWeddingRole(byWeddingId, 'editor', async (req: NextRequest, _ctx: IdContext, access) => {
   const body = await readRowsBody(req, importCommitBody, 'rows')
   if (!body.ok) return body.response
-  const write = await refuseUnstorableText(() => commitImport(getDb(), id, body.data))
+  const write = await refuseUnstorableText(() => commitImport(getDb(), access.weddingId, body.data))
   if (!write.ok) return write.response
   const result = write.value
   switch (result.status) {

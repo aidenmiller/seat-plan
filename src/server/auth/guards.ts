@@ -26,7 +26,7 @@ import { requireTemplate, type TemplateAccess, type Viewer } from './venue-acces
  *
  * Every wrapper but publicRoute, in this order:
  *  1. The session cookie: none, forged, expired, or a disabled user answers
- *     401 { error: 'unauthorized' }, the reply withSiteAuth gives. A missing
+ *     401 { error: 'unauthorized' }, the reply the proxy gives too. A missing
  *     or forged cookie is answered before the database is touched.
  *  2. On a change sent by a browser page (any method but GET, HEAD or
  *     OPTIONS, with an Origin header), the page must send the signed-in

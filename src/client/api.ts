@@ -191,7 +191,8 @@ export const layoutVersion = (id: string) => request<LayoutVersionInfo>('GET', `
 
 // ---------- Venues ----------
 
-export const listVenues = () => request<VenueSummary[]>('GET', '/api/venues')
+/** The venues a layout of this wedding may use: the library, your own, and those the wedding already uses. */
+export const listVenues = (weddingId: string) => request<VenueSummary[]>('GET', `/api/venues?weddingId=${enc(weddingId)}`)
 
 /** 201 VenueDetail: a new, empty template. Send an id so a retry gives the same template back. */
 export const createVenue = (body: CreateVenueBody) => request<VenueDetail>('POST', '/api/venues', body)

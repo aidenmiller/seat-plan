@@ -68,18 +68,21 @@ async function weddingIsLive(conn: Conn, weddingId: string): Promise<boolean> {
   return Boolean(row)
 }
 
-/** A group in a live wedding. */
-async function liveGroup(conn: Conn, groupId: string): Promise<GroupRow | null> {
+/**
+ * A group of this live wedding. The routes pass the wedding their guard
+ * resolved, so a group of any other wedding reads as missing.
+ */
+async function liveGroup(conn: Conn, weddingId: string, groupId: string): Promise<GroupRow | null> {
   const [row] = await conn
     .select({ group: groups })
     .from(groups)
     .innerJoin(weddings, eq(weddings.id, groups.weddingId))
-    .where(and(eq(groups.id, groupId), isNull(weddings.deletedAt)))
+    .where(and(eq(groups.id, groupId), eq(groups.weddingId, weddingId), isNull(weddings.deletedAt)))
   return row?.group ?? null
 }
 
-async function getGroup(conn: Conn, groupId: string): Promise<Group | null> {
-  const row = await liveGroup(conn, groupId)
+async function getGroup(conn: Conn, weddingId: string, groupId: string): Promise<Group | null> {
+  const row = await liveGroup(conn, weddingId, groupId)
   if (!row) return null
   const members = await memberIdsByGroup(conn, row.weddingId, [row.id])
   return toGroup(row, members.get(row.id) ?? [])
@@ -189,7 +192,7 @@ export async function createGroup(db: Db, weddingId: string, body: CreateGroupIn
         const [existing] = await tx.select({ weddingId: groups.weddingId }).from(groups).where(eq(groups.id, id))
         if (existing) {
           if (existing.weddingId !== weddingId) return { status: 'id-taken' }
-          const group = await getGroup(tx, id)
+          const group = await getGroup(tx, weddingId, id)
           return group ? { status: 'created', group } : { status: 'id-taken' }
         }
       }
@@ -201,7 +204,7 @@ export async function createGroup(db: Db, weddingId: string, body: CreateGroupIn
         const added = await addMembersLocked(tx, weddingId, id, body.guestIds)
         if (!added.ok) throw new Refused({ status: 'invalid', issues: [NOT_THIS_WEDDING_ISSUE] })
       }
-      return { status: 'created', group: (await getGroup(tx, id))! }
+      return { status: 'created', group: (await getGroup(tx, weddingId, id))! }
     })
   } catch (err) {
     if (err instanceof Refused) return err.result
@@ -213,11 +216,11 @@ export async function createGroup(db: Db, weddingId: string, body: CreateGroupIn
 
 export type UpdateGroupResult = { status: 'updated'; group: Group } | { status: 'not-found' } | { status: 'name-taken' }
 
-/** Rename or recolor. */
-export async function updateGroup(db: Db, groupId: string, body: UpdateGroupInput): Promise<UpdateGroupResult> {
+/** Rename or recolor. 'not-found' for a group of another wedding. */
+export async function updateGroup(db: Db, weddingId: string, groupId: string, body: UpdateGroupInput): Promise<UpdateGroupResult> {
   try {
     return await db.transaction(async (tx): Promise<UpdateGroupResult> => {
-      const row = await liveGroup(tx, groupId)
+      const row = await liveGroup(tx, weddingId, groupId)
       if (!row) return { status: 'not-found' }
       if (body.name !== undefined && (await nameTaken(tx, row.weddingId, body.name, row.id))) {
         return { status: 'name-taken' }
@@ -225,8 +228,8 @@ export async function updateGroup(db: Db, groupId: string, body: UpdateGroupInpu
       const set: Partial<typeof groups.$inferInsert> = {}
       if (body.name !== undefined) set.name = body.name
       if (body.color !== undefined) set.color = body.color
-      await tx.update(groups).set(set).where(eq(groups.id, row.id))
-      return { status: 'updated', group: (await getGroup(tx, row.id))! }
+      await tx.update(groups).set(set).where(and(eq(groups.id, row.id), eq(groups.weddingId, weddingId)))
+      return { status: 'updated', group: (await getGroup(tx, weddingId, row.id))! }
     })
   } catch (err) {
     if (isGroupNameTaken(err)) return { status: 'name-taken' }
@@ -234,33 +237,43 @@ export async function updateGroup(db: Db, groupId: string, body: UpdateGroupInpu
   }
 }
 
-/** Deletes the group outright; its member links go with it. False when missing or in a deleted wedding. */
-export async function deleteGroup(db: Db, groupId: string): Promise<boolean> {
-  const row = await liveGroup(db, groupId)
+/** Deletes the group outright; its member links go with it. False when missing, of another wedding, or in a deleted wedding. */
+export async function deleteGroup(db: Db, weddingId: string, groupId: string): Promise<boolean> {
+  const row = await liveGroup(db, weddingId, groupId)
   if (!row) return false
-  const deleted = await db.delete(groups).where(eq(groups.id, row.id)).returning({ id: groups.id })
+  const deleted = await db
+    .delete(groups)
+    .where(and(eq(groups.id, row.id), eq(groups.weddingId, weddingId)))
+    .returning({ id: groups.id })
   return deleted.length > 0
 }
 
-/** Adds guests to a group (bulk). Guests already in it are skipped; a guest of another wedding refuses the lot. */
-export async function addGroupMembers(db: Db, groupId: string, guestIds: readonly string[]): Promise<GroupMembersResult> {
-  const first = await liveGroup(db, groupId)
-  if (!first) return { status: 'not-found' }
+/**
+ * Adds guests to a group (bulk). Guests already in it are skipped; a guest of
+ * another wedding refuses the lot. 'not-found' for a group of another wedding.
+ */
+export async function addGroupMembers(db: Db, weddingId: string, groupId: string, guestIds: readonly string[]): Promise<GroupMembersResult> {
+  if (!(await liveGroup(db, weddingId, groupId))) return { status: 'not-found' }
   return db.transaction(async (tx): Promise<GroupMembersResult> => {
-    await weddingLock(tx, first.weddingId, 'shared')
+    await weddingLock(tx, weddingId, 'shared')
     // Checked again under the lock: the group may have gone meanwhile.
-    const row = await liveGroup(tx, groupId)
+    const row = await liveGroup(tx, weddingId, groupId)
     if (!row) return { status: 'not-found' }
-    const added = await addMembersLocked(tx, row.weddingId, row.id, guestIds)
+    const added = await addMembersLocked(tx, weddingId, row.id, guestIds)
     if (!added.ok) return { status: 'invalid', issues: [NOT_THIS_WEDDING_ISSUE] }
-    return { status: 'done', group: (await getGroup(tx, row.id))!, added: added.added }
+    return { status: 'done', group: (await getGroup(tx, weddingId, row.id))!, added: added.added }
   })
 }
 
-/** Takes one guest out of a group. Replies with the group; a guest who was not in it changes nothing. */
-export async function removeGroupMember(db: Db, groupId: string, guestId: string): Promise<Group | null> {
-  const row = await liveGroup(db, groupId)
+/**
+ * Takes one guest out of a group. Replies with the group; a guest who was not
+ * in it changes nothing. Null for a group of another wedding.
+ */
+export async function removeGroupMember(db: Db, weddingId: string, groupId: string, guestId: string): Promise<Group | null> {
+  const row = await liveGroup(db, weddingId, groupId)
   if (!row) return null
-  await db.delete(groupMembers).where(and(eq(groupMembers.groupId, row.id), eq(groupMembers.guestId, guestId)))
-  return getGroup(db, row.id)
+  await db
+    .delete(groupMembers)
+    .where(and(eq(groupMembers.groupId, row.id), eq(groupMembers.weddingId, weddingId), eq(groupMembers.guestId, guestId)))
+  return getGroup(db, weddingId, row.id)
 }

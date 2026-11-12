@@ -32,6 +32,9 @@ function summary(over: Partial<VenueSummary> = {}): VenueSummary {
     importedBy: 'hand',
     fixedItemCount: 0,
     hasReferenceImage: false,
+    access: 'library',
+    ownerName: null,
+    canEdit: false,
     ...over,
   }
 }
@@ -79,6 +82,9 @@ const venue: VenueDetail = {
   reference: null,
   referenceImage: null,
   usedBy: 0,
+  access: 'mine',
+  ownerName: 'Noa',
+  canEdit: true,
 }
 
 describe('TemplateEditorScreen', () => {
