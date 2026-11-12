@@ -21,10 +21,11 @@
  *   backoff, and at once when the browser comes back online or the page is
  *   shown again.
  * - 401 stale_page (someone else signed in on this browser since the page
- *   opened) stops for good in this tab: nothing is sent from it again, not
- *   even when the page is shown again, so one person's edits never go out
- *   under another's session. The draft stays in this user's storage; once
- *   they sign in again and open the layout, recovery sends it.
+ *   opened) stops this tab: nothing is sent from it, not even when the page
+ *   is shown again, so one person's edits never go out under another's
+ *   session. The draft stays in this user's storage. When the same person
+ *   signs in again on this browser, the page calls resume() and the kept
+ *   edits go; opening the layout after signing in again sends them too.
  * - Every request is sent as the user the saver was made for (appFetchAs),
  *   and every draft is stamped with that user's id.
  */
@@ -485,6 +486,21 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
 
     hasUnsavedChanges() {
       return dirty()
+    },
+
+    resume() {
+      if (mode !== 'failed' || (failedReason !== 'other-user' && failedReason !== 'signed-out')) return
+      mode = 'active'
+      failedReason = null
+      attempt = 0
+      if (requestActive) return
+      // The save that was out goes again unchanged; edits made since follow it.
+      if (flight || dirty()) {
+        clearRetry()
+        void send()
+      } else {
+        setStatus({ kind: 'saved', at: new Date().toISOString() })
+      }
     },
 
     async resetTo(version) {

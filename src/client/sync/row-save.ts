@@ -27,8 +27,9 @@
  * that user (appFetchAs). A plain 401 (the session ran out) is retried, so
  * the edits go out once the same person signs in again. A 401 stale_page
  * (someone else signed in on this browser since the page opened) stops the
- * queue for good in this page: the edits stay in this user's database until
- * they sign in again, and are never sent under the other person's session.
+ * queue in this page: the edits stay in this user's database, and are never
+ * sent under the other person's session. When the same person signs in
+ * again on this browser, the page calls resume() and they go.
  */
 import { del, entries, set, type UseStore } from 'idb-keyval'
 import { currentUserId } from '../current-user'
@@ -264,6 +265,8 @@ export interface RowSaver {
   /** Each saved or refused edit. Returns unsubscribe. */
   onEvent(listener: (event: RowSaveEvent) => void): () => void
   hasUnsavedChanges(): boolean
+  /** This queue's user signed in again on this browser: after a stop for someone else's sign-in, send what is kept. */
+  resume(): void
   /** Send what is waiting now, skipping the wait and any backoff. Resolves when the queue is empty or a try fails. */
   flush(options?: { keepalive?: boolean }): Promise<void>
   /** Takes over the stored edits of this queue's earlier page loads and of closed tabs, and sends them. */
@@ -660,6 +663,13 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
       return () => void eventListeners.delete(listener)
     },
     hasUnsavedChanges: () => waiting.size > 0 || flight !== null,
+    resume() {
+      if (!stopped || disposed) return
+      stopped = false
+      attempt = 0
+      refreshStatus()
+      pump()
+    },
     async flush(opts) {
       if (opts?.keepalive) keepaliveNext = true
       clearSendTimer()
@@ -727,6 +737,7 @@ export function rowSaverFor(userId: string): RowSaver {
         await made.whenStored()
       },
       hasUnsavedChanges: () => made.hasUnsavedChanges(),
+      resume: () => made.resume(),
       async stop() {
         made.dispose()
         await made.whenStored()

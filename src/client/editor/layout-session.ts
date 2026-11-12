@@ -258,6 +258,7 @@ export function openLayoutSession({ layout, store, user, events, deps }: OpenLay
         await orphanDeleted
       },
       hasUnsavedChanges: () => active.hasUnsavedChanges(),
+      resume: () => active.resume(),
       async stop() {
         active.dispose()
         await active.whenStored()

@@ -643,6 +643,51 @@ describe('replies that stop saving', () => {
     expect(await t.draft()).toMatchObject({ canvas: canvasN(2) })
   })
 
+  it('resume() after stale_page (the same person signed in again) sends the kept edits, the same save first', async () => {
+    const t = setup()
+    t.saver.noteEdit(canvasN(1))
+    await tick(1000)
+    t.calls[0].respond(401, { error: 'stale_page' })
+    await settle()
+    t.saver.noteEdit(canvasN(2))
+    expect(t.status()).toMatchObject({ kind: 'failed', reason: 'other-user' })
+
+    t.saver.resume()
+    await settle()
+    expect(t.calls).toHaveLength(2)
+    // The save that met someone else's session goes again unchanged (the server's saved-twice check holds)...
+    expect(t.calls[1].body.saveId).toBe(t.calls[0].body.saveId)
+    expect(t.calls[1].body.canvas).toEqual(canvasN(1))
+    t.calls[1].respond(200, ok(4))
+    await settle()
+    // ...then the edit made while stopped, from the version it returned.
+    await tick(1000)
+    expect(t.calls).toHaveLength(3)
+    expect(t.calls[2].body).toMatchObject({ baseVersion: 4, canvas: canvasN(2) })
+    t.calls[2].respond(200, ok(5))
+    await settle()
+    expect(t.status().kind).toBe('saved')
+    expect(await t.draft()).toBeNull()
+  })
+
+  it('resume() brings back only a tab stopped by a sign-in, never one the server refused for good', async () => {
+    for (const [status, body, reason] of [
+      [410, { error: 'gone' }, 'gone'],
+      [422, { error: 'invalid' }, 'invalid'],
+      [403, { error: 'forbidden' }, 'forbidden'],
+    ] as const) {
+      const t = setup()
+      t.saver.noteEdit(canvasN(1))
+      await tick(1000)
+      t.calls[0].respond(status, body)
+      await settle()
+      t.saver.resume()
+      await tick(60_000)
+      expect(t.calls, reason).toHaveLength(1)
+      expect(t.status(), reason).toMatchObject({ kind: 'failed', reason })
+    }
+  })
+
   it('sends as the user it was made for, whoever the page names later', async () => {
     const sent: Headers[] = []
     vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {

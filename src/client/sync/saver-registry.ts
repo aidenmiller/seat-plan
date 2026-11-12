@@ -11,6 +11,8 @@ export type LiveSaver = {
   hasUnsavedChanges(): boolean
   /** Stop sending and storing; resolves once the storage writes already queued have finished. */
   stop(): Promise<void>
+  /** The page's own user signed in again: a saver stopped because someone else signed in (or the session ended) sends again. */
+  resume?(): void
 }
 
 const live = new Set<LiveSaver>()
@@ -49,6 +51,17 @@ export async function flushAll(waitMs = 3000): Promise<{ unsaved: boolean }> {
   await Promise.race([Promise.all(flushes), timeout])
   clearTimeout(timer)
   return { unsaved: anyUnsaved() }
+}
+
+/** Lets every live saver stopped by someone else's sign-in send again: the page's own user signed in again. */
+export function resumeAll(): void {
+  for (const saver of [...live]) {
+    try {
+      saver.resume?.()
+    } catch {
+      // One broken saver must not keep the others stopped.
+    }
+  }
 }
 
 /** Stops every live saver and waits for their storage writes, so nothing writes after the user's data is deleted. */

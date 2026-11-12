@@ -2,10 +2,12 @@
  * What this browser's tabs tell each other about signing in and out, on the
  * BroadcastChannel 'seat-plan-auth':
  *
- * - 'signed-in' (posted by the sign-in form): a tab rendered for anyone else
- *   stops (its savers would be refused anyway, src/server/auth/guards.ts)
- *   and says to reload. A tab of the same person tries its waiting saves
- *   again: their session ran out and they signed in again.
+ * - 'signed-in' (posted by the sign-in form and the invite page): a tab
+ *   rendered for anyone else stops (its savers would be refused anyway,
+ *   src/server/auth/guards.ts) and says to reload. A tab of the same person
+ *   tries its waiting saves again: their session ran out, or someone else
+ *   signed in meanwhile, and they signed in again. Such a tab stops showing
+ *   "Someone else signed in", and savers stopped by it send what they kept.
  * - 'flush' and its replies (posted while signing out): every tab of that
  *   person sends what waits and reports whether anything is still unsaved,
  *   so the sign-out can ask first.
@@ -196,6 +198,13 @@ export function pageAuthState(): PageAuthState {
 export function markOtherUser(): void {
   if (state === 'other-user') return
   state = 'other-user'
+  for (const listener of [...listeners]) listener()
+}
+
+/** The page's own user signed in again: this browser's session is theirs once more. */
+export function clearOtherUser(): void {
+  if (state === 'current') return
+  state = 'current'
   for (const listener of [...listeners]) listener()
 }
 

@@ -97,6 +97,7 @@ function fakeSaver(options: LayoutSaverOptions): FakeSaver {
     },
     flush: vi.fn(async () => undefined),
     hasUnsavedChanges: () => saver.dirty,
+    resume: vi.fn(),
     resetTo: vi.fn(async (version: number) => {
       base = version
       saver.dirty = false
@@ -342,6 +343,35 @@ describe('opening a layout', () => {
     expect(registered).toHaveLength(1)
     session.close()
     expect(unregister).toHaveBeenCalledTimes(1)
+  })
+
+  it('its saver resumes when its user signs in again', async () => {
+    let registered: LiveSaver | null = null
+    const savers: FakeSaver[] = []
+    const t = setup()
+    await t.session.ready
+    const session = openLayoutSession({
+      layout: detail(),
+      store: createDocStore(emptyCanvas()),
+      user: ME,
+      events: t.events,
+      deps: {
+        ...t.deps,
+        createSaver: (options) => {
+          const s = fakeSaver(options)
+          savers.push(s)
+          return s
+        },
+        registerSaver: (s) => {
+          registered = s
+          return () => undefined
+        },
+      },
+    })
+    await session.ready
+    registered!.resume!()
+    expect(savers[0]!.resume).toHaveBeenCalledTimes(1)
+    session.close()
   })
 
   it('its flush, as signing out calls it, ends only once storage no longer holds what was saved', async () => {

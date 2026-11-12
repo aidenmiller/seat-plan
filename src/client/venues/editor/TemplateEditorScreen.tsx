@@ -251,6 +251,7 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
     const unregister = registerSaver({
       flush: () => s.flush(),
       hasUnsavedChanges: () => s.hasUnsavedChanges(),
+      resume: () => s.resume(),
       stop: async () => s.dispose(),
     })
     // Handed to React after this effect, as the layout session hands over its saver.
