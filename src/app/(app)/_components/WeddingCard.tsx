@@ -13,7 +13,8 @@ import type { WeddingSummary } from '@/shared/api'
 /**
  * A wedding on the home screen: rename in place, open, delete with the typed
  * word. Renaming and deleting are for owners; an editor can only open it.
- * `role` is the person's own role there, shown quietly under the name.
+ * `role` is the person's own role there, shown quietly under the name. A white
+ * card, shadowed for the home page's navy.
  */
 export function WeddingCard({
   wedding,
@@ -30,7 +31,7 @@ export function WeddingCard({
 
   return (
     <article
-      className="flex h-full flex-col rounded-xl border border-stone-200 bg-white p-4 shadow-sm"
+      className="flex h-full flex-col rounded-xl bg-white p-4 shadow-[0_12px_32px_-12px_rgb(6_17_51/0.6)]"
       data-testid="wedding-card"
       data-wedding-id={wedding.id}
     >

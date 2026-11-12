@@ -26,9 +26,10 @@ function plural(n: number, one: string, many = `${one}s`): string {
  * "Restore from file" on the home screen (spec section 11): pick a backup
  * file, see what it holds, then restore it as a new wedding with each step
  * shown as it goes. A failed step can be tried again; the steps already done
- * are not done twice.
+ * are not done twice. `buttonClassName` styles the button that opens it (the
+ * home page draws it for navy); the dialog keeps the usual buttons.
  */
-export function RestoreButton() {
+export function RestoreButton({ buttonClassName = secondaryButton }: { buttonClassName?: string }) {
   const router = useRouter()
   const inputRef = useRef<HTMLInputElement>(null)
   const [state, setState] = useState<State>({ kind: 'idle' })
@@ -64,7 +65,7 @@ export function RestoreButton() {
   return (
     <>
       <input ref={inputRef} type="file" accept="application/json,.json" className="hidden" onChange={onPick} data-testid="restore-file" />
-      <button type="button" className={secondaryButton} onClick={() => inputRef.current?.click()} disabled={state.kind === 'reading'}>
+      <button type="button" className={buttonClassName} onClick={() => inputRef.current?.click()} disabled={state.kind === 'reading'}>
         {state.kind === 'reading' ? 'Reading…' : 'Restore from file'}
       </button>
       <Dialog open={open} onClose={() => setState({ kind: 'idle' })} title="Restore from file" dismissable={!running} testId="restore-dialog">
