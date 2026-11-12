@@ -163,6 +163,15 @@ html:has(> body > [data-signed-out]) {
   background-color: #1e3a8a;
 }
 
+/*
+ * The home page (src/app/(app)/page.tsx) is on the same paper, below the app's
+ * white header: its <main> carries .blueprint-paper and data-surface="blueprint".
+ * Past its ends the navy carries on too; the other signed-in pages keep the ivory.
+ */
+html:has([data-surface="blueprint"]) {
+  background-color: #1e3a8a;
+}
+
 @layer base {
   /* Tailwind 4 gives buttons the default cursor; a hand reads as tappable. */
   button:not(:disabled),
