@@ -10,15 +10,19 @@
  *     found "unchanged" night after night and gets no new backup, so without
  *     this its last copy would age out and it would have none. The one
  *     exception: a `final` backup (the last copy of a deleted wedding) once it
- *     is `monthlyMonths` months old. A deleted wedding gets no newer backup,
- *     so this is what lets a deleted wedding's data leave the store a year on.
+ *     is `monthlyMonths` months old, while that wedding is still deleted (or
+ *     gone). A deleted wedding gets no newer backup, so this is what lets a
+ *     deleted wedding's data leave the store a year on. A wedding brought back
+ *     (an admin's undelete) is live again: its newest backup, final or not, is
+ *     kept like any live wedding's.
  *  4. It is a `final` backup younger than `monthlyMonths` months.
  * Everything else is pruned.
  */
 
 export type RetentionKind = 'nightly' | 'manual' | 'final'
 
-export type RetentionEntry = { id: string; weddingId: string; kind: RetentionKind; createdAt: Date }
+/** `weddingLive`: the backup's wedding exists and is not deleted (false when it is deleted or gone). */
+export type RetentionEntry = { id: string; weddingId: string; kind: RetentionKind; createdAt: Date; weddingLive: boolean }
 
 export type RetentionPolicy = { dailyDays: number; monthlyMonths: number }
 
@@ -67,7 +71,7 @@ export function backupsToPrune(list: readonly RetentionEntry[], now: Date, polic
     newest.set(b.weddingId, b)
   }
   for (const b of newest.values()) {
-    const expiredFinal = b.kind === 'final' && b.createdAt.getTime() <= finalCutoff
+    const expiredFinal = b.kind === 'final' && b.createdAt.getTime() <= finalCutoff && !b.weddingLive
     if (!expiredFinal) keep.add(b.id)
   }
   return sorted.filter((b) => !keep.has(b.id)).map((b) => b.id)

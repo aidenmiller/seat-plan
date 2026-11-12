@@ -25,21 +25,52 @@ import { upgradeRestoreStartV1, upgradeV1 } from './upgrade'
 export const BACKUP_FORMAT = 'seat-plan-backup'
 export const BACKUP_VERSION = 2
 
-/** The most rows of each kind a backup may hold. Guests match MAX_GUEST_ROWS in src/shared/api.ts. */
+/**
+ * The most rows of each kind a backup may hold. They bound what reading a
+ * file can cost, and they must never refuse a wedding the app accepts, or
+ * that wedding could not be backed up (the nightly job checks every backup
+ * against this format before it uploads it, and fails the wedding by field
+ * when it does not fit). limits.test.ts compares them with the API.
+ *
+ * The API caps what one request adds (MAX_GUEST_ROWS guests in one import or
+ * paste, and as many in one group or rule) but not how many rows a wedding
+ * gathers over time, so these sit far above any real wedding.
+ */
 export const BACKUP_LIMITS = {
-  guests: 5000,
-  groups: 500,
-  groupMembers: 100_000,
-  rules: 2000,
-  ruleGuests: 100_000,
-  layouts: 200,
-  templates: 200,
-  members: 100,
+  guests: 20_000,
+  groups: 5000,
+  groupMembers: 200_000,
+  rules: 10_000,
+  ruleGuests: 200_000,
+  layouts: 1000,
+  templates: 1000,
+  members: 1000,
 } as const
+
+/** The longest names: weddings, guests, layouts and venues (src/shared/api.ts). */
+const NAME_MAX = 200
+/** Rule notes, as the API takes them (optionalNotes in src/shared/api.ts). */
+const RULE_NOTE_MAX = 10_000
+/**
+ * Guest notes. The API takes 10,000 characters, but a CSV import adds each
+ * column it does not know to the notes as a line (up to 100 lines of 5,000
+ * characters each time, src/domain/csv/import-diff.ts), so notes can grow past
+ * that. A sanity bound, far above what an import writes.
+ */
+const GUEST_NOTES_MAX = 1_000_000
+/** The largest floor plan image the database stores (venue_images_size_cap: 4 MiB; the server takes up to 3.5 MB). */
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
 const id = z.uuid().overwrite((v) => v.toLowerCase())
 const line = (max: number) => z.string().overwrite(cleanOneLine).max(max)
-const name = line(200).min(1, 'Names cannot be empty')
+/** A guest's first or last name: cleaned as the API cleans it (one line, NFC). */
+const guestName = line(NAME_MAX).min(1, 'Names cannot be empty')
+/**
+ * A wedding's, layout's or venue's name: cleaned as the API cleans it (made
+ * well formed and trimmed, nothing more). Cleaning it as a guest name is (to
+ * NFC) could lengthen a name the API took past its limit.
+ */
+const title = z.string().overwrite(wellFormedText).trim().min(1, 'Names cannot be empty').max(NAME_MAX)
 /** One line of text or null; blank becomes null. */
 const optionalLine = (max: number) =>
   line(max)
@@ -48,13 +79,13 @@ const optionalLine = (max: number) =>
 const optionalNotes = z
   .string()
   .overwrite(cleanNotes)
-  .max(10_000)
+  .max(GUEST_NOTES_MAX)
   .nullable()
   .transform((v) => (v ? v : null))
 
 const backupWeddingV1Schema = z.object({
   id,
-  name,
+  name: title,
   date: z.iso.date().nullable(),
   unit: z.enum(['ft', 'm']),
   minGapCm: z.number().finite().positive().max(10_000),
@@ -67,8 +98,8 @@ export const backupWeddingSchema = backupWeddingV1Schema.extend({
 
 const backupGuestV1Schema = z.object({
   id,
-  firstName: name,
-  lastName: name,
+  firstName: guestName,
+  lastName: guestName,
   nickname: optionalLine(100),
   partnerId: id.nullable(),
   coupleRuleEnabled: z.boolean(),
@@ -111,7 +142,7 @@ export const backupRuleSchema = z
     note: z
       .string()
       .overwrite(wellFormedText)
-      .max(2000)
+      .max(RULE_NOTE_MAX)
       .nullable()
       .transform((v) => (v ? v : null)),
   })
@@ -119,7 +150,7 @@ export const backupRuleSchema = z
 
 export const backupLayoutSchema = z.object({
   id,
-  name,
+  name: title,
   kind: z.enum(['reception', 'ceremony']),
   venueTemplateId: id.nullable(),
   // A display name, any string (a backup can name someone besides Noa and Aiden).
@@ -129,7 +160,7 @@ export const backupLayoutSchema = z.object({
 
 export const backupTemplateSchema = z.object({
   id,
-  name,
+  name: title,
   fixedItems: fixedItemsSchema,
   reference: referenceMetaSchema.nullable(),
   importedBy: z.enum(importedByValues),
@@ -137,8 +168,8 @@ export const backupTemplateSchema = z.object({
   imageId: id.nullable(),
 })
 
-/** Base64 of an image of at most 3.5 MB (MAX_VENUE_IMAGE_BYTES). */
-const MAX_IMAGE_BASE64 = Math.ceil((3.5 * 1024 * 1024) / 3) * 4
+/** Base64 of an image of at most MAX_IMAGE_BYTES. */
+const MAX_IMAGE_BASE64 = Math.ceil(MAX_IMAGE_BYTES / 3) * 4
 
 export const backupImageSchema = z.object({
   id,

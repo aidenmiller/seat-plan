@@ -6,7 +6,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { eq } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL, makeTestDb, truncateAll } from '../../../../../test/db'
@@ -15,6 +15,14 @@ import { backupRuns, backups, guests } from '@/server/db/schema'
 import { makeBackupWedding } from '@/server/backups/test-wedding'
 import { cronSecretMatches } from '@/server/auth/guards'
 import { GET, POST } from './route'
+
+/** The cron waits up to 2 minutes for a run holding the lease; here, a second. */
+const WAIT_MS = 1000
+vi.mock('@/server/backups/http', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/server/backups/http')>()),
+  CRON_LEASE_WAIT_MS: 1000,
+  CRON_LEASE_POLL_MS: 50,
+}))
 
 const SECRET = 'Cr0nSecretForTheIntegrationTest0123456789'
 const { pool, db } = makeTestDb()
@@ -104,11 +112,25 @@ describe('/api/cron/backups', () => {
     ])
   })
 
-  it('answers busy (200) to a second delivery while a run is going, and 500 when a wedding fails', async () => {
-    const [alive] = await db.insert(backupRuns).values({ trigger: 'cron' }).returning({ id: backupRuns.id })
-    expect(await call('GET', bearer(SECRET))).toMatchObject({ status: 200, body: { status: 'busy', backedUp: 0 } })
-    await db.update(backupRuns).set({ status: 'ok', finishedAt: new Date() }).where(eq(backupRuns.id, alive!.id))
+  it('waits for a run that holds the lease and then runs; or, if it is still going, answers 409 and records the night as failed', async () => {
+    // An admin's Run now that finishes while the nightly call waits: the nightly run goes ahead.
+    const [admin] = await db.insert(backupRuns).values({ trigger: 'admin' }).returning({ id: backupRuns.id })
+    setTimeout(() => void db.update(backupRuns).set({ status: 'ok', finishedAt: new Date() }).where(eq(backupRuns.id, admin!.id)).execute(), 300)
+    const waited = await call('GET', bearer(SECRET))
+    expect(waited).toEqual({ status: 200, body: { status: 'ok', backedUp: 0, unchanged: 1, failed: 0, skipped: 0, remaining: 0, pruned: 0 } })
 
+    // A nightly run (a second delivery of the call, or one stuck) still going when the wait is over: 409, nothing
+    // backed up, and a failed nightly run on record, so the admin page's warning shows.
+    const [alive] = await db.insert(backupRuns).values({ trigger: 'cron' }).returning({ id: backupRuns.id })
+    const started = Date.now()
+    expect(await call('GET', bearer(SECRET))).toMatchObject({ status: 409, body: { status: 'busy', backedUp: 0 } })
+    expect(Date.now() - started).toBeGreaterThanOrEqual(WAIT_MS - 100)
+    await db.update(backupRuns).set({ status: 'ok', finishedAt: new Date() }).where(eq(backupRuns.id, alive!.id))
+    const [recorded] = await db.select().from(backupRuns).where(eq(backupRuns.status, 'failed')).orderBy(desc(backupRuns.startedAt)).limit(1)
+    expect(recorded).toMatchObject({ trigger: 'cron', error: expect.stringMatching(/^Did not run: another nightly run, started .* UTC, was still going/) })
+  })
+
+  it('answers 500 when a wedding fails', async () => {
     // A wedding whose backup cannot be written: the store folder is a file.
     const w = await makeBackupWedding(db, null)
     await db.update(guests).set({ notes: 'x' }).where(eq(guests.id, w.guestIds.ann))

@@ -127,6 +127,8 @@ const admin = (extra: Partial<AdminBackupsReply> = {}): AdminBackupsReply => ({
   lastCronRun: null,
   uploadsLast30Days: 10,
   uploadLimit30Days: 1000,
+  manualUploadsLast30Days: 3,
+  manualUploadLimit30Days: 500,
   ...extra,
 })
 
@@ -147,6 +149,16 @@ describe('BackupStatus', () => {
     expect(markup).toContain('The nightly backup has not run since')
     expect(markup).toContain('Check the schedule in Vercel.')
     expect(markup).toContain('text-red-800')
+  })
+
+  it('warns when the newest nightly run failed or could not start, after the last that worked', () => {
+    const markup = status(admin({ lastSuccessfulCronRunAt: hoursAgo(25), lastCronRun: { startedAt: hoursAgo(1), status: 'failed' } }))
+    expect(markup).toContain('data-state="failed"')
+    expect(markup).toContain('failed or could not start. See Recent runs below.')
+  })
+
+  it('shows the uploads of the last 30 days against the limit, and those made by hand against their share', () => {
+    expect(status(admin())).toContain('10 of 1000 (by hand: 3 of the 500 Back up now may use)')
   })
 
   it('warns when it has never run', () => {

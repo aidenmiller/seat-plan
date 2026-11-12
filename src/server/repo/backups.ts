@@ -206,3 +206,35 @@ export async function uploadsLast30Days(db: Db): Promise<number> {
   `)
   return Number(result.rows[0]?.n ?? 0)
 }
+
+/**
+ * Uploads in the last 30 days made by "Back up now" (backups of kind
+ * 'manual'): each such backup's file, and each image uploaded for one. An
+ * image row is not marked with who uploaded it, so it counts as uploaded by
+ * hand when a manual backup that names it went in within 5 minutes of it (a
+ * backup's images go up just before its file, inside one function call of
+ * at most 300 s). An image a nightly backup uploaded at that same moment
+ * counts too, so the count errs high, never low.
+ */
+export async function manualUploadsLast30Days(db: Db): Promise<number> {
+  const result = await db.execute<{ n: string }>(sql`
+    select (select count(*) from backups where kind = 'manual' and created_at > now() - interval '30 days')
+         + (select count(*) from backup_images i
+            where i.created_at > now() - interval '30 days'
+              and exists (
+                select 1 from backups b
+                where b.kind = 'manual' and b.store_id = i.store_id and b.image_sha256s @> array[i.sha256]
+                  and b.created_at between i.created_at and i.created_at + interval '5 minutes'
+              )) as n
+  `)
+  return Number(result.rows[0]?.n ?? 0)
+}
+
+/** How many manual backups this person made in the last `withinMs`, across all weddings, and when the oldest of them was made. */
+export async function manualBackupsBy(db: Db, userId: string, withinMs: number): Promise<{ count: number; oldestAt: Date | null }> {
+  const [row] = await db
+    .select({ n: count(), oldest: sql<Date | null>`min(${backups.createdAt})` })
+    .from(backups)
+    .where(and(eq(backups.createdBy, userId), eq(backups.kind, 'manual'), gt(backups.createdAt, sql`now() - make_interval(secs => ${withinMs / 1000})`)))
+  return { count: row?.n ?? 0, oldestAt: row?.oldest ? new Date(row.oldest) : null }
+}

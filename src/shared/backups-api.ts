@@ -49,7 +49,11 @@ export type RestoredBackupReply = {
   ownersAdded: number
 }
 
-/** Counts from one run of the backup job. 'busy': another run was going, so this one did nothing. */
+/**
+ * Counts from one run of the backup job. 'busy': another run was going, so
+ * this one did nothing. `skipped`: weddings deleted during the run, or being
+ * backed up by someone else at the time.
+ */
 export type BackupRunCounts = {
   status: 'ok' | 'partial' | 'failed' | 'busy'
   backedUp: number
@@ -107,6 +111,9 @@ export type AdminBackupsReply = {
   /** Uploads (backup files and images) in the last 30 days, against the job's limit. */
   uploadsLast30Days: number
   uploadLimit30Days: number
+  /** Of those, the uploads of backups made by hand ("Back up now"), against the share they may use (the rest is kept for the nightly run). */
+  manualUploadsLast30Days: number
+  manualUploadLimit30Days: number
 }
 
 export const ADMIN_BACKUP_LIST_LIMIT = 1000

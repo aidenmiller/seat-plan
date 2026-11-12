@@ -547,8 +547,15 @@ export const shareLinks = pgTable(
   ],
 )
 
-/** One wedding a backup run could not back up. The message never holds guest data (runner.ts, safeFailureMessage). */
-export type BackupFailure = { weddingId: string; message: string }
+/**
+ * One wedding a backup run could not back up, or whose stored backup it found
+ * unreadable. The message never holds guest data (runner.ts,
+ * safeFailureMessage). `reason` marks the two that say nothing about backing
+ * the wedding up itself, so the next run does not put it last for them:
+ * 'budget' (skipped: the upload limit was reached) and 'check' (the nightly
+ * self-check found one of its stored backups unreadable).
+ */
+export type BackupFailure = { weddingId: string; message: string; reason?: 'budget' | 'check' }
 
 /**
  * One run of the backup job (src/server/backups/runner.ts): the nightly cron,
@@ -622,6 +629,14 @@ export const backups = pgTable(
     checkedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     createdBy: uuid().references(() => users.id, { onDelete: 'set null' }),
     runId: uuid().references(() => backupRuns.id, { onDelete: 'set null' }),
+    /** The last time the nightly self-check read the file back whole (runner.ts, checkOneBackup); null until then. */
+    verifiedAt: timestamp({ withTimezone: true }),
+    /**
+     * When the file was found missing or damaged (by the self-check, a
+     * download or a restore). Such a backup is never what "unchanged" compares
+     * with, so the next run makes a fresh one. Null while it is fine.
+     */
+    unreadableAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     unique('backups_pathname_uq').on(t.pathname),

@@ -6,9 +6,11 @@ const W1 = 'wedding-1'
 const W2 = 'wedding-2'
 
 let seq = 0
-function b(createdAt: string, opts: { wedding?: string; kind?: RetentionKind; id?: string } = {}): RetentionEntry {
+/** A backup. Its wedding is live unless `live` says otherwise; a final backup's wedding is deleted unless it says otherwise. */
+function b(createdAt: string, opts: { wedding?: string; kind?: RetentionKind; id?: string; live?: boolean } = {}): RetentionEntry {
   seq++
-  return { id: opts.id ?? `b${String(seq).padStart(4, '0')}`, weddingId: opts.wedding ?? W1, kind: opts.kind ?? 'nightly', createdAt: new Date(createdAt) }
+  const kind = opts.kind ?? 'nightly'
+  return { id: opts.id ?? `b${String(seq).padStart(4, '0')}`, weddingId: opts.wedding ?? W1, kind, createdAt: new Date(createdAt), weddingLive: opts.live ?? kind !== 'final' }
 }
 
 /** One nightly backup a day at 08:05 UTC for `days` days back from NOW (newest first). */
@@ -137,6 +139,17 @@ describe('backupsToPrune', () => {
     // One day short of 12 months: kept.
     const finalYoung = b('2025-11-12T09:00:00.000Z', { wedding: W2, kind: 'final' })
     expect(backupsToPrune([older, finalYoung], NOW)).toEqual([older.id])
+  })
+
+  it('keeps the newest backup of a wedding brought back after it was deleted, even a final one over 12 months old', () => {
+    // Deleted, its final backup made, then undeleted by an admin and left alone: every night finds it unchanged, so
+    // the final backup stays its newest. While the wedding is live it is never let go.
+    const older = b('2025-09-01T08:00:00.000Z', { wedding: W2 })
+    const finalOld = b('2025-10-15T09:00:00.000Z', { wedding: W2, kind: 'final', live: true })
+    expect(backupsToPrune([older, finalOld], NOW)).toEqual([older.id])
+    // Deleted again (or a wedding that is gone altogether): it leaves the store as before.
+    const stillDeleted = { ...finalOld, weddingLive: false }
+    expect(backupsToPrune([older, stillDeleted], NOW).sort()).toEqual([older.id, finalOld.id].sort())
   })
 
   it('answers the same whatever order the list comes in, oldest first', () => {
