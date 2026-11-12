@@ -101,7 +101,7 @@ test("a wedding for Sam and Alex shows its own names on every side, in the impor
   await expect(settings.getByLabel('Partner 1')).toHaveValue('Sam')
   await expect(settings.getByLabel('Partner 2')).toHaveValue('Alex')
   await settings.getByLabel('Partner 2').fill('Alexis')
-  await settings.getByRole('button', { name: 'Save' }).click()
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(settings).toBeHidden()
   await expect(filter.locator('option')).toHaveText(['Any side', 'Sam', 'Alexis', 'Both'])
   expect((await apiListGuests(page.request, weddingId)).find((g) => g.id === daniel.id)!.side).toBe('partner2')

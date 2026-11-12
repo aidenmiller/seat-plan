@@ -122,7 +122,7 @@ test('create a wedding, rename it in place, open it and change its settings', as
       refreshes.push(route)
     },
   )
-  await settings.getByRole('button', { name: 'Save' }).click()
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(settings).toBeHidden()
   await expect.poll(() => refreshes.length).toBeGreaterThan(0)
 
@@ -139,7 +139,7 @@ test('create a wedding, rename it in place, open it and change its settings', as
   for (const route of refreshes.splice(0)) await route.fallback()
   await expect(settings.getByRole('radio', { name: 'Meters' })).toBeChecked()
   await gap.fill('2')
-  await settings.getByRole('button', { name: 'Save' }).click()
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(settings).toBeHidden()
   wedding = (await (await page.request.get(`/api/weddings/${weddingId}`)).json()) as WeddingSummary
   expect(wedding.unit).toBe('m')
