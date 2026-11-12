@@ -24,6 +24,13 @@ describe('classifyPath', () => {
     expect(classifyPath('/api/auth/logout')).toBe('protected')
   })
 
+  it('sends exactly the cron route to its own bearer check', () => {
+    expect(classifyPath('/api/cron/backups')).toBe('cron')
+    for (const path of ['/api/cron', '/api/cron/', '/api/cron/backups/', '/api/cron/backups/x', '/api/cron/other', '/api/cron/backupsx', '/API/cron/backups']) {
+      expect(classifyPath(path), path).toBe('protected')
+    }
+  })
+
   it('sends share paths with a well-formed token to their own check', () => {
     expect(TOKEN).toHaveLength(43)
     expect(classifyPath(`/share/${TOKEN}`)).toBe('share')

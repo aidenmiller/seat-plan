@@ -32,6 +32,9 @@ export function makeTestDb() {
 }
 
 export const ALL_TABLES = [
+  'backups',
+  'backup_images',
+  'backup_runs',
   'activity_events',
   'password_resets',
   'invites',

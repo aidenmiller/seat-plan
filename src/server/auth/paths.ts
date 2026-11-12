@@ -4,7 +4,13 @@
  * Each of these pages and routes runs its own checks.
  */
 
-export type PathKind = 'public' | 'share' | 'protected'
+export type PathKind = 'public' | 'share' | 'cron' | 'protected'
+
+/**
+ * Vercel Cron's routes. They carry no session cookie; each checks the cron
+ * secret itself (withCronSecret in guards.ts) before anything else.
+ */
+const CRON_PATHS = new Set(['/api/cron/backups'])
 
 const PUBLIC_PATHS = new Set([
   // Signing in.
@@ -43,6 +49,7 @@ export function hidesReferrer(pathname: string): boolean {
 
 export function classifyPath(pathname: string): PathKind {
   if (PUBLIC_PATHS.has(pathname)) return 'public'
+  if (CRON_PATHS.has(pathname)) return 'cron'
   const match = /^\/share\/([^/]+)(\/.*)?$/.exec(pathname)
   if (match && SHARE_TOKEN_PATTERN.test(match[1] ?? '')) return 'share'
   return 'protected'

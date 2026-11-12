@@ -149,6 +149,21 @@ describe('proxy', () => {
     expect(proxy(req('/api/auth/logout', { method: 'POST' })).status).toBe(401)
   })
 
+  it('lets Vercel Cron reach the cron route without a cookie, GET or POST (no Origin), marked noindex', () => {
+    for (const method of ['GET', 'POST']) {
+      const res = proxy(req('/api/cron/backups', { method, headers: { authorization: 'Bearer anything', 'user-agent': 'vercel-cron/1.0' } }))
+      expect(res.status, method).toBe(200)
+      expect(getRedirectUrl(res)).toBeNull()
+      expect(res.headers.get('x-robots-tag')).toContain('noindex')
+      expect(setCookies(res)).toEqual([])
+    }
+    // The route checks the secret itself; the proxy still refuses a cross-site change there, as everywhere.
+    expect(proxy(req('/api/cron/backups', { method: 'POST', headers: { origin: 'https://evil.example' } })).status).toBe(403)
+    // Only that exact path.
+    expect(proxy(req('/api/cron/backups/x')).status).toBe(401)
+    expect(proxy(req('/api/cron')).status).toBe(401)
+  })
+
   it('tells the browser never to pass a share, invite or reset address on', () => {
     for (const path of [`/share/${TOKEN}`, `/share/${TOKEN}/data`, '/invite', '/reset']) {
       expect(proxy(req(path)).headers.get('referrer-policy'), path).toBe('no-referrer')
