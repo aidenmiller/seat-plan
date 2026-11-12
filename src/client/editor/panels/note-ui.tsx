@@ -7,6 +7,7 @@
  * its color.
  */
 import type { ReactElement } from 'react'
+import { BrandIcon, type BrandIconName } from '@/client/ui/icons/brand'
 import { NOTE_COLOR_PRESETS, NOTE_COLORS, type NoteColor, type NoteType } from '@/domain/notes'
 
 export type NoteGlyph = NoteType | 'eye' | 'eyeOff' | 'lock' | 'lockOpen'
@@ -54,8 +55,23 @@ const GLYPHS: Record<NoteGlyph, () => ReactElement> = {
   ),
 }
 
+/** The brand icon for a note glyph where the brand set has a clear match. */
+const BRAND_NOTE_ICONS: Partial<Record<NoteGlyph, BrandIconName>> = {
+  sticky: 'sticky-note',
+  text: 'text',
+  arrow: 'arrow',
+  line: 'line',
+  box: 'box',
+  circle: 'circle',
+  eye: 'view-mode',
+  lock: 'lock',
+  lockOpen: 'unlock',
+}
+
 /** A note glyph as line art in the text color (or `color`), sized by `className`. */
 export function NoteIcon({ name, className = 'h-5 w-5', color }: { name: NoteGlyph; className?: string; color?: string }) {
+  const brand = BRAND_NOTE_ICONS[name]
+  if (brand) return <BrandIcon name={brand} className={className} color={color} />
   return (
     <svg
       aria-hidden="true"

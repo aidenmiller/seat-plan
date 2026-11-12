@@ -9,6 +9,7 @@
 import type { ReactElement } from 'react'
 import { useEffect, useRef } from 'react'
 import { Icon } from '@/client/editor/icons/glyphs'
+import { BrandIcon } from '@/client/ui/icons/brand'
 import type { DrawKind } from '@/domain/template-commands'
 import { useTemplateEditor, useTemplateUi } from './react'
 import { sameTool, type TemplateTool } from './ui-store'
@@ -63,25 +64,25 @@ export function toolDef(tool: TemplateTool): ToolDef | null {
 
 const GLYPHS: Record<string, () => ReactElement> = {
   select: () => <Icon name="select" className="h-5 w-5" />,
-  hand: () => <path d="M8 13V6a1.5 1.5 0 0 1 3 0v5V4.5a1.5 1.5 0 0 1 3 0V11V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-1a5 5 0 0 1-4-2l-3-4a1.5 1.5 0 0 1 2.3-1.9L8 13" />,
+  hand: () => <BrandIcon name="pan" />,
   wall: () => <Icon name="wall" className="h-5 w-5" />,
   room: () => <Icon name="room" className="h-5 w-5" />,
   zone: () => <rect x={4} y={5} width={16} height={14} rx={1} strokeDasharray="3 2.5" />,
   patioEdge: () => <path d="M3 17l6-8 6 4 6-7" strokeDasharray="3 2.5" />,
   door: () => <Icon name="door" className="h-5 w-5" />,
   window: () => <Icon name="window" className="h-5 w-5" />,
-  column: () => <rect x={7} y={7} width={10} height={10} />,
+  column: () => <BrandIcon name="column" />,
   roundColumn: () => <circle cx={12} cy={12} r={5.5} />,
   stairs: () => <path d="M5 5h14v14H5zM9 5v14M13 5v14M17 5v14" />,
-  bar: () => <rect x={3} y={9} width={18} height={6} rx={2} />,
-  label: () => <path d="M6 6h12M12 6v13M9.5 19h5" />,
+  bar: () => <BrandIcon name="bar" />,
+  label: () => <BrandIcon name="text" />,
 }
 
 function ToolGlyph({ id }: { id: string }) {
   const g = GLYPHS[id]
   if (!g) return null
   const el = g()
-  if (el.type === Icon) return el
+  if (el.type === Icon || el.type === BrandIcon) return el
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
       {el}
