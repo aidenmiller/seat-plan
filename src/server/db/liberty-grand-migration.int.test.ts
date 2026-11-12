@@ -22,7 +22,7 @@ const spec = JSON.parse(readFileSync(path.resolve(root, 'scripts/venue-templates
   name: string
   fixedItems: unknown[]
 }
-const NAME = "Liberty Grand – Governor's Room (approximate)"
+const NAME = "Liberty Grand – Governor's Room"
 
 async function runMigration() {
   for (const statement of statements) await pool.query(statement)
