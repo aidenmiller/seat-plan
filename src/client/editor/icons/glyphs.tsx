@@ -7,6 +7,7 @@
 import type { ReactElement } from 'react'
 import type { Fixture } from '@/domain/canvas-schema'
 import type { PresetId } from '@/domain/presets'
+import { BrandIcon, type BrandIconName } from '@/client/ui/icons/brand'
 
 export type GlyphName =
   | Fixture['type']
@@ -333,8 +334,45 @@ export function presetGlyph(id: PresetId): GlyphName {
   }
 }
 
-/** A glyph as a page icon: line art in the text color, sized by `className`. */
+/**
+ * The brand icon for a glyph where the brand set has a clear match. The page's
+ * buttons and panels draw these; the canvas keeps drawing the glyphs above.
+ */
+const BRAND_ICONS: Partial<Record<GlyphName, BrandIconName>> = {
+  food: 'food',
+  bar: 'bar',
+  dj: 'dj',
+  danceFloor: 'dance-floor',
+  stage: 'stage',
+  cake: 'cake',
+  gifts: 'gifts',
+  photoBooth: 'photo-booth',
+  ceremonyStructure: 'ceremony-arch',
+  tableRound: 'table-round',
+  tableSquare: 'table-square',
+  tableRect: 'table-rect',
+  tableHead: 'table-head',
+  tableSweetheart: 'table-sweetheart',
+  chairRow: 'chair-row',
+  shapeRect: 'box',
+  shapeEllipse: 'circle',
+  shapeLine: 'line',
+  shapeText: 'text',
+  wall: 'wall',
+  door: 'door',
+  window: 'window',
+  undo: 'undo',
+  redo: 'redo',
+  plus: 'zoom-in',
+  minus: 'zoom-out',
+  fit: 'fit-screen',
+  lock: 'lock',
+}
+
+/** A glyph as a page icon: the brand icon where there is one, else line art in the text color, sized by `className`. */
 export function Icon({ name, className = 'h-5 w-5' }: { name: GlyphName; className?: string }) {
+  const brand = BRAND_ICONS[name]
+  if (brand) return <BrandIcon name={brand} className={className} />
   return (
     <svg
       aria-hidden="true"

@@ -8,6 +8,7 @@
  * involved and pans to them.
  */
 import { crossingLine } from '@/domain/template-import'
+import { BrandIcon } from '@/client/ui/icons/brand'
 import type { EditorProblem } from '@/domain/problems'
 import { useAnalysis } from '../problems/analysis'
 import { useEditorState } from '../state/react'
@@ -75,10 +76,7 @@ function Line({ entry, onGo }: { entry: EditorProblem; onGo(e: EditorProblem): v
       data-testid={entry.kind === 'wall' ? 'wall-problem' : problem ? 'problem-item' : 'warning-item'}
       data-problem-id={entry.id}
     >
-      <svg aria-hidden="true" viewBox="0 0 20 20" className="mt-0.5 h-5 w-5 shrink-0">
-        <circle cx={10} cy={10} r={9} fill={problem ? '#dc2626' : '#eab308'} />
-        <path d="M10 5v6M10 14.5v.5" stroke="#ffffff" strokeWidth={2.2} strokeLinecap="round" />
-      </svg>
+      <BrandIcon name="warning" className={`mt-0.5 h-5 w-5 shrink-0 ${problem ? 'text-red-700' : 'text-amber-700'}`} />
       {entry.kind === 'wall' ? (
         <span>{crossingLine(entry.title)}</span>
       ) : (

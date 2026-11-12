@@ -6,6 +6,7 @@ import { updateWedding } from '@/client/api'
 import { InlineName } from '@/client/ui/InlineName'
 import { useCanManageWedding } from '@/client/wedding-access'
 import { secondaryButton } from '@/client/ui/styles'
+import { BrandIcon } from '@/client/ui/icons/brand'
 import { formatWeddingDate } from '@/domain/wording'
 import type { WeddingSummary } from '@/shared/api'
 import { WeddingSettingsDialog } from './WeddingSettingsDialog'
@@ -56,13 +57,7 @@ export function WeddingHeader({ wedding: fromPage }: { wedding: WeddingSummary }
       {canManage && (
         <>
           <button type="button" className={secondaryButton} onClick={() => setSettingsOpen(true)}>
-            <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <circle cx="10" cy="10" r="2.5" />
-              <path
-                d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"
-                strokeLinecap="round"
-              />
-            </svg>
+            <BrandIcon name="settings" />
             Settings
           </button>
           <WeddingSettingsDialog
