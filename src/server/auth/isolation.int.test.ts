@@ -38,6 +38,7 @@ import { createGroupBody, createRuleBody } from '@/shared/api'
 import { restoredId, restoredWeddingId, startRestore } from '../backup'
 import {
   activityEvents,
+  backups,
   groupMembers,
   groups,
   guests,
@@ -396,6 +397,9 @@ async function snapshot(w: World) {
       .orderBy(asc(venueTemplateRevisions.id)),
     // The copy of A's template a restore step of A's job would make.
     jobTemplates: await db.select({ id: venueTemplates.id }).from(venueTemplates).where(eq(venueTemplates.id, restoredId(w.jobId, w.template))),
+    // ---- Stored backups (mu-p9-backups): A's stored backups, checked_at included (a run that finds W_A unchanged moves it).
+    storedBackups: await db.select().from(backups).where(inArray(backups.weddingId, ids)).orderBy(asc(backups.id)),
+    // ---- End of stored backups
   }
 }
 

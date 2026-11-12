@@ -48,7 +48,6 @@ const PUBLIC_ROUTES = new Set([
  *  - 'wedding:<least role>:<resolver>': a member of the wedding the resolver
  *    finds, with at least that role (an admin always; logged);
  *  - 'venue:<mode>': venue template access (venue-access.ts);
- *  - 'admin': admins only (404 to anyone else signed in);
  *  - 'cron': Vercel Cron's bearer secret, and nothing else (withCronSecret).
  */
 const EXPECTED_POLICY: Record<string, Partial<Record<(typeof METHODS)[number], string>>> = {
