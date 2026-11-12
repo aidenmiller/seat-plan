@@ -74,7 +74,9 @@ export default defineConfig({
   ],
   webServer: {
     command: process.env.E2E_SKIP_BUILD ? `npx next start -p ${PORT}` : `npx next build && npx next start -p ${PORT}`,
-    url: `http://localhost:${PORT}/login`,
+    // Ready when a page that needs no database answers. The sign-in page reads the accounts table, which a
+    // brand-new database (CI) does not have until global setup has migrated it, and that runs after this check.
+    url: `http://localhost:${PORT}/robots.txt`,
     timeout: 300_000,
     reuseExistingServer: false,
     stdout: 'ignore',
