@@ -42,6 +42,66 @@ export function openKeyvalStore(dbName: string, storeName: string): UseStore {
   return (txMode, callback) => getDB().then((db) => callback(db.transaction(storeName, txMode).objectStore(storeName)))
 }
 
+/**
+ * Opens a database only if it already exists; null when there is none (the
+ * upgrade that would create it is aborted, so looking never makes one). The
+ * connection closes itself when another page asks to delete or upgrade the
+ * database; the caller closes it when done.
+ */
+export function openExistingDatabase(name: string): Promise<IDBDatabase | null> {
+  return new Promise((resolve, reject) => {
+    let request: IDBOpenDBRequest
+    try {
+      request = indexedDB.open(name)
+    } catch (error) {
+      reject(error)
+      return
+    }
+    let missing = false
+    request.onupgradeneeded = (event) => {
+      if (event.oldVersion === 0) {
+        missing = true
+        request.transaction?.abort()
+      }
+    }
+    request.onerror = (event) => {
+      event.preventDefault()
+      if (missing) resolve(null)
+      else reject(request.error)
+    }
+    request.onsuccess = () => {
+      const db = request.result
+      db.onversionchange = () => db.close()
+      resolve(db)
+    }
+  })
+}
+
+export type StoredEntry = { key: IDBValidKey; value: unknown }
+
+/** Every key and value in one store of an open database. */
+export function readAllEntries(db: IDBDatabase, storeName: string): Promise<StoredEntry[]> {
+  const store = db.transaction(storeName, 'readonly').objectStore(storeName)
+  return Promise.all([promisifyRequest(store.getAllKeys()), promisifyRequest(store.getAll())]).then(([keys, values]) =>
+    keys.map((key, i) => ({ key, value: values[i] })),
+  )
+}
+
+/**
+ * Every entry of a database's store, without making the database: [] when the
+ * database or its store does not exist. Rejects when the database is there but
+ * cannot be read.
+ */
+export async function readExistingStore(dbName: string, storeName: string): Promise<StoredEntry[]> {
+  const db = await openExistingDatabase(dbName)
+  if (!db) return []
+  try {
+    return db.objectStoreNames.contains(storeName) ? await readAllEntries(db, storeName) : []
+  } finally {
+    db.close()
+  }
+}
+
 export type DeleteOutcome = 'deleted' | 'blocked' | 'failed' | 'timeout'
 
 /**
