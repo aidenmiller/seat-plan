@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { useState, type FormEvent } from 'react'
 import { backupUrl, errorMessage, updateWedding } from '@/client/api'
+import { SavedBackups } from '@/client/backups/SavedBackups'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { ChoiceGroup, TextField, UNIT_CHOICES } from '@/client/ui/fields'
 import { PartnerNameFields } from '@/client/ui/PartnerNameFields'
@@ -179,6 +180,7 @@ function SettingsForm({
           Download backup
         </a>
       </div>
+      <SavedBackups weddingId={wedding.id} />
       {error && (
         <p role="alert" className={errorClass}>
           {error}
