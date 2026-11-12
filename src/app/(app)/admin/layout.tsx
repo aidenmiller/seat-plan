@@ -7,7 +7,7 @@ import { requireAdminPage } from '@/server/auth/pages'
  * the tabs from showing to anyone else, who get the 404 page.
  */
 export default async function AdminLayout({ children }: LayoutProps<'/admin'>) {
-  await requireAdminPage('/admin/users')
+  await requireAdminPage('/admin')
   return (
     <div className="flex flex-1 flex-col">
       <div className="border-b border-stone-200 bg-white">

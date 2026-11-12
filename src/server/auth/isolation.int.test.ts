@@ -1033,6 +1033,71 @@ const ROWS: Record<string, Partial<Record<Method, Row>>> = {
     ),
   },
   // ---- End of stored backups
+  // ---- Admin statistics and actions (milestone 8): begin ----
+  // B and E try them on A's wedding and template, for themselves; the admin works on a wedding or venue of its own.
+  'api/admin/weddings/[id]/undelete/route.ts': {
+    POST: adminOnly(
+      (w) => [id(w.weddingA), id(w.ownerless)],
+      async (_w, call) => {
+        const gone = await makeWeddingFor(db, userA.id, 'Deleted by mistake')
+        await db.update(weddings).set({ deletedAt: new Date() }).where(eq(weddings.id, gone))
+        expect(await call(id(gone))).toMatchObject({ status: 200, body: { id: gone, deletedAt: null, members: [{ userId: userA.id, role: 'owner' }] } })
+        const [row] = await db.select({ deletedAt: weddings.deletedAt }).from(weddings).where(eq(weddings.id, gone))
+        expect(row!.deletedAt).toBeNull()
+      },
+    ),
+  },
+  'api/admin/weddings/[id]/members/route.ts': {
+    POST: adminOnly(
+      (w) => [
+        { ...id(w.weddingA), body: { userId: userB.id, role: 'owner' } },
+        { ...id(w.weddingA), body: { userId: userE.id, role: 'owner' } },
+      ],
+      async (_w, call) => {
+        const wedding = await makeWeddingFor(db, userA.id, 'Admin adds')
+        const someone = await makeUser(db, { displayName: 'Newcomer' })
+        expect(await call({ ...id(wedding), body: { userId: someone.id, role: 'editor' } })).toMatchObject({ status: 201, body: { userId: someone.id, role: 'editor' } })
+        expect(await roleIn(wedding, someone.id)).toBe('editor')
+        expect(await call({ ...id(wedding), body: { userId: someone.id, role: 'owner' } })).toMatchObject({ status: 409, body: { error: 'already_member' } })
+        expect(await roleIn(wedding, someone.id)).toBe('editor')
+      },
+    ),
+  },
+  'api/admin/weddings/[id]/transfer/route.ts': {
+    POST: adminOnly(
+      (w) => [
+        { ...id(w.weddingA), body: { toUserId: userB.id, keepPreviousAsEditors: true } },
+        { ...id(w.weddingA), body: { toUserId: userE.id, keepPreviousAsEditors: true } },
+      ],
+      async (_w, call) => {
+        const wedding = await makeWeddingFor(db, userA.id, 'Changing hands')
+        const heir = await makeUser(db, { displayName: 'Heir' })
+        const res = await call({ ...id(wedding), body: { toUserId: heir.id, keepPreviousAsEditors: true } })
+        expect(res.status, res.text).toBe(200)
+        expect(await roleIn(wedding, heir.id)).toBe('owner')
+        expect(await roleIn(wedding, userA.id)).toBe('editor')
+      },
+    ),
+  },
+  'api/admin/venues/[id]/route.ts': {
+    PATCH: adminOnly(
+      (w) => [
+        { ...id(w.template), body: { library: true } },
+        { ...id(w.template), body: { ownerUserId: userB.id } },
+      ],
+      async (_w, call) => {
+        const made = await createTemplate(db, { name: 'Admin hall' }, { userId: userA.id, isAdmin: false }, { userId: userA.id, name: 'Ada' })
+        if (made.status !== 'created') throw new Error(made.status)
+        const hall = made.venue.id
+        expect(await call({ ...id(hall), body: { library: true } })).toMatchObject({ status: 200, body: { status: 'library', owner: { id: userA.id } } })
+        expect(await call({ ...id(hall), body: { ownerUserId: null } })).toMatchObject({ status: 200, body: { status: 'library', owner: null } })
+        // Out of the library, it needs an owner first.
+        expect(await call({ ...id(hall), body: { library: false } })).toMatchObject({ status: 409, body: { error: 'needs_owner' } })
+        expect(await call({ ...id(hall), body: { library: false, ownerUserId: userB.id } })).toMatchObject({ status: 200, body: { status: 'private', owner: { id: userB.id } } })
+      },
+    ),
+  },
+  // ---- Admin statistics and actions (milestone 8): end ----
 }
 
 // ---- Stored backups (mu-p9-backups)

@@ -495,6 +495,9 @@ export type FloorplanImportErrorCode =
 export type ImportNotConfigured = { error: 'not_configured'; message: string }
 export const IMPORT_NOT_CONFIGURED_MESSAGE = 'The floor plan import needs ANTHROPIC_API_KEY set on the server.'
 
+/** 429 from the import route when the planner has used their AI imports for the last 30 days (AI_IMPORT_MONTHLY_LIMIT). */
+export type ImportLimitReached = { error: 'import_limit'; message: string; used: number; limit: number }
+
 // ---------- Guests ----------
 
 /** Sides are positions ('partner1', 'partner2', 'both'); the wedding's names label them (domain/partners). */

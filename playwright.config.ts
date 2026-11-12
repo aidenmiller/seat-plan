@@ -90,6 +90,8 @@ export default defineConfig({
       FLOORPLAN_MODEL: '',
       CRON_SECRET: process.env.E2E_CRON_SECRET,
       BACKUP_STORE_DIR: process.env.E2E_BACKUP_STORE_DIR,
+      // The tests import many plans as the same planners; the cap itself is tested in import-quota.int.test.ts.
+      AI_IMPORT_MONTHLY_LIMIT: '1000',
     },
   },
 })

@@ -77,6 +77,12 @@ const EXPECTED_POLICY: Record<string, Partial<Record<(typeof METHODS)[number], s
   'api/admin/invites/[id]/route.ts': { DELETE: 'admin' },
   'api/admin/weddings/route.ts': { GET: 'admin' },
   'api/admin/weddings/[id]/claim/route.ts': { POST: 'admin' },
+  // ---- Admin statistics and actions (milestone 8): begin ----
+  'api/admin/weddings/[id]/undelete/route.ts': { POST: 'admin' },
+  'api/admin/weddings/[id]/members/route.ts': { POST: 'admin' },
+  'api/admin/weddings/[id]/transfer/route.ts': { POST: 'admin' },
+  'api/admin/venues/[id]/route.ts': { PATCH: 'admin' },
+  // ---- Admin statistics and actions (milestone 8): end ----
 
   'api/weddings/route.ts': { GET: 'user', POST: 'user' },
   'api/weddings/[id]/route.ts': { GET: 'wedding:editor:byWeddingId', PATCH: 'wedding:owner:byWeddingId', DELETE: 'wedding:owner:byWeddingId' },
