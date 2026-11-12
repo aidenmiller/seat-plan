@@ -273,8 +273,9 @@ async function orderedCandidates(db: Db, storeId: string, runId: string, wedding
  * checked_at moves to now and it is answered 'unchanged'. A final backup is
  * always made, changed or not: it marks the deletion and is kept a year.
  *
- * Images go up first, each once ever (backup_images, by sha256, overwrite
- * allowed since the bytes are the same), then the gzipped head, then its row.
+ * Images go up first, each once per store (backup_images, by sha256,
+ * overwrite allowed since the bytes are the same), then the gzipped head,
+ * then its row.
  * If the row cannot be written after the upload, the file is deleted again;
  * if that delete fails too the file stays as an orphan nothing names, which
  * is harmless (it is small and never read) and accepted.
@@ -318,7 +319,8 @@ export async function backupOneWedding(
         )
   const missing = wanted.filter((image) => !known.has(image.sha256))
 
-  // Every upload of the last 30 days still has its row: pruning never deletes a backup that young, nor an image one names.
+  // Counted from the rows: pruning never deletes a backup younger than 30 days, nor an image one names. (An image
+  // uploaded for a backup whose row then failed can be pruned a day later, so the count can run a little low.)
   const budget = opts.uploadBudget ?? UPLOAD_BUDGET_30_DAYS
   const used = await uploadsLast30Days(db)
   if (used + missing.length + 1 > budget) {
