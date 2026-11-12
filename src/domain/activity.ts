@@ -128,6 +128,7 @@ const KIND_LABELS: Record<string, string> = {
   member_removed: 'Took someone out',
   user_disabled: 'Turned an account off',
   user_enabled: 'Turned an account on',
+  user_admin_changed: 'Changed someone’s admin access',
   wedding_created: 'Made the wedding',
   wedding_deleted: 'Deleted the wedding',
   wedding_restored: 'Restored it from a backup',
@@ -150,6 +151,7 @@ const KIND_LABELS: Record<string, string> = {
 
 export function activityLabel(kind: string, detail: Record<string, unknown> = {}): string {
   if (kind === 'admin_access' && detail.write === true) return 'Changed it as an admin'
+  if (kind === 'user_admin_changed' && typeof detail.admin === 'boolean') return detail.admin ? 'Made someone an admin' : 'Removed someone’s admin access'
   return KIND_LABELS[kind] ?? kind
 }
 

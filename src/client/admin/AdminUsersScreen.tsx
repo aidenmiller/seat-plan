@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, type ReactNode } from 'react'
-import { createPlannerInvite, createResetLink, revokePlannerInvite, setUserDisabled, signOutUser } from '@/client/accounts-api'
+import { createPlannerInvite, createResetLink, revokePlannerInvite, setUserAdmin, setUserDisabled, signOutUser } from '@/client/accounts-api'
 import { InviteDialog } from '@/client/accounts/InviteDialog'
 import { OneTimeLink } from '@/client/accounts/OneTimeLink'
 import { PendingInvites } from '@/client/accounts/PendingInvites'
@@ -13,7 +13,7 @@ import { dangerButton, errorClass, primaryButton, secondaryButton } from '@/clie
 import type { AdminUser, CreatedResetLink, InviteSummary } from '@/shared/accounts-api'
 import type { AdminPersonStats } from '@/shared/admin-api'
 
-type Action = { kind: 'disable' | 'sign-out' | 'reset'; user: AdminUser }
+type Action = { kind: 'disable' | 'sign-out' | 'reset' | 'make-admin' | 'remove-admin'; user: AdminUser }
 
 const cell = 'border-b border-stone-200 px-3 py-2 align-middle'
 const head = 'border-b border-stone-200 px-3 py-2 font-semibold'
@@ -39,6 +39,7 @@ function Weddings({ stats }: { stats: AdminPersonStats | undefined }) {
  * with, their edits in the last 7 and 30 days (the hourly usage counters, so
  * saves and other changes, not keystrokes) and their AI floor plan imports in
  * the last 30 days. Turn an account off (it is signed out at once) or back on,
+ * make someone an admin or remove that (not your own),
  * make a reset link (shown once), sign someone out everywhere, and invite a
  * new planner. Your own account can only be given a reset link here: the
  * account page changes your password and signs out your other devices.
@@ -159,6 +160,16 @@ export function AdminUsersScreen({
                         <button type="button" className={smallButton} disabled={busy} onClick={() => setAction({ kind: 'reset', user })}>
                           Reset link
                         </button>
+                        {!me && user.isAdmin && (
+                          <button type="button" className={smallButton} disabled={busy} onClick={() => setAction({ kind: 'remove-admin', user })}>
+                            Remove admin
+                          </button>
+                        )}
+                        {!user.isAdmin && !user.disabled && (
+                          <button type="button" className={smallButton} disabled={busy} onClick={() => setAction({ kind: 'make-admin', user })}>
+                            Make admin
+                          </button>
+                        )}
                         {!me && (
                           <button type="button" className={smallButton} disabled={busy} onClick={() => setAction({ kind: 'sign-out', user })}>
                             Sign out everywhere
@@ -221,6 +232,30 @@ export function AdminUsersScreen({
           run={async () => {
             const { ended } = await signOutUser(action.user.id)
             return ended === 1 ? 'Signed out of 1 device.' : `Signed out of ${ended} devices.`
+          }}
+        />
+      )}
+      {action?.kind === 'make-admin' && (
+        <ConfirmAction
+          title={`Make ${action.user.displayName} an admin?`}
+          description={`${action.user.displayName} will be able to see and change every wedding and every account.`}
+          action="Make admin"
+          onClose={() => setAction(null)}
+          run={async () => {
+            replace(await setUserAdmin(action.user.id, true))
+            return null
+          }}
+        />
+      )}
+      {action?.kind === 'remove-admin' && (
+        <ConfirmAction
+          title={`Remove ${action.user.displayName} as an admin?`}
+          description={`${action.user.displayName} will no longer be able to see and change every wedding and every account. Weddings they belong to stay as they are.`}
+          action="Remove admin"
+          onClose={() => setAction(null)}
+          run={async () => {
+            replace(await setUserAdmin(action.user.id, false))
+            return null
           }}
         />
       )}

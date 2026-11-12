@@ -97,6 +97,9 @@ describe('words', () => {
   it('names each kind, and an admin’s change apart from a look', () => {
     expect(activityLabel('write.layout')).toBe('Layout edits')
     expect(activityLabel('admin_access', { write: false })).toBe('Opened it as an admin')
+    expect(activityLabel('user_admin_changed', { admin: true })).toBe('Made someone an admin')
+    expect(activityLabel('user_admin_changed', { admin: false })).toBe('Removed someone’s admin access')
+    expect(activityLabel('user_admin_changed')).toBe('Changed someone’s admin access')
     expect(activityLabel('admin_access', { write: true })).toBe('Changed it as an admin')
     expect(activityLabel('something_new')).toBe('something_new')
     for (const k of WRITE_KINDS) expect(activityLabel(k)).not.toBe(k)

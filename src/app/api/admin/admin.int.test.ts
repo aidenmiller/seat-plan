@@ -147,6 +147,60 @@ describe('users', () => {
     expect((await callRoute(user, 'PATCH', { cookie: admin.cookie, params: { id: planner.id }, body: { disabled: 'yes' } })).status).toBe(422)
   })
 
+  it('makes someone an admin and removes that, with the guards and a logged event', async () => {
+    const { user, users } = await routes()
+    const { setUserAdmin } = await import('@/server/repo/users')
+    const pat = await person()
+    const make = await callRoute(user, 'PATCH', { cookie: admin.cookie, params: { id: pat.id }, body: { admin: true } })
+    expect(make).toMatchObject({ status: 200, body: { id: pat.id, isAdmin: true } })
+    // The new admin can use the admin routes at once.
+    expect((await callRoute(users, 'GET', { cookie: pat.cookie })).status).toBe(200)
+    // Making an admin an admin again changes nothing and is fine.
+    expect((await callRoute(user, 'PATCH', { cookie: admin.cookie, params: { id: pat.id }, body: { admin: true } })).status).toBe(200)
+
+    // Not your own flag, even with another admin around.
+    expect(await callRoute(user, 'PATCH', { cookie: pat.cookie, params: { id: pat.id }, body: { admin: false } })).toMatchObject({
+      status: 409,
+      body: { error: 'self' },
+    })
+    // An admin can remove another admin's flag, and the demoted one loses the admin routes at once.
+    const boss = await person({ isAdmin: true })
+    expect(await callRoute(user, 'PATCH', { cookie: pat.cookie, params: { id: boss.id }, body: { admin: false } })).toMatchObject({
+      status: 200,
+      body: { id: boss.id, isAdmin: false },
+    })
+    expect((await callRoute(users, 'GET', { cookie: boss.cookie })).status).toBe(404)
+
+    const removed = await callRoute(user, 'PATCH', { cookie: admin.cookie, params: { id: pat.id }, body: { admin: false } })
+    expect(removed).toMatchObject({ status: 200, body: { id: pat.id, isAdmin: false } })
+    expect((await callRoute(users, 'GET', { cookie: pat.cookie })).status).toBe(404)
+
+    // A turned-off account cannot be made an admin; the flag can still be taken from one.
+    const off = await person()
+    await callRoute(user, 'PATCH', { cookie: admin.cookie, params: { id: off.id }, body: { disabled: true } })
+    expect(await callRoute(user, 'PATCH', { cookie: admin.cookie, params: { id: off.id }, body: { admin: true } })).toMatchObject({
+      status: 409,
+      body: { error: 'user_disabled' },
+    })
+    // The last admin who is on cannot be demoted (reached directly: the route's own self rule hides it from an admin).
+    const lone = await person({ isAdmin: true })
+    const others = await (await db()).execute<{ id: string }>(sql`update users set is_admin = false where id <> ${lone.id} and is_admin = true returning id`)
+    expect(await setUserAdmin(await db(), planner.id, lone.id, false)).toBe('last-admin')
+    expect(await setUserAdmin(await db(), planner.id, randomUUID(), true)).toBe('not-found')
+    for (const row of others.rows) await (await db()).execute(sql`update users set is_admin = true where id = ${row.id}`)
+
+    expect((await callRoute(user, 'PATCH', { cookie: admin.cookie, params: { id: pat.id }, body: {} })).status).toBe(422)
+    expect((await callRoute(user, 'PATCH', { cookie: admin.cookie, params: { id: pat.id }, body: { admin: true, disabled: true } })).status).toBe(422)
+    expect((await callRoute(user, 'PATCH', { cookie: admin.cookie, params: { id: pat.id }, body: { admin: 'yes' } })).status).toBe(422)
+    expect((await callRoute(user, 'PATCH', { cookie: admin.cookie, params: { id: randomUUID() }, body: { admin: true } })).status).toBe(404)
+
+    const events = await (await db())
+      .select({ kind: activityEvents.kind, userId: activityEvents.userId, detail: activityEvents.detail })
+      .from(activityEvents)
+      .where(eq(activityEvents.subjectId, pat.id))
+    expect(events.filter((e) => e.kind === 'user_admin_changed').map((e) => e.detail)).toEqual(expect.arrayContaining([{ admin: true }, { admin: false }]))
+  })
+
   it('signs someone out everywhere, but not yourself', async () => {
     const { signOut } = await routes()
     const pat = await person()

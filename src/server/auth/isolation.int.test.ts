@@ -924,7 +924,13 @@ const ROWS: Record<string, Partial<Record<Method, Row>>> = {
   },
   'api/admin/users/[id]/route.ts': {
     PATCH: adminOnly(
-      () => [{ ...id(userA.id), body: { disabled: true } }],
+      // Including B and E trying to make themselves admins: the accounts (isAdmin included) must come out unchanged.
+      () => [
+        { ...id(userA.id), body: { disabled: true } },
+        { ...id(userB.id), body: { admin: true } },
+        { ...id(userE.id), body: { admin: true } },
+        { ...id(userA.id), body: { admin: true } },
+      ],
       async (_w, call) => {
         const someone = await makeUser(db, { displayName: 'Temp' })
         expect(await call({ ...id(someone.id), body: { disabled: true } })).toMatchObject({ status: 200, body: { id: someone.id, disabled: true } })

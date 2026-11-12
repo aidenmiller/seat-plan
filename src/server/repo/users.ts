@@ -211,6 +211,35 @@ export async function setUserDisabled(db: Db, actorId: string, userId: string, d
   })
 }
 
+export type SetAdminResult = 'ok' | 'self' | 'last-admin' | 'disabled' | 'not-found'
+
+/**
+ * Makes an account an admin, or takes that away. Nobody can remove their own
+ * admin flag, the last admin who is still on cannot be demoted, and an account
+ * that is turned off cannot be made an admin. Setting a flag that is already
+ * set is fine and changes nothing. Demoting needs no session change: every
+ * request reads the flag from the database.
+ */
+export async function setUserAdmin(db: Db, actorId: string, userId: string, admin: boolean): Promise<SetAdminResult> {
+  if (!admin && actorId === userId) return 'self'
+  return db.transaction(async (tx): Promise<SetAdminResult> => {
+    // Lock every admin and the target, in id order, so two changes at once queue up and the second
+    // sees the first one's result (as setUserDisabled does).
+    const rows = await tx
+      .select({ id: users.id, isAdmin: users.isAdmin, disabledAt: users.disabledAt })
+      .from(users)
+      .where(sql`${users.isAdmin} = true or ${users.id} = ${userId}`)
+      .orderBy(asc(users.id))
+      .for('update')
+    const target = rows.find((r) => r.id === userId)
+    if (!target) return 'not-found'
+    if (admin && target.disabledAt) return 'disabled'
+    if (!admin && target.isAdmin && !target.disabledAt && !rows.some((r) => r.id !== userId && r.isAdmin && !r.disabledAt)) return 'last-admin'
+    await tx.update(users).set({ isAdmin: admin }).where(eq(users.id, userId))
+    return 'ok'
+  })
+}
+
 export async function countUsers(db: Conn): Promise<number> {
   const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(users)
   return Number(row?.n ?? 0)

@@ -153,7 +153,7 @@ function AddToGroupForm({
             onChange={(e) => setName(e.target.value)}
             maxLength={100}
             autoComplete="off"
-            placeholder="Aiden HS Friends"
+            placeholder="e.g. College friends"
             className={`${inputClass} mt-1`}
             data-testid="new-group-name"
           />

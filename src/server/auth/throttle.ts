@@ -113,9 +113,13 @@ async function countAttempt(db: AnyDb, scope: string, ipKey: string, windowMinut
 /**
  * Counts this attempt and says whether it may go ahead. Call before comparing.
  *
- * `scopeWide: false` skips the all-addresses count. Account sign-in uses it:
- * there, a count across every address would let anyone lock every user (or,
- * per account, any one user) out just by guessing.
+ * `scopeWide: false` skips the all-addresses count for that scope. Sign-in uses
+ * it for the per-address counter (`login-ip`), which already spans every
+ * account. The per-account counter keeps the all-addresses count on purpose:
+ * it limits password guessing spread across many addresses. The cost is that
+ * about SCOPE_LIMIT wrong tries an hour, from anywhere, against a known email
+ * block new sign-ins to that account for BLOCK_MINUTES (existing sessions keep
+ * working). DECISIONS.md 140 records the trade-off.
  */
 export async function beginAttempt(
   db: AnyDb,

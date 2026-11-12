@@ -117,14 +117,14 @@ describe('guest CSV import', () => {
     const first = await preview(w, { rows })
     expect(first.plan.counts).toEqual({ new: 10, changed: 0, unchanged: 0, needsReview: 0, missing: 0 })
     expect(first.plan.groupsToCreate).toEqual([
-      'Noa Family',
-      'Noa Cousins',
-      'Aiden HS Friends',
+      'Partner 1 family',
+      'Partner 1 cousins',
+      'College friends',
       'Book Club',
       'Work Friends',
-      'Aiden Family',
-      'Noa College',
-      'Aiden Cousins',
+      'Partner 2 family',
+      'Partner 1 college',
+      'Partner 2 cousins',
     ])
     expect(first.plan.partnerLinks.map((l) => [l.aName, l.bName])).toEqual([
       ['Zoë Kowalczyk', 'Łukasz Kowalczyk'],
@@ -166,7 +166,7 @@ describe('guest CSV import', () => {
     const groupList = (await call(groups, 'GET', w)).body as { name: string; color: string; memberIds: string[] }[]
     expect(groupList).toHaveLength(8)
     expect(new Set(groupList.map((g) => g.color))).toEqual(new Set(GROUP_COLORS))
-    expect(groupList.find((g) => g.name === 'Noa Family')!.memberIds).toHaveLength(3)
+    expect(groupList.find((g) => g.name === 'Partner 1 family')!.memberIds).toHaveLength(3)
 
     // The same file again: nothing new, nothing changed, nobody missing.
     const second = await preview(w, { rows: rowsOf(SAMPLE_CSV_FILE) })

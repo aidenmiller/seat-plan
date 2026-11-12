@@ -1,7 +1,7 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  // Cache Components stays off: every page sits behind the password and reads
+  // Cache Components stays off: every page sits behind sign-in and reads
   // fresh data, so there is nothing to cache (DECISIONS.md).
   poweredByHeader: false,
   turbopack: {

@@ -43,7 +43,9 @@ function tooManyAttempts(retryAfterSeconds: number): Response {
  *
  * Every try is counted before any password work (PLAN change 23), twice: by
  * this address across every account (`login-ip`), and by the account
- * (`login:<keyed email>`: per address, and across all addresses). Then the
+ * (`login:<keyed email>`: per address, and across all addresses together, so
+ * enough wrong tries from anywhere can block new sign-ins to one account for a
+ * short while: DECISIONS.md 140). Then the
  * password is checked, against a dummy hash for an unknown email, and a
  * disabled account is refused only after that check, so neither shows in the
  * reply or its timing. Every failure gets the same answer after about a

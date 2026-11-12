@@ -1,7 +1,8 @@
 import 'server-only'
-import { sql } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import { normalizeEmail } from '@/domain/accounts'
 import { getDb } from '../db/client'
+import { venueTemplates } from '../db/schema'
 import type { Db } from '../locks'
 import { recordEvent } from '../repo/activity'
 import { assignOwnerlessWeddings } from '../repo/members'
@@ -50,13 +51,14 @@ export function checkBootstrapEmail(
 /** The key two setups at once queue on, so only one can make the first account. */
 const SETUP_LOCK = sql`select pg_advisory_xact_lock(hashtextextended('seat-plan setup', 0))`
 
-export type SetupResult = { status: 'created'; user: UserDto; weddingsClaimed: number } | { status: 'closed' }
+export type SetupResult = { status: 'created'; user: UserDto; weddingsClaimed: number; venuesClaimed: number } | { status: 'closed' }
 
 /**
  * Makes the first admin, in one transaction under the setup lock: counts the
  * accounts again (another setup may have just finished), adds the user, makes
- * them the owner of every wedding with no owner (deleted ones too), and logs
- * setup_completed. 'closed' when an account already exists.
+ * them the owner of every wedding with no owner (deleted ones too) and of every
+ * live venue made before accounts (no owner, not in the library; library
+ * venues stay shared and ownerless), and logs setup_completed. 'closed' when an account already exists.
  */
 export async function completeSetup(
   db: Db,
@@ -68,7 +70,13 @@ export async function completeSetup(
     const created = await insertUser(tx, { ...input, isAdmin: true })
     if (created.status !== 'created') return { status: 'closed' }
     const weddingsClaimed = await assignOwnerlessWeddings(tx, created.user.id)
-    await recordEvent(tx, { kind: 'setup_completed', userId: created.user.id, detail: { weddingsClaimed } })
-    return { status: 'created', user: created.user, weddingsClaimed }
+    const claimedVenues = await tx
+      .update(venueTemplates)
+      .set({ ownerUserId: created.user.id })
+      .where(and(isNull(venueTemplates.ownerUserId), eq(venueTemplates.isLibrary, false), isNull(venueTemplates.deletedAt)))
+      .returning({ id: venueTemplates.id })
+    const venuesClaimed = claimedVenues.length
+    await recordEvent(tx, { kind: 'setup_completed', userId: created.user.id, detail: { weddingsClaimed, venuesClaimed } })
+    return { status: 'created', user: created.user, weddingsClaimed, venuesClaimed }
   })
 }

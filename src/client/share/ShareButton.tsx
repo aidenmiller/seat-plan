@@ -99,7 +99,7 @@ function ShareForm({ layoutId, onClose }: { layoutId: string; onClose: () => voi
           setPasswordError(null)
         }}
         error={passwordError}
-        hint={`At least ${SHARE_PASSWORD_MIN} characters. Not the site password.`}
+        hint={`At least ${SHARE_PASSWORD_MIN} characters. Not your own password.`}
         autoComplete="new-password"
         maxLength={200}
       />

@@ -12,9 +12,9 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { TEST_DATABASE_URL, makeTestDb, truncateAll } from '../../../../test/db'
 import { makeUser } from '../../../../test/auth'
 import { SESSION_COOKIE, SITE_COOKIE } from '@/server/auth/tokens'
-import { activityEvents, users, weddingMembers, weddings } from '@/server/db/schema'
+import { activityEvents, users, venueTemplates, weddingMembers, weddings } from '@/server/db/schema'
 import { lookupSession } from '@/server/repo/sessions'
-import { makeWedding } from '@/server/repo/test-fixtures'
+import { makeTemplate, makeWedding } from '@/server/repo/test-fixtures'
 
 vi.mock('@/server/auth/throttle', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/server/auth/throttle')>()),
@@ -105,12 +105,31 @@ describe('POST /api/setup', () => {
       ].sort(),
     )
     const [event] = await testDb.select().from(activityEvents).where(eq(activityEvents.kind, 'setup_completed'))
-    expect(event).toMatchObject({ userId: admin!.id, detail: { weddingsClaimed: 2 } })
+    expect(event).toMatchObject({ userId: admin!.id, detail: { weddingsClaimed: 2, venuesClaimed: 0 } })
     expect(JSON.stringify(event!.detail)).not.toContain(SITE_PASSWORD)
 
     // Setup is now closed for good.
     expect((await setup(body())).status).toBe(404)
     expect(await userCount()).toBe(1)
+  })
+
+  it('gives the first admin every live venue made before accounts, and leaves library and deleted venues alone', async () => {
+    const mine = await makeTemplate(testDb, 'Old hall')
+    const other = await makeTemplate(testDb, 'Old barn')
+    const library = await makeTemplate(testDb, 'Library hall')
+    await testDb.update(venueTemplates).set({ isLibrary: true }).where(eq(venueTemplates.id, library))
+    const deleted = await makeTemplate(testDb, 'Deleted hall')
+    await testDb.update(venueTemplates).set({ deletedAt: new Date() }).where(eq(venueTemplates.id, deleted))
+
+    expect((await setup(body())).status).toBe(200)
+    const [admin] = await testDb.select().from(users)
+    const owners = Object.fromEntries((await testDb.select().from(venueTemplates)).map((t) => [t.id, t.ownerUserId]))
+    expect(owners[mine]).toBe(admin!.id)
+    expect(owners[other]).toBe(admin!.id)
+    expect(owners[library]).toBeNull()
+    expect(owners[deleted]).toBeNull()
+    const [claimedEvent] = await testDb.select().from(activityEvents).where(eq(activityEvents.kind, 'setup_completed'))
+    expect(claimedEvent!.detail).toMatchObject({ venuesClaimed: 2 })
   })
 
   it('answers 404 once any account exists, whatever it is sent', async () => {

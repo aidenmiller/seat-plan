@@ -1,10 +1,17 @@
 /**
- * The Vercel build (vercel.json buildCommand).
- *  1. Production builds check their settings, then apply database migrations.
- *     Preview builds never touch the database (PLAN change 29).
- *  2. next build.
+ * The Vercel build (vercel.json buildCommand), in this order:
+ *  1. Production builds check their settings (a missing one fails the build
+ *     before anything else runs).
+ *  2. next build. No page or route needs the database at build time (every
+ *     page that reads it is dynamic), so the build does not need the migrated
+ *     schema.
  *  3. Fail the build if a secret (AUTH_SECRET, or SITE_PASSWORD when set)
  *     appears in the build output (scripts/check-secrets.ts).
+ *  4. Production only: apply database migrations, last. A build that fails in
+ *     step 2 or 3 leaves the database as the still-serving old deployment
+ *     expects it (a migration can change stored values the old code reads, such
+ *     as 0007 rewriting guests.side). A migration failure still fails the build.
+ *  Preview builds never touch the database (PLAN change 29).
  */
 import { spawnSync } from 'node:child_process'
 
@@ -42,6 +49,18 @@ export function productionSettingsProblems(env: Readonly<Record<string, string |
   return problems
 }
 
+export type BuildStep = { label: string; command: string; args: string[] }
+
+/** The commands to run, in order, once the production settings have passed. */
+export function buildSteps(vercelEnv: string): BuildStep[] {
+  const production = vercelEnv === 'production'
+  return [
+    { label: 'build', command: 'npx', args: ['next', 'build'] },
+    { label: 'secret check', command: 'npm', args: ['run', 'check:secrets', '--', '--bundle', ...(production ? ['--strict'] : [])] },
+    ...(production ? [{ label: 'migrate', command: 'npm', args: ['run', 'db:migrate'] }] : []),
+  ]
+}
+
 if (process.argv[1]?.endsWith('vercel-build.ts')) {
   const vercelEnv = process.env.VERCEL_ENV ?? 'local'
   if (vercelEnv === 'production') {
@@ -51,10 +70,8 @@ if (process.argv[1]?.endsWith('vercel-build.ts')) {
       for (const problem of problems) console.error(`  - ${problem}`)
       process.exit(1)
     }
-    run('npm', ['run', 'db:migrate'])
   } else {
     console.log(`Skipping migrations (VERCEL_ENV=${vercelEnv}).`)
   }
-  run('npx', ['next', 'build'])
-  run('npm', ['run', 'check:secrets', '--', '--bundle', ...(vercelEnv === 'production' ? ['--strict'] : [])])
+  for (const step of buildSteps(vercelEnv)) run(step.command, step.args)
 }

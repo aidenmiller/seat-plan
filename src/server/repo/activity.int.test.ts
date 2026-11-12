@@ -82,8 +82,8 @@ describe('recordEvent', () => {
   })
 
   it('knows every kind', () => {
-    expect(ACTIVITY_KINDS).toHaveLength(35)
-    expect(new Set(ACTIVITY_KINDS).size).toBe(35)
+    expect(ACTIVITY_KINDS).toHaveLength(36)
+    expect(new Set(ACTIVITY_KINDS).size).toBe(36)
   })
 })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { productionSettingsProblems } from './vercel-build'
+import { buildSteps, productionSettingsProblems } from './vercel-build'
 
 const SECRET = 'a'.repeat(32)
 const DATABASE_URL = 'postgres://user:pass@db.example/app'
@@ -40,5 +40,23 @@ describe('productionSettingsProblems', () => {
     expect(productionSettingsProblems({ ...base, BLOB_STORE_ID: 'store_x', BACKUP_STORE_DIR: '.backups' })).toEqual([
       expect.stringMatching(/^BACKUP_STORE_DIR is for local runs only/),
     ])
+  })
+})
+
+describe('buildSteps', () => {
+  it('migrates the database last on production, after the build and the secret check', () => {
+    const steps = buildSteps('production')
+    expect(steps.map((s) => s.label)).toEqual(['build', 'secret check', 'migrate'])
+    expect(steps[0].args).toEqual(['next', 'build'])
+    expect(steps[1].args).toContain('--strict')
+    expect(steps[2]).toMatchObject({ command: 'npm', args: ['run', 'db:migrate'] })
+  })
+
+  it('never migrates on preview or local builds', () => {
+    for (const env of ['preview', 'development', 'local']) {
+      const steps = buildSteps(env)
+      expect(steps.map((s) => s.label)).toEqual(['build', 'secret check'])
+      expect(steps[1].args).not.toContain('--strict')
+    }
   })
 })

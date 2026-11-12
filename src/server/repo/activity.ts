@@ -31,6 +31,7 @@ export const ACTIVITY_KINDS = [
   'member_removed',
   'user_disabled',
   'user_enabled',
+  'user_admin_changed',
   'wedding_created',
   'wedding_deleted',
   'wedding_restored',

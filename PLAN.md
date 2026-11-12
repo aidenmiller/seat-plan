@@ -388,7 +388,7 @@ All changes go through route handlers; the app uses no Server Actions. The Next.
 
 ### Migrations
 
-The Vercel build (`npm run vercel-build`) checks the production settings (section 11), then runs `drizzle-kit migrate` only when `VERCEL_ENV` is `production`. Migrations add before they remove: a new column arrives in one release, and the old one goes in a later release, so the deployment still serving during a build keeps working.
+The Vercel build (`npm run vercel-build`) checks the production settings (section 11), then runs `next build` and the secret check, and only after both pass runs `drizzle-kit migrate` (only when `VERCEL_ENV` is `production`). Migrating last means a build that fails leaves the database as the still-serving old deployment expects it; a migration that fails still fails the build. Nothing in `next build` needs the migrated schema: every page that reads the database is dynamic. Migrations add before they remove: a new column arrives in one release, and the old one goes in a later release, so the deployment still serving during the short gap between the migration and the switch to the new build keeps working. (Migration 0007 rewrites stored values, not just columns, which is why it must not run before a build that might fail.)
 
 ---
 
@@ -611,7 +611,7 @@ After milestone 10 came the multi-user version, in this order: the accounts sche
 1. Import the GitHub repo in Vercel. `vercel.json` sets the build command (`npm run vercel-build`) and the nightly backup cron. The first deployment fails, because there is no database or secret yet. That is expected.
 2. Connect a Neon database in **AWS us-east-1** to **Production only** (change 29), and create a **private** Blob store connected to **Production** (change 35).
 3. Set `AUTH_SECRET` and `CRON_SECRET` for Production, plus `SITE_PASSWORD` and `BOOTSTRAP_ADMIN_EMAIL` until setup is done, and `ANTHROPIC_API_KEY` for the floor plan import.
-4. Redeploy. The build names any missing setting, runs the migrations, builds the app and runs the secret check.
+4. Redeploy. The build names any missing setting, builds the app, runs the secret check, and then applies the migrations.
 5. Open `/setup`, make the first account, then invite everyone else from the app. Check the nightly backup once (Admin, then Backups), then remove `SITE_PASSWORD`.
 
 To run it on a laptop of your own: copy `env.example` to `.env.local`, fill in a local `DATABASE_URL`, `AUTH_SECRET` and `SITE_PASSWORD`, run `npm install`, `npm run db:migrate` and `npm run dev`, make the first account at `/setup`, then (optional) `npm run seed`, which needs that account.

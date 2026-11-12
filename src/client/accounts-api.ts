@@ -83,6 +83,9 @@ export const listAdminUsers = () => request<AdminUser[]>('GET', '/api/admin/user
 export const setUserDisabled = (userId: string, disabled: boolean) =>
   request<AdminUser>('PATCH', `/api/admin/users/${enc(userId)}`, { disabled })
 
+export const setUserAdmin = (userId: string, admin: boolean) =>
+  request<AdminUser>('PATCH', `/api/admin/users/${enc(userId)}`, { admin })
+
 export const createResetLink = (userId: string) => request<CreatedResetLink>('POST', `/api/admin/users/${enc(userId)}/reset-link`)
 
 export const signOutUser = (userId: string) => request<{ ended: number }>('POST', `/api/admin/users/${enc(userId)}/sign-out`)

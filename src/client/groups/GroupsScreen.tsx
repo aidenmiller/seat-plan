@@ -119,7 +119,7 @@ function NewGroupForm({ weddingId, onCreated }: { weddingId: string; onCreated(g
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={100}
-            placeholder="Aiden HS Friends"
+            placeholder="e.g. College friends"
             autoComplete="off"
             className={`${inputClass} mt-1`}
             data-testid="new-group-input"

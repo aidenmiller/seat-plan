@@ -73,14 +73,14 @@ describe('importing the sample file', () => {
     const plan = planImport(rows, [])
     expect(plan.counts).toEqual({ new: 10, changed: 0, unchanged: 0, needsReview: 0, missing: 0 })
     expect(plan.groupsToCreate).toEqual([
-      'Noa Family',
-      'Noa Cousins',
-      'Aiden HS Friends',
+      'Partner 1 family',
+      'Partner 1 cousins',
+      'College friends',
       'Book Club',
       'Work Friends',
-      'Aiden Family',
-      'Noa College',
-      'Aiden Cousins',
+      'Partner 2 family',
+      'Partner 1 college',
+      'Partner 2 cousins',
     ])
     expect(plan.partnerLinks.map((l) => [l.aName, l.bName])).toEqual([
       ['Zoë Kowalczyk', 'Łukasz Kowalczyk'],

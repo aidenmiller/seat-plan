@@ -236,9 +236,16 @@ export type AdminUser = {
   weddingCount: number
 }
 
-/** PATCH /api/admin/users/:id. Replies with the AdminUser. 409 for yourself or the last admin. */
-export const setUserDisabledBody = z.object({ disabled: z.boolean() })
-export type SetUserDisabledBody = z.input<typeof setUserDisabledBody>
+/**
+ * PATCH /api/admin/users/:id. Send `disabled` (turn the account off or on) or
+ * `admin` (make or remove an admin), one at a time. Replies with the
+ * AdminUser. 409 for yourself (off, or removing your own admin), for the last
+ * admin who is on, and for making a turned-off account an admin.
+ */
+export const updateUserBody = z
+  .object({ disabled: z.boolean().optional(), admin: z.boolean().optional() })
+  .refine((b) => (b.disabled === undefined) !== (b.admin === undefined), 'Send either disabled or admin')
+export type UpdateUserBody = z.input<typeof updateUserBody>
 
 // POST /api/admin/users/:id/sign-out ends every session the user has: 200 { ended: number }.
 

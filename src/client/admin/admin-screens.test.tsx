@@ -79,6 +79,8 @@ describe('AdminUsersScreen', () => {
     expect(me).not.toContain('Turn off')
     expect(me).not.toContain('Sign out everywhere')
     expect(me).toContain('Reset link')
+    expect(me).not.toContain('Remove admin')
+    expect(me).not.toContain('Make admin')
 
     const pip = row(markup, PIP)
     expect(pip).toContain('Active')
@@ -89,6 +91,9 @@ describe('AdminUsersScreen', () => {
     expect(kit).toContain('Turned off')
     expect(kit).toContain('Turn on')
     expect(kit).toContain('never signed in')
+    // Admin access: offered to a planner who is on, never to a turned-off account.
+    expect(pip).toContain('Make admin')
+    expect(kit).not.toContain('Make admin')
   })
 
   it('shows each person’s weddings, edits and AI imports, and zeros for someone with none', () => {
