@@ -14,9 +14,11 @@ import {
   listGuests,
   listVenues,
   removeGroupMember,
+  STALE_PAGE_MESSAGE,
   updateGuest,
   updateWedding,
 } from './api'
+import { clearOtherUser, pageAuthState } from './auth-channel'
 
 function reply(status: number, body: unknown) {
   return new Response(body === undefined ? null : JSON.stringify(body), {
@@ -96,6 +98,38 @@ describe('errorMessage', () => {
   it('reads the first issue of a 422', () => {
     const error = new ApiRequestError(422, { error: 'invalid', issues: ['name: Names cannot be empty'] }, 'x')
     expect(errorMessage(error)).toBe('Names cannot be empty.')
+  })
+
+  it('says someone else is signed in, not "signed out", when the page is someone else’s now (401 stale_page)', () => {
+    const stale = new ApiRequestError(401, { error: 'stale_page' }, 'x')
+    expect(errorMessage(stale)).toBe(STALE_PAGE_MESSAGE)
+    expect(STALE_PAGE_MESSAGE).toBe('Someone else signed in on this browser. Reload the page.')
+    // A plain 401 (the session ended) still says so.
+    expect(errorMessage(new ApiRequestError(401, { error: 'unauthorized' }, 'x'))).toMatch(/signed out/)
+  })
+})
+
+describe('a change refused because someone else signed in on this browser', () => {
+  afterEach(() => clearOtherUser())
+
+  it('shows the page’s "Someone else signed in" notice, with its Reload button', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => reply(401, { error: 'stale_page' })))
+    expect(pageAuthState()).toBe('current')
+    const error = await updateWedding('w1', { name: 'x' }).catch((e: unknown) => e)
+    expect(error).toMatchObject({ status: 401 })
+    expect(pageAuthState()).toBe('other-user')
+  })
+
+  it('a plain 401, or any other refusal, does not', async () => {
+    for (const [status, body] of [
+      [401, { error: 'unauthorized' }],
+      [403, { error: 'stale_page' }],
+      [409, { error: 'conflict' }],
+    ] as const) {
+      vi.stubGlobal('fetch', vi.fn(async () => reply(status, body)))
+      await updateWedding('w1', { name: 'x' }).catch(() => undefined)
+      expect(pageAuthState(), String(status)).toBe('current')
+    }
   })
 })
 

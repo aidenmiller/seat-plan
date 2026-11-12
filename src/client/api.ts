@@ -64,7 +64,8 @@ import type {
   UpdateShareLinkBody,
 } from '@/shared/api'
 import type { BackupLayoutInput, BackupTemplateInput, RestoreStartInput } from '@/domain/backup/schema'
-import { appFetch } from './http'
+import { markOtherUser } from './auth-channel'
+import { appFetch, isStalePage } from './http'
 
 export class ApiRequestError extends Error {
   /** The HTTP status, or 0 when no answer came back. */
@@ -84,9 +85,13 @@ function isApiError(value: unknown): value is ApiError {
   return Boolean(value) && typeof value === 'object' && typeof (value as ApiError).error === 'string'
 }
 
+/** A change refused because someone else signed in on this browser since the page opened (401 stale_page). */
+export const STALE_PAGE_MESSAGE = 'Someone else signed in on this browser. Reload the page.'
+
 /** A plain sentence for a failed request, for showing next to the button that sent it. */
 export function errorMessage(error: unknown): string {
   if (!(error instanceof ApiRequestError)) return 'Something went wrong. Try again.'
+  if (isStalePage(error.status, error.body)) return STALE_PAGE_MESSAGE
   // 409, 413, 415 and 503 replies carry a plain sentence to show (src/shared/api.ts).
   if ([409, 413, 415, 503].includes(error.status) && isApiError(error.body) && error.body.message) {
     return error.body.message
@@ -115,6 +120,13 @@ export function errorMessage(error: unknown): string {
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
 
+/** The error for a non-2xx reply. Someone else signed in on this browser: the page also shows "Someone else signed in", with Reload (src/client/BrowserSession.tsx). */
+function refused(status: number, data: unknown, what: string): ApiRequestError {
+  if (isStalePage(status, data)) markOtherUser()
+  const code = isApiError(data) ? data.error : `HTTP ${status}`
+  return new ApiRequestError(status, data, `${what} failed: ${code}`)
+}
+
 export async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
   let res: Response
   try {
@@ -137,10 +149,7 @@ export async function request<T>(method: Method, path: string, body?: unknown): 
       data = null
     }
   }
-  if (!res.ok) {
-    const code = isApiError(data) ? data.error : `HTTP ${res.status}`
-    throw new ApiRequestError(res.status, data, `${method} ${path} failed: ${code}`)
-  }
+  if (!res.ok) throw refused(res.status, data, `${method} ${path}`)
   return data as T
 }
 
@@ -268,10 +277,7 @@ async function sendRaw<T>(method: 'POST' | 'PUT', path: string, image: Blob): Pr
     throw new ApiRequestError(0, null, 'Could not reach the server.')
   }
   const data: unknown = await res.json().catch(() => null)
-  if (!res.ok) {
-    const code = isApiError(data) ? data.error : `HTTP ${res.status}`
-    throw new ApiRequestError(res.status, data, `${method} ${path} failed: ${code}`)
-  }
+  if (!res.ok) throw refused(res.status, data, `${method} ${path}`)
   return data as T
 }
 
@@ -305,8 +311,7 @@ export async function runFloorplanImport(
   }
   if (!res.ok || !res.body) {
     const data: unknown = await res.json().catch(() => null)
-    const code = isApiError(data) ? data.error : `HTTP ${res.status}`
-    throw new ApiRequestError(res.status, data, `POST ${path} failed: ${code}`)
+    throw refused(res.status, data, `POST ${path}`)
   }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
