@@ -26,6 +26,7 @@ const FAILED_REASONS: Record<Extract<SaveStatus, { kind: 'failed' }>['reason'], 
   invalid: 'the server would not take this layout',
   'signed-out': 'you were signed out',
   'other-user': 'someone else signed in',
+  forbidden: 'you cannot change this layout',
 }
 
 /** `null` while the editor is still opening the layout. */

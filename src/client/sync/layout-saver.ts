@@ -43,6 +43,7 @@ export const MESSAGES = {
   gone: 'This layout was deleted, so changes cannot be saved.',
   invalid: 'The server could not save this layout.',
   signedOut: 'You were signed out. Sign in again to keep saving. Your changes are kept on this device.',
+  forbidden: 'You can no longer change this layout, so changes here cannot be saved. Your changes are kept on this device.',
   otherUser: 'Someone else signed in on this browser. Sign in again to save your changes. They are kept on this device.',
   network: 'No answer from the server.',
   timeout: 'The server took too long to answer.',
@@ -323,7 +324,8 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
     if (httpStatus === 409) return onConflict(data)
     // Checked before the plain 401: this one must never be retried from this tab.
     if (isStalePage(httpStatus, data)) return stopWithFailure('other-user', messages.otherUser)
-    if (httpStatus === 401 || httpStatus === 403) return stopWithFailure('signed-out', messages.signedOut)
+    if (httpStatus === 403) return stopWithFailure('forbidden', messages.forbidden)
+    if (httpStatus === 401) return stopWithFailure('signed-out', messages.signedOut)
     if (httpStatus === 410 || httpStatus === 404) return stopWithFailure('gone', messages.gone)
     if (httpStatus === 408 || httpStatus === 429 || httpStatus >= 500) {
       retryLater(`The server answered ${httpStatus}.`)

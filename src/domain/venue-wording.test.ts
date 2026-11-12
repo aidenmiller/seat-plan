@@ -5,9 +5,11 @@ import {
   restoreReloadedText,
   revisionDetail,
   revisionTitle,
+  venueBadge,
   venueConflictText,
   venueDeleteMessage,
   venueItemCount,
+  venueReadOnlyText,
   venueUsedBy,
 } from './venue-wording'
 
@@ -31,11 +33,24 @@ describe('venue wording', () => {
   it('counts layouts in other weddings without naming them, and they block the delete too', () => {
     const use = { weddingId: 'w', weddingName: 'Noa and Aiden', layoutId: 'l', layoutName: 'Reception' }
     expect(venueDeleteMessage({ kind: 'venue', name: 'Loft', layouts: [], hiddenLayouts: 1, images: 0, revisions: 1 })).toBe(
-      'One layout in weddings you are not part of uses “Loft”, so it cannot be deleted for now.',
+      '“Loft” is used by 1 layout in weddings you are not part of, so it cannot be deleted for now.',
     )
     expect(venueDeleteMessage({ kind: 'venue', name: 'Loft', layouts: [use], hiddenLayouts: 2, images: 0, revisions: 1 })).toBe(
-      'One layout still uses “Loft”. Pick another venue for it before you delete this one. 2 layouts in weddings you are not part of use it too, so it cannot be deleted for now.',
+      'One layout still uses “Loft”. Pick another venue for it before you delete this one. Also used by 2 layouts in weddings you are not part of.',
     )
+  })
+
+  it('labels each venue by who it belongs to', () => {
+    expect(venueBadge({ access: 'library', ownerName: null }, false)).toBe('Library')
+    expect(venueBadge({ access: 'mine', ownerName: 'Noa' }, false)).toBe('Yours')
+    expect(venueBadge({ access: 'shared', ownerName: 'Dayna' }, false)).toBe('Shared by Dayna')
+    expect(venueBadge({ access: 'unowned', ownerName: null }, true)).toBe('No owner')
+    expect(venueBadge({ access: 'unowned', ownerName: null }, false)).toBe('Shared')
+  })
+
+  it('words the banner over a venue you cannot change', () => {
+    expect(venueReadOnlyText({ access: 'library', ownerName: null })).toBe('This is a library venue. Only the admin can change it.')
+    expect(venueReadOnlyText({ access: 'shared', ownerName: 'Dayna' })).toBe('This venue belongs to Dayna. You can view it.')
   })
 
   it('names what goes with a venue nobody uses', () => {

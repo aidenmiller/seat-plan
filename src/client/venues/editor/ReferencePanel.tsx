@@ -20,13 +20,15 @@ export type ReferencePanelProps = {
   image: ReferenceImageInfo | null
   draft: boolean
   canEdit: boolean
+  /** Viewing only: no import or re-run buttons. */
+  readOnly?: boolean
   onImport(): void
   /** How the saved plan can be run again: 'picture' sends the stored image, 'pdf' needs the PDF picked again. Null: nothing stored. */
   rerun: 'picture' | 'pdf' | null
   onRerun(): void
 }
 
-export function ReferencePanel({ image, draft, canEdit, onImport, rerun, onRerun }: ReferencePanelProps) {
+export function ReferencePanel({ image, draft, canEdit, readOnly = false, onImport, rerun, onRerun }: ReferencePanelProps) {
   const editor = useTemplateEditor()
   const reference = useTemplateDoc((d) => d.reference)
   const shown = useTemplateView((s) => s.showReferenceImage)
@@ -70,12 +72,12 @@ export function ReferencePanel({ image, draft, canEdit, onImport, rerun, onRerun
             </p>
           </>
         )}
-        {!draft && rerun === 'pdf' && (
+        {!draft && !readOnly && rerun === 'pdf' && (
           <p className="text-sm text-stone-700" data-testid="rerun-pdf-note">
             This plan was read from a PDF’s own lines, which are not kept. To run the import again, import the same PDF.
           </p>
         )}
-        {!draft && (
+        {!draft && !readOnly && (
           <div className="flex flex-wrap gap-2">
             {rerun === 'picture' && (
               <button type="button" className={smallButton} onClick={onRerun} disabled={!canEdit} data-testid="rerun-stored">

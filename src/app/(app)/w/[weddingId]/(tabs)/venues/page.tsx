@@ -8,7 +8,7 @@ import { TabPage } from '../../_components/TabPage'
 
 export const metadata = { title: 'Venues' }
 
-/** Venue templates are shared by every wedding (PLAN change 5); each wedding's tab lists them all. */
+/** The library, your own venues, and the ones this wedding uses (PLAN change 5; venue-access.ts). */
 export default async function VenuesPage({ params }: PageProps<'/w/[weddingId]/venues'>) {
   const { weddingId } = await params
   const { user } = await requireWeddingPage(weddingId, `/w/${weddingId}/venues`)
@@ -18,7 +18,7 @@ export default async function VenuesPage({ params }: PageProps<'/w/[weddingId]/v
 
   return (
     <TabPage title="Venues" actions={<NewVenueButton weddingId={id} />}>
-      <p className="mb-4 text-sm text-stone-600">Every wedding shares these venues. A change to a venue shows in every layout that uses it.</p>
+      <p className="mb-4 text-sm text-stone-600">Library venues are shared by everyone. Your own venues are private to you, and anyone in a wedding that uses one can view it.</p>
       <VenueList weddingId={id} venues={venues} />
     </TabPage>
   )

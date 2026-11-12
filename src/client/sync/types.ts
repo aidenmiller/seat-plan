@@ -27,12 +27,13 @@ export type SaveStatus =
    * session ended (401); the draft stays on this device, and the next try
    * after the same person signs in again (or the next load) sends it.
    * 'other-user': someone else signed in on this browser (401 stale_page).
+   * 'forbidden': the person may no longer change it (403); nothing is retried.
    * Final for this tab: nothing is sent again from it, and the draft stays
    * in this user's storage until they sign in again and open the layout.
    */
   | { kind: 'failed'; reason: FailedReason; message: string }
 
-export type FailedReason = 'invalid' | 'gone' | 'signed-out' | 'other-user'
+export type FailedReason = 'invalid' | 'gone' | 'signed-out' | 'other-user' | 'forbidden'
 
 /**
  * T is the document the engine saves: a layout's canvas by default. The venue
@@ -70,6 +71,8 @@ export type SaverMessages = {
   gone: string
   invalid: string
   signedOut: string
+  /** The person may no longer change it (403). */
+  forbidden: string
   /** Someone else signed in on this browser (401 stale_page). */
   otherUser: string
   network: string

@@ -13,6 +13,7 @@ import { useEffect, useId, useState } from 'react'
 import { errorMessage, listVenues, updateLayout } from '@/client/api'
 import { Dialog } from '@/client/ui/Dialog'
 import { errorClass, inputClass, labelClass, primaryButton, secondaryButton } from '@/client/ui/styles'
+import { venueGroups } from '@/domain/venue-wording'
 import type { LayoutDetail, VenueSummary } from '@/shared/api'
 
 const BLANK = ''
@@ -56,8 +57,8 @@ export function VenuePicker({ weddingId, layoutId, current, exclude, onChanged, 
   }, [weddingId, exclude, attempt])
 
   const venues = load.kind === 'ready' ? load.venues : []
-  // Until the person picks: the layout's venue when it is offered, else the first other venue, else Blank canvas.
-  const fallback = venues.some((v) => v.id === current) ? (current ?? BLANK) : (venues[0]?.id ?? BLANK)
+  // Until the person picks: the layout's venue when it is offered, else the first other venue (in the order shown), else Blank canvas.
+  const fallback = venues.some((v) => v.id === current) ? (current ?? BLANK) : (venueGroups(venues)[0]?.venues[0]?.id ?? BLANK)
   const value = choice ?? fallback
   const unchanged = (value === BLANK ? null : value) === current
 
@@ -115,12 +116,7 @@ export function VenuePicker({ weddingId, layoutId, current, exclude, onChanged, 
             className={`${inputClass} mt-1`}
             data-testid="venue-picker-select"
           >
-            {venues.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.name}
-              </option>
-            ))}
-            <option value={BLANK}>Blank canvas</option>
+            <VenueOptions venues={venues} />
           </select>
           <p className="mt-1 text-sm text-stone-600">Tables, seats and notes stay where they are. Only the walls and rooms under them change.</p>
         </div>
@@ -139,6 +135,24 @@ export function VenuePicker({ weddingId, layoutId, current, exclude, onChanged, 
         </button>
       </div>
     </form>
+  )
+}
+
+/** The select's options: grouped Library, Your venues, Used in this wedding, then Blank canvas. */
+export function VenueOptions({ venues }: { venues: VenueSummary[] }) {
+  return (
+    <>
+      {venueGroups(venues).map((g) => (
+        <optgroup key={g.key} label={g.title}>
+          {g.venues.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.name}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+      <option value={BLANK}>Blank canvas</option>
+    </>
   )
 }
 
