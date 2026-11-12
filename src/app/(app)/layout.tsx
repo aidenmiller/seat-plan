@@ -13,10 +13,11 @@ export default async function AppLayout({ children }: LayoutProps<'/'>) {
   return (
     <CurrentUserProvider user={{ id: user.id, displayName: user.displayName, email: user.email, isAdmin: user.isAdmin }}>
       <div className="flex min-h-full flex-1 flex-col">
-        <header className="flex h-14 items-center justify-between gap-2 border-b border-stone-200 bg-white px-4">
-          <Link href="/" className="flex min-h-11 shrink-0 items-center gap-2 text-lg font-semibold tracking-tight text-blue-900">
-            <Logo variant="mark" width={48} decorative />
-            <span className="sr-only sm:not-sr-only">{BRAND_NAME}</span>
+        <header className="flex h-14 items-center justify-between gap-2 border-b border-stone-200 bg-white px-4 sm:h-[4.5rem]">
+          {/* The brand's own artwork, never typed text: the horizontal lockup at its 320 px minimum where it fits, the mark alone on a phone. */}
+          <Link href="/" aria-label={BRAND_NAME} className="flex min-h-11 shrink-0 items-center">
+            <Logo variant="mark" width={48} decorative className="sm:hidden" />
+            <Logo variant="horizontal" width={320} decorative className="hidden sm:block" />
           </Link>
           <UserMenu />
         </header>
