@@ -47,7 +47,7 @@ describe('UserMenu', () => {
     admin[0]!.onSelect()
     admin[1]!.onSelect()
     admin[2]!.onSelect()
-    expect(go.mock.calls).toEqual([['/account'], ['/admin/users']])
+    expect(go.mock.calls).toEqual([['/account'], ['/admin']])
     expect(signOut).toHaveBeenCalledTimes(1)
     // While signing out, Log out says so and cannot be pressed again.
     expect(userMenuItems(DAYNA, { go, signOut }, true).at(-1)).toMatchObject({ label: 'Logging out…', disabled: true })

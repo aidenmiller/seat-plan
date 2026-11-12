@@ -1,9 +1,10 @@
 import 'server-only'
-import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import type { AdminWedding } from '@/shared/accounts-api'
+import type { Role } from '../auth/access'
 import { users, weddingMembers, weddings } from '../db/schema'
-import type { Db } from '../locks'
-import { addOrUpgradeMember } from './members'
+import type { Db, Tx } from '../locks'
+import { addOrUpgradeMember, isLastOwnerViolation } from './members'
 
 /**
  * Every wedding for the admin pages, deleted ones included, with who belongs
@@ -106,4 +107,101 @@ export async function claimOwnerlessWedding(db: Db, weddingId: string, adminId: 
     await addOrUpgradeMember(tx, weddingId, adminId, 'owner', adminId)
     return 'ok'
   })
+}
+
+// ---------------------------------------------------------------- the admin's changes (milestone 8)
+
+export type UndeleteResult = 'undeleted' | 'not-deleted' | 'not-found'
+
+/** Clears a deleted wedding's deleted_at, and nothing else: its rows were never touched (DECISIONS 32). */
+export async function undeleteWedding(db: Db, weddingId: string): Promise<UndeleteResult> {
+  const updated = await db
+    .update(weddings)
+    .set({ deletedAt: null, updatedAt: sql`${weddings.updatedAt}` })
+    .where(and(eq(weddings.id, weddingId), isNotNull(weddings.deletedAt)))
+    .returning({ id: weddings.id })
+  if (updated.length > 0) return 'undeleted'
+  const [live] = await db.select({ id: weddings.id }).from(weddings).where(eq(weddings.id, weddingId))
+  return live ? 'not-deleted' : 'not-found'
+}
+
+/** Why an admin's change to a wedding's people was refused. */
+export type AdminMemberRefusal = 'not-found' | 'deleted' | 'no-user' | 'user-disabled'
+
+/** Locks the live wedding row and checks the person, inside the caller's transaction. */
+async function checkWeddingAndUser(tx: Tx, weddingId: string, userId: string): Promise<AdminMemberRefusal | null> {
+  const [wedding] = await tx.select({ deletedAt: weddings.deletedAt }).from(weddings).where(eq(weddings.id, weddingId)).for('update')
+  if (!wedding) return 'not-found'
+  if (wedding.deletedAt) return 'deleted'
+  const [user] = await tx.select({ disabledAt: users.disabledAt }).from(users).where(eq(users.id, userId))
+  if (!user) return 'no-user'
+  if (user.disabledAt) return 'user-disabled'
+  return null
+}
+
+/**
+ * Adds someone with an account to a live wedding, with no invite: the
+ * admin's page offers it for people who already have accounts. 'exists' when
+ * they belong already (their role changes through the members route).
+ */
+export async function adminAddMember(
+  db: Db,
+  weddingId: string,
+  userId: string,
+  role: Role,
+  adminId: string,
+): Promise<'added' | 'exists' | AdminMemberRefusal> {
+  return db.transaction(async (tx) => {
+    const refused = await checkWeddingAndUser(tx, weddingId, userId)
+    if (refused) return refused
+    const inserted = await tx
+      .insert(weddingMembers)
+      .values({ weddingId, userId, role, addedByUserId: adminId })
+      .onConflictDoNothing()
+      .returning({ userId: weddingMembers.userId })
+    return inserted.length > 0 ? 'added' : 'exists'
+  })
+}
+
+export type TransferResult = { status: 'ok'; previousOwners: string[] } | { status: AdminMemberRefusal | 'last-owner' }
+
+/**
+ * Makes `toUserId` an owner of a live wedding (adding them if they do not
+ * belong), and with `demotePrevious` makes its other owners editors, in one
+ * transaction. The owner rows are locked in id order first, as every member
+ * change does (members.ts), so this queues behind a change already under
+ * way. The new owner is an owner before anyone is demoted, so the wedding
+ * always keeps one; the trigger's refusal at COMMIT would read 'last-owner'.
+ */
+export async function transferOwnership(
+  db: Db,
+  weddingId: string,
+  toUserId: string,
+  demotePrevious: boolean,
+  adminId: string,
+): Promise<TransferResult> {
+  try {
+    return await db.transaction(async (tx): Promise<TransferResult> => {
+      const refused = await checkWeddingAndUser(tx, weddingId, toUserId)
+      if (refused) return { status: refused }
+      const owners = await tx
+        .select({ userId: weddingMembers.userId })
+        .from(weddingMembers)
+        .where(and(eq(weddingMembers.weddingId, weddingId), eq(weddingMembers.role, 'owner')))
+        .orderBy(asc(weddingMembers.userId))
+        .for('update')
+      const previousOwners = owners.map((o) => o.userId).filter((id) => id !== toUserId)
+      await addOrUpgradeMember(tx, weddingId, toUserId, 'owner', adminId)
+      if (demotePrevious && previousOwners.length > 0) {
+        await tx
+          .update(weddingMembers)
+          .set({ role: 'editor' })
+          .where(and(eq(weddingMembers.weddingId, weddingId), inArray(weddingMembers.userId, previousOwners)))
+      }
+      return { status: 'ok', previousOwners }
+    })
+  } catch (err) {
+    if (isLastOwnerViolation(err)) return { status: 'last-owner' }
+    throw err
+  }
 }

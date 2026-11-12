@@ -30,7 +30,7 @@ export function userMenuItems(
   signingOut = false,
 ): ContextMenuItem[] {
   const items: ContextMenuItem[] = [{ id: 'account', label: 'Account', onSelect: () => actions.go('/account') }]
-  if (user.isAdmin) items.push({ id: 'admin', label: 'Admin', onSelect: () => actions.go('/admin/users') })
+  if (user.isAdmin) items.push({ id: 'admin', label: 'Admin', onSelect: () => actions.go('/admin') })
   items.push({ id: 'logout', label: signingOut ? 'Logging out…' : 'Log out', onSelect: actions.signOut, disabled: signingOut })
   return items
 }

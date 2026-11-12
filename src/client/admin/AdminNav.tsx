@@ -3,10 +3,13 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
-export const ADMIN_SECTIONS = [
-  { href: '/admin/users', label: 'Users' },
+/** The admin pages, in tab order. `exact`: only that path, not the pages under it. A new page (Backups, say) is one more line. */
+export const ADMIN_SECTIONS: readonly { href: string; label: string; exact?: boolean }[] = [
+  { href: '/admin', label: 'Overview', exact: true },
   { href: '/admin/weddings', label: 'Weddings' },
-] as const
+  { href: '/admin/users', label: 'People' },
+  { href: '/admin/venues', label: 'Venues' },
+]
 
 /** The admin pages' tabs. On a phone they scroll sideways inside their own strip, never the page. */
 export function AdminNav() {
@@ -15,7 +18,7 @@ export function AdminNav() {
     <nav aria-label="Admin" className="-mx-4 mt-1 overflow-x-auto px-4">
       <ul className="flex min-w-max gap-1">
         {ADMIN_SECTIONS.map((section) => {
-          const active = pathname === section.href || pathname.startsWith(`${section.href}/`)
+          const active = pathname === section.href || (!section.exact && pathname.startsWith(`${section.href}/`))
           return (
             <li key={section.href}>
               <Link

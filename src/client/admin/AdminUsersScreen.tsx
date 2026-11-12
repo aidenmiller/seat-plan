@@ -11,6 +11,7 @@ import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { RelativeTime } from '@/client/ui/RelativeTime'
 import { dangerButton, errorClass, primaryButton, secondaryButton } from '@/client/ui/styles'
 import type { AdminUser, CreatedResetLink, InviteSummary } from '@/shared/accounts-api'
+import type { AdminPersonStats } from '@/shared/admin-api'
 
 type Action = { kind: 'disable' | 'sign-out' | 'reset'; user: AdminUser }
 
@@ -22,21 +23,36 @@ function When({ iso }: { iso: string | null }) {
   return iso ? <RelativeTime iso={iso} /> : <span className="text-stone-500">Never</span>
 }
 
+/** "2 owned", "1 as editor", or None, for the live weddings someone belongs to. */
+function Weddings({ stats }: { stats: AdminPersonStats | undefined }) {
+  if (!stats || stats.owned + stats.editing === 0) return <span className="text-stone-500">None</span>
+  return (
+    <>
+      {stats.owned > 0 && <span className="block">{stats.owned} owned</span>}
+      {stats.editing > 0 && <span className="block">{stats.editing} as editor</span>}
+    </>
+  )
+}
+
 /**
- * Admin: everyone with an account. Turn an account off (it is signed out at
- * once) or back on, make a reset link (shown once), sign someone out
- * everywhere, and invite a new planner. Your own account can only be given a
- * reset link here: the account page changes your password and signs out your
- * other devices.
+ * Admin: everyone with an account, with the live weddings they own or help
+ * with, their edits in the last 7 and 30 days (the hourly usage counters, so
+ * saves and other changes, not keystrokes) and their AI floor plan imports in
+ * the last 30 days. Turn an account off (it is signed out at once) or back on,
+ * make a reset link (shown once), sign someone out everywhere, and invite a
+ * new planner. Your own account can only be given a reset link here: the
+ * account page changes your password and signs out your other devices.
  */
 export function AdminUsersScreen({
   meId,
   initialUsers,
   initialInvites,
+  stats = {},
 }: {
   meId: string
   initialUsers: AdminUser[]
   initialInvites: InviteSummary[]
+  stats?: Record<string, AdminPersonStats>
 }) {
   const [users, setUsers] = useState(initialUsers)
   const [invites, setInvites] = useState(initialInvites)
@@ -64,7 +80,7 @@ export function AdminUsersScreen({
       <section aria-labelledby="users-heading">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 id="users-heading" className="text-xl font-semibold tracking-tight">
-            Users
+            People
           </h2>
           <button type="button" className={primaryButton} onClick={() => setInviting(true)}>
             Invite a new planner
@@ -72,14 +88,14 @@ export function AdminUsersScreen({
         </div>
         {/* Positioned, so the table's sr-only text stays inside its own sideways scroll instead of widening the page. */}
         <div className="relative mt-4 overflow-x-auto overscroll-x-contain rounded-xl border border-stone-200 bg-white" data-testid="admin-users-box">
-          <table className="w-full min-w-[1000px] border-separate border-spacing-0 text-sm" data-testid="admin-users">
+          <table className="w-full min-w-[1060px] border-separate border-spacing-0 text-sm" data-testid="admin-users">
             <thead className="text-left text-xs uppercase tracking-wide text-stone-600">
               <tr>
                 <th scope="col" className={head}>Name</th>
-                <th scope="col" className={head}>Email</th>
-                <th scope="col" className={head}>Admin</th>
                 <th scope="col" className={head}>Status</th>
-                <th scope="col" className={head}>Last sign-in</th>
+                <th scope="col" className={head}>Weddings</th>
+                <th scope="col" className={head}>Edits, 7 / 30 days</th>
+                <th scope="col" className={head}>AI imports, 30 days</th>
                 <th scope="col" className={head}>Last seen</th>
                 <th scope="col" className={head}>Joined</th>
                 <th scope="col" className={head}>
@@ -93,20 +109,37 @@ export function AdminUsersScreen({
                 const busy = busyId === user.id
                 return (
                   <tr key={user.id} data-testid="admin-user" data-user-id={user.id}>
-                    <td className={`${cell} font-medium`}>
-                      {user.displayName}
-                      {me && <span className="font-normal text-stone-600"> (you)</span>}
+                    <td className={`${cell} max-w-64`}>
+                      <span className="font-medium">
+                        {user.displayName}
+                        {me && <span className="font-normal text-stone-600"> (you)</span>}
+                      </span>
+                      <span className="block break-all text-xs text-stone-600">{user.email}</span>
+                      {user.isAdmin && <span className="block text-xs font-medium text-blue-900">Admin</span>}
                     </td>
-                    <td className={`${cell} break-all`}>{user.email}</td>
-                    <td className={cell}>{user.isAdmin ? 'Admin' : <span className="text-stone-500">No</span>}</td>
                     <td className={cell} data-testid="admin-user-status">
                       {user.disabled ? <span className="font-medium text-amber-800">Turned off</span> : 'Active'}
                     </td>
-                    <td className={cell}>
-                      <When iso={user.lastLoginAt} />
+                    <td className={cell} data-testid="admin-user-weddings">
+                      <Weddings stats={stats[user.id]} />
+                    </td>
+                    <td className={`${cell} tabular-nums`} data-testid="admin-user-edits">
+                      {stats[user.id]?.edits7 ?? 0} / {stats[user.id]?.edits30 ?? 0}
+                    </td>
+                    <td className={`${cell} tabular-nums`} data-testid="admin-user-ai-imports">
+                      {stats[user.id]?.aiImports30 ?? 0}
                     </td>
                     <td className={cell}>
                       <When iso={user.lastSeenAt} />
+                      <span className="block text-xs text-stone-600">
+                        {user.lastLoginAt ? (
+                          <>
+                            signed in <RelativeTime iso={user.lastLoginAt} />
+                          </>
+                        ) : (
+                          'never signed in'
+                        )}
+                      </span>
                     </td>
                     <td className={cell}>
                       <RelativeTime iso={user.createdAt} />
