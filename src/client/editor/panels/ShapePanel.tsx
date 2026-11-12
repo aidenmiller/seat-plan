@@ -161,7 +161,7 @@ export type ShapePanelProps = {
   ceremony?: boolean
   /** The wedding's unit, for the seating block's aisle width. */
   unit?: LengthUnit
-  /** Editing is not possible right now (no author picked, a conflict open). */
+  /** Editing is not possible right now (saving not ready, a conflict open). */
   disabled: boolean
   /** The canvas viewport: drops count only over it. */
   dropTarget(): HTMLElement | null

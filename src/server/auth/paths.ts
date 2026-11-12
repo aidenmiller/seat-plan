@@ -19,7 +19,7 @@ const PUBLIC_PATHS = new Set([
   // First-run setup: answers 404 once any account exists.
   '/setup',
   '/api/setup',
-  // Accepting an invite and resetting a password (their pages and routes come later).
+  // Accepting an invite and resetting a password (people with no session yet; each acts only on a one-time token).
   '/invite',
   '/reset',
   '/api/invites/lookup',

@@ -3,7 +3,7 @@
  * View mode"). It wraps the layout's document store (../doc-store.ts):
  *
  *  - In View mode, or while the page cannot edit (no save engine yet, no
- *    author picked, a conflict open), every change is refused here, so
+ *    saving not ready, a conflict open), every change is refused here, so
  *    shortcuts, drags, buttons and panels all do nothing.
  *  - Each finished change is one undo step and goes to the save engine
  *    through onCommit (EditorShell passes session.noteEdit).

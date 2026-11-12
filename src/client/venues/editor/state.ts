@@ -31,7 +31,7 @@ export function templateViewKey(templateId: string): string {
 export type TemplateEditorOptions = {
   templateId: string
   store: DocStore<TemplateDoc>
-  /** The page's own gate (author picked, saving ready, no conflict). Default: always. */
+  /** The page's own gate (saving ready, no conflict). Default: always. */
   canEdit?: () => boolean
   /** A finished change: hand it to the save engine, or keep it in the import draft. */
   onCommit: (doc: TemplateDoc) => void

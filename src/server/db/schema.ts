@@ -363,7 +363,7 @@ export const ruleGuests = pgTable(
   ],
 )
 
-/** Shared by all weddings (PLAN change 5). */
+/** A venue: in the shared library, a planner's own (private; read-only to anyone in a wedding that uses it), or from before accounts (PLAN change 5, as reworded in PLAN change 31). */
 export const venueTemplates = pgTable(
   'venue_templates',
   {
