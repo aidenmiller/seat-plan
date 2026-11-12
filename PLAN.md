@@ -2,6 +2,8 @@
 
 Draft for review, 2026-11-09. The spec is in `docs/SPEC.md`, a copy of the brief with the site password removed. This plan says how I will build the app, what I suggest changing, and what I need from you. I will not write app code until you approve it.
 
+Updated 2026-11-12 for the multi-user version: accounts, wedding membership, the venue library, stored backups and the rebrand (section 2, changes 30 to 37, and the sections they touch). Where an earlier item no longer matches, it says so.
+
 Contents
 
 1. What I need from you
@@ -27,7 +29,7 @@ These block a milestone. Everything else has a default in section 2 or in `DECIS
 | A | Push access to `aidenmiller/seat-plan` for this session: connect that GitHub account at claude.ai/connect-github and install the Claude GitHub App on the repo. | End of milestone 1 | The repo exists, but this session cannot push to it yet. Until it can, the work stays in this sandbox and is lost when the sandbox closes. |
 | B | About five minutes in Vercel: import the repo, add Neon from the Marketplace, set three env vars (section 11). | End of milestone 1 | This sandbox cannot reach vercel.com, neon.tech or `*.vercel.app`, so I can neither deploy nor open the live site. You confirm what you see. |
 | C | An Anthropic API key, saved as `ANTHROPIC_API_KEY` in Vercel. | Milestone 7 | The floor plan import calls the API from the server. Tests use a recorded reply, so only the live import needs the key. |
-| D | The Toronto Beach Club floor plan (PDF if you have it, else PNG or JPG) and its room sizes. | Milestone 7 | The spec says to run it through the import and not guess. Until then the seed makes an empty template with that name. |
+| D | The Toronto Beach Club floor plan (PDF if you have it, else PNG or JPG) and its room sizes. | Milestone 7 | The spec says to run it through the import and not guess. Migration 0004 has since filled the template with a tracing of the venue's marketing plan, with 69 of its 163 items marked unsure, to check against the venue's own plan and sizes. |
 | E | Answers to the open questions at the end of section 2. Each has a default, so no answer means the default. | The milestone named in each question | |
 
 ---
@@ -42,8 +44,8 @@ Each item says what changes and why. Approving the plan approves these. Strike a
 2. **Store seats in the canvas and also in a checked copy the database guards.** The canvas JSON stays the one true record of who sits where, so undo, the offline queue, duplicate and backup all handle one document. On every save the server also rebuilds a `layout_seats` table (layout, guest, table, seat) in the same transaction. A primary key on (layout, guest) means the database itself refuses a guest in two seats of one layout. The table also tells the server which layouts a guest removal touches, without opening every canvas. A future solver would write seats through the normal save, like a person.
 3. **Tables get a number separate from their name.** Escort cards and table lists print a table number. If you rename "Table 3" to "Family", it keeps number 3. A new, pasted or duplicated table takes the highest number in the layout plus one. You can edit the number, and the panel warns if two tables share one. The default name "Table N" follows the number until you rename the table.
 4. **Round tables use 22 inches of edge per seat; straight edges keep 24.** The spec's own presets break its 24 inch rule: a 60 in round with 8 seats gives 23.6 in per seat, so every new round table would show the yellow outline, and Fit seats would drop it to 7. Chairs at a round table fan outward, so caterers seat round tables tighter. At 22 in, a 48 in round holds 6, a 60 in round holds 8 and a 72 in round holds 10, which are the usual counts. Straight edges keep exactly 24 in (60.96 cm; the spec rounds this to 61) with a 0.5 cm allowance, so a 48 in square holds 8 and a 24 ft one-sided table holds exactly 12. Lengths are stored as decimals, so 24 ft stays 731.52 cm and Fit seats never loses a seat to rounding.
-5. **Venue templates are shared by all weddings.** The spec's sketch gives templates no wedding id, and a venue does not belong to one wedding. If each wedding had its own copy, the Toronto Beach Club work would not carry over to a wedding you create later. Every wedding's Venues tab shows the same list. A backup includes the templates its layouts use. A restore reuses a template only if it still exists and its walls match the backup; otherwise it recreates it as "Name (restored)".
-6. **Keep the floor plan image in Postgres, behind the password gate.** Vercel refuses request bodies over 4.5 MB, so the browser shrinks the upload to at most 2,576 px on the long edge and about 3 MB, and turns a PDF page into a PNG. An image that size fits in a Postgres row, the app serves it only to signed-in users, and the app needs no second storage service or extra secret. The same image goes to the AI import and onto the hidden reference layer.
+5. **Venue templates do not belong to one wedding.** The spec's sketch gives templates no wedding id, and a venue does not belong to one wedding. If each wedding had its own copy, the Toronto Beach Club work would not carry over to a wedding you create later. Every wedding's Venues tab shows the same list. A backup includes the templates its layouts use. A restore reuses a template only if it still exists and its walls match the backup; otherwise it recreates it as "Name (restored)". Change 31 reworded this: a template now belongs to a planner or sits in a shared library.
+6. **Keep the floor plan image in Postgres, behind sign-in.** Vercel refuses request bodies over 4.5 MB, so the browser shrinks the upload to at most 2,576 px on the long edge and about 3 MB, and turns a PDF page into a PNG. An image that size fits in a Postgres row, the app serves it only to people who may read the venue, and the plan image needs no second storage service or extra secret (stored backups do use one, change 35). The same image goes to the AI import and onto the hidden reference layer.
 7. **Removing a guest never causes a save conflict.** In one transaction the server marks the guest deleted, clears their seats in every layout, and clears their partner link. It leaves those layouts' version numbers alone. Because the versions stay the same, someone who has one of those layouts open can still save: their save carries the current version, the server drops any seat held by a removed guest, and the reply names those guests so the editor unseats them on screen. A rule left with fewer than two live guests shows on the Rules page as "needs guests" and is not checked.
 8. **The app works out couple rules from partner links and stores no rule rows for them.** Each guest has a "couple rule on" switch, kept the same on both partners. The rules list shows a couple rule for every linked pair, and switching it off flips the switch on both people. A couple rule then always matches the partner links. Linking A to B clears any earlier partner of either, and turns the switch back on for both.
 9. **Copied, pasted and duplicated tables come with every seat empty.** Copying the guests too would put each of them in two seats, which the one-seat rule forbids. Duplicating a whole layout keeps the guests, as the spec says.
@@ -70,18 +72,29 @@ Each item says what changes and why. Approving the plan approves these. Strike a
 21. **For a vector PDF, the walls come straight from the PDF and the model only names them.** If the model returned wall coordinates, it would retype lines the PDF already holds exactly: the numbers would drift, and a detailed plan could run past the reply limit and come back cut off. So each cleaned PDF line goes to the model with an id, and the model answers by id (wall, door, window, ignore), plus rooms, labels and anything the lines do not cover. Scanned plans and images have no lines to reuse, so for those the model returns the geometry.
 22. **Read the model name from an env var**, `FLOORPLAN_MODEL`, with the spec's model as the default. If the Toronto Beach Club draft misses walls or doors, we can try a larger Claude model without a code change. Each import costs a few cents either way.
 
-**Password gate and share links**
+**Password gate and share links** (items 23 and 27 are replaced by changes 30 and 33 below)
 
-23. **Password gate details.** API requests without a valid cookie get a 401 reply; pages still go to `/login`. The site cookie's signing key comes from both `AUTH_SECRET` and `SITE_PASSWORD`, so a new password makes a new key, old cookies fail the signature check, and everyone signs in again. Ten wrong guesses in 15 minutes from one address block that address for 15 minutes, even for the right password. Fifty wrong guesses in an hour from all addresses together block new sign-ins for 15 minutes; your 30 day cookies keep working through that. Each wrong guess also waits about a second before the reply.
-24. **The share view hides annotations unless you turn them on for that link.** Notes on the canvas may hold private comments ("keep Uncle Bob away from the bar"). The venue sees tables, fixtures, the venue layer and, if names are on, guest names, and a tap on a seat shows that guest's meal and child flags, which a caterer needs. The server builds what the share page receives, so hidden parts never reach the viewer's browser at all. The viewer never sees guest notes, groups, rules, the original floor plan image or other layouts. "Table names only" hides every guest name.
+23. **Password gate details.** API requests without a valid cookie get a 401 reply; pages still go to `/login`. The site cookie's signing key comes from both `AUTH_SECRET` and `SITE_PASSWORD`, so a new password makes a new key, old cookies fail the signature check, and everyone signs in again. Ten wrong guesses in 15 minutes from one address block that address for 15 minutes, even for the right password. Fifty wrong guesses in an hour from all addresses together block new sign-ins for 15 minutes; your 30 day cookies keep working through that. Each wrong guess also waits about a second before the reply. Change 30 replaced the shared password with accounts: the site cookie and its key are gone, and the same counting now guards account sign-in (per address, per account and across all addresses).
+24. **The share view hides annotations unless you turn them on for that link.** Notes on the canvas may hold private comments ("keep Uncle Bob away from the bar"). The venue sees tables, fixtures, the venue layer and, if names are on, guest names, and a tap on a seat shows that guest's meal and child flags, which a caterer needs. The server builds what the share page receives, so hidden parts never reach the viewer's browser at all. The viewer never sees guest notes, groups, rules, the original floor plan image or other layouts. "Table names only" hides every guest name. A member of the wedding, or an admin, opens the link without its password (change 30).
 25. **A Links tab on each wedding.** The spec asks for a list of every live link. It sits as a sixth wedding tab, next to Venues.
-26. **The site password never enters git.** The original brief holds the site password, and an acceptance check says the password must not appear in git history. I will commit the brief as `docs/SPEC.md` with that one value removed. A script fails if it finds the password: the Vercel build runs it on the built browser files, and I run it on git history before every push. It prints where it found a match with the password masked.
+26. **The site password never enters git.** The original brief holds the site password, and an acceptance check says the password must not appear in git history. I will commit the brief as `docs/SPEC.md` with that one value removed. A script fails if it finds the password: the Vercel build runs it on the built browser files, and I run it on git history before every push. It prints where it found a match with the password masked. Once accounts exist the password is unused, and the script also looks for `AUTH_SECRET`, `CRON_SECRET` and `BLOB_READ_WRITE_TOKEN` when they are set.
 
 **Process**
 
-27. **The Noa / Aiden switch moves from milestone 9 to milestone 2.** Saving needs it from the start: `editedBy`, "last edited by" on the layouts list and the conflict message ("Aiden changed this layout at 3:42 pm") all read it.
+27. **The Noa / Aiden switch moves from milestone 9 to milestone 2.** Saving needs it from the start: `editedBy`, "last edited by" on the layouts list and the conflict message ("Aiden changed this layout at 3:42 pm") all read it. Replaced by change 33: who edited is the signed-in account.
 28. **Real iPhone checks are yours.** Playwright here can only run Chromium, so the phone tests run Chromium at iPhone size with touch. Every iPhone browser uses Safari's engine, which these tests never run, so at the end of each milestone I will list exactly what to try on your phones.
 29. **Milestones ship straight to your live site.** I build each milestone on its own branch, and when its tests pass I merge it into `main`, which Vercel deploys. Neon connects to Production only. Preview builds of other branches then have no database and do nothing, so an unfinished schema change can never reach your data.
+
+**Accounts, sharing and backups (the multi-user version)**
+
+30. **Accounts replace the shared password.** Each person signs in with an email and a password and has a session the server can end. There is no open sign-up: the first account is made once, at `/setup`, by whoever knows the old `SITE_PASSWORD` (and, on Vercel, holds the `BOOTSTRAP_ADMIN_EMAIL` address); it becomes an admin and the owner of every wedding that exists. After that `/setup` answers 404 and `SITE_PASSWORD` is unused. Everyone else comes in by a one-time invite link an owner or an admin makes and sends by hand; an admin can make a password reset link for anyone. The site cookie is gone; the share link cookie stays, on the same key. (DECISIONS 119 to 126.)
+31. **Each wedding has members, and each venue an owner.** A wedding has owners and editors, and every page and route checks it: a non-member gets "Not found", an editor asking for an owner's action gets 403. An admin (a flag on an account) can open and change any wedding, each visit is logged, and the wedding shows an "Admin view" banner. Venue templates belong to the planner who made them (private to them, readable by anyone whose wedding's layout uses one) or sit in a shared library the admin keeps, which seeds with the Toronto Beach Club and the Liberty Grand Governor's Room. "Make my own copy" copies any venue you may read. This rewords change 5. (DECISIONS 121 to 123, 130, 139.)
+32. **A People tab on each wedding, and an admin area.** The tab lists members and pending invites and makes invites; owners change roles and remove people, editors can leave. The admin area has an Overview (counts and edits and sign-ins by day), Weddings, People, Venues and Backups. An Account page holds a person's name, password and signed-in devices.
+33. **Edits and notes are attributed to the signed-in account.** The per-device Noa / Aiden switch is gone. Layouts and venues store the editor's account id and the name they had at the save; a note stores its maker's name and id. Unsaved edits are kept per user in the browser, and signing out sends them first. This replaces change 27. (DECISIONS 118, 127, 128.)
+34. **A wedding has two optional partner names, and a guest's side is stored by position.** `partner1`, `partner2` or `both`, shown as the wedding's names ("Partner 1" and "Partner 2" when empty), so renaming a partner relabels every guest and nothing is stored twice. Every earlier wedding became Noa and Aiden's. (DECISIONS 129.)
+35. **Backups are stored every night as well as downloaded.** A Vercel cron job saves each changed wedding to a private Blob store; owners and admins can download one, back up now, and restore as a new wedding. Retention is 30 days, then the first of each month for a year, and the newest of every wedding. This reverses the "no Vercel Blob" line in section 3. (DECISIONS 134 to 137.)
+36. **Usage is counted by the hour, and AI floor plan imports are capped.** One counter row per hour, person, wedding and kind of edit feeds the admin Overview, and each planner may start `AI_IMPORT_MONTHLY_LIMIT` (default 10) imports in any 30 days. (DECISIONS 132, 133.)
+37. **The app is renamed "Something Blueprint."** The repository, package, storage keys, cookie names and the backup format identifier keep `seat-plan`. (DECISIONS 138.)
 
 **Open questions (default in brackets)**
 
@@ -89,7 +102,7 @@ Each item says what changes and why. Approving the plan approves these. Strike a
 - Q2, milestone 5. Should a seat label show the nickname instead of the first name when one is set? [No. Nicknames show in search and the hover card.]
 - Q3, milestone 3. Check 10 says a rectangle stretched to 24 ft gets "12 seats on one side" after Fit seats. The rectangle preset seats both long sides (4 + 4 at 8 ft), so Fit seats gives 12 on each side, 24 in all. Is that what you meant, or should the table first be switched to one side, for 12 in all? [The test checks both: 12 per side as it stands, and 12 in all after switching to one side.]
 - Q4, milestone 7. For a multi-page PDF floor plan, use page 1 or ask? [Ask, with page 1 picked.]
-- Q5, milestone 1. Which Vercel plan? Hobby caps a server function at 300 seconds, which is enough for the floor plan import. [Hobby.]
+- Q5, milestone 1. Which Vercel plan? Hobby caps a server function at 300 seconds, which is enough for the floor plan import. [Hobby.] Check Vercel's terms against how the site is used (Hobby is for non-commercial use), and note that the nightly backup is held to 1,500 Blob uploads in any 30 days because the Hobby plan caps Blob operations (change 35).
 - Advice, milestone 1. The password in the brief is short, easy for friends to guess, and has passed through chat tools. It is the only thing guarding the guest list. Nothing in the code depends on its value, so you can choose a longer one (four random words, say) when you set it in Vercel.
 
 ---
@@ -107,16 +120,17 @@ Checked against npm on 2026-11-08. I pin exact versions in `package.json` and co
 | DB driver | `pg` 8.23 with a pool, plus `attachDatabasePool` from `@vercel/functions` | The only driver that gives real transactions on Vercel and also runs against a plain local Postgres. Neon recommends it for Vercel's current function runtime. |
 | Validation | zod 4 | Every request body and the canvas JSON. |
 | Editor state | zustand 5.1, immer 11 | Undo and redo written by hand (section 6). |
-| Share link passwords | `@node-rs/argon2` (argon2id) | Prebuilt binaries; works on Vercel. |
+| Passwords | `@node-rs/argon2` (argon2id) | Share link and account passwords. Prebuilt binaries; works on Vercel. |
 | Offline queue | idb-keyval 6.3 | |
 | CSV | papaparse 5.7 | |
 | PDF in | pdfjs-dist 6.5.438, pinned exactly, legacy build | Runs in the browser. Its internal drawing format changed recently, so a unit test guards it. |
 | AI | `@anthropic-ai/sdk` 1.6 | Server only. |
 | PDF out | jspdf 4.2, svg2pdf.js 2.9, jspdf-autotable 5 | Runs in the browser, loaded only when you export. |
+| Backup storage | `@vercel/blob` 2.8.2 | A private store on Production, reached through Vercel's OIDC. Nightly backups only (change 35). |
 | Fonts | Noto Sans, static Regular and Bold TTF files (open license) | One font for the canvas and the PDFs, so names print with accents. |
 | Tests | Vitest 5.1, Playwright 1.65 (Chromium) | |
 
-Left out: tldraw and other licensed whiteboard kits; d3-zoom, because we would have to override every default; drag and drop libraries, because they find drop targets by measuring each element's place on the page, and with 400 SVG seats under a camera that moves every frame those places keep changing and measuring them all is slow; Vercel Blob (change 6).
+Left out: tldraw and other licensed whiteboard kits; d3-zoom, because we would have to override every default; drag and drop libraries, because they find drop targets by measuring each element's place on the page, and with 400 SVG seats under a camera that moves every frame those places keep changing and measuring them all is slow; Vercel Blob for floor plan images (change 6), which stay in Postgres.
 
 ---
 
@@ -137,6 +151,7 @@ Rows that belong to a wedding carry `wedding_id`, including the link tables (`gr
 | date | date, null | |
 | unit | text | `ft` or `m`, default `ft` |
 | min_gap_cm | real | Default 152.4 (5 ft). The spec's "let us change that number". |
+| partner1_name, partner2_name | text, null | The couple's names, 1 to 60 characters (change 34) |
 
 **guests**
 | Column | Type | Notes |
@@ -146,7 +161,7 @@ Rows that belong to a wedding carry `wedding_id`, including the link tables (`gr
 | nickname, household, meal, notes | text, null | |
 | partner_id | uuid, null | Points both ways; the server sets both sides in one transaction. Unique among live guests, and never the guest's own id. |
 | couple_rule_enabled | boolean | Default true, kept the same on both partners (change 8) |
-| side | text | `Noa`, `Aiden` or `Both`, default `Both` |
+| side | text | `partner1`, `partner2` or `both`, default `both`, by position in the wedding's two names (change 34). The old words stay allowed for one release. |
 | rsvp | text | `yes`, `no` or `pending`, default `pending` |
 | is_child | boolean | Default false |
 | name_key | text | First and last name in lower case without accents, so "Łukasz" matches "Lukasz". Indexed. Two guests can share a name, so it has no unique constraint. |
@@ -168,7 +183,7 @@ Rows that belong to a wedding carry `wedding_id`, including the link tables (`gr
 
 Couple rules have no rows (change 8). One pure function returns the wedding's rules plus a couple rule (together, next to each other, both layout kinds) for every linked pair whose switch is on.
 
-**venue_templates** (shared by all weddings)
+**venue_templates** (a planner's own, or the shared library: change 31)
 | Column | Type | Notes |
 |---|---|---|
 | name | text | Not empty |
@@ -176,7 +191,9 @@ Couple rules have no rows (change 8). One pure function returns the wedding's ru
 | reference_image_id | uuid → venue_images, null | The current original plan |
 | reference | jsonb, null | `{ scaleCmPerPx, offsetX, offsetY, rotation, opacity }`. Whether the layer shows is kept per device, as in change 1. |
 | imported_by | text | `hand`, `pdf vectors` or `ai` |
-| version, last_save_id, edited_by | | Conflict check, as for layouts |
+| owner_user_id | uuid → users, null | The planner who made it; null for templates from before accounts |
+| is_library | boolean | In the shared library every planner can copy; only admins change it |
+| version, last_save_id, edited_by_user_id, edited_by_name | | Conflict check, as for layouts. The old `edited_by` is no longer written. |
 
 **venue_images**: `template_id`, `content_type` (PNG or JPEG), `bytes` (bytea, at most about 3 MB), `width`, `height`, `sha256`. An import uploads its image here first; the template points at it only after Accept. Old images stay, so an import can be undone. Served only through an authenticated route.
 
@@ -191,7 +208,7 @@ Couple rules have no rows (change 8). One pure function returns the wedding's ru
 | venue_template_id | uuid, null | Null means blank canvas |
 | version | integer | Goes up by one on every canvas save. Renames leave it alone. |
 | last_save_id | uuid, null | Id of the last save applied, so the server answers "done" to a retried save that already landed |
-| edited_by | text, null | `Noa` or `Aiden` |
+| edited_by_user_id, edited_by_name | uuid → users, null; text, null | The account that saved last, and its name at that save (change 33). The old `edited_by` is no longer written. |
 | canvas | jsonb | Checked with Zod on every save (type below) |
 | thumb_svg | text | Small vector preview the server draws from the checked canvas, for the layouts list |
 
@@ -215,7 +232,25 @@ Couple rules have no rows (change 8). One pure function returns the wedding's ru
 | show_names, show_notes | boolean | Defaults true and false |
 | last_opened_at, revoked_at | timestamptz, null | |
 
-**login_attempts**: `scope` (`site` or `share:<linkId>`), `ip_key` (the address hashed with `AUTH_SECRET`; IPv6 addresses by their first 64 bits, since one home controls all of those), `failures`, `window_start`, `blocked_until`. Each server function has its own memory, and a count kept there would miss guesses that reach other functions, so the database keeps the counts.
+**login_attempts**: `scope` (account sign-in by address and by account, invites, resets, setup, a share link as `share:<linkId>`), `ip_key` (the address hashed with `AUTH_SECRET`; IPv6 addresses by their first 64 bits, since one home controls all of those), `failures`, `window_start`, `blocked_until`. Each server function has its own memory, and a count kept there would miss guesses that reach other functions, so the database keeps the counts.
+
+### Accounts, membership and backups (changes 30 to 36)
+
+Migrations 0005 to 0009 add these (0005 the tables, 0006 the backfill and the last-owner trigger, 0007 partner names, 0008 the Liberty Grand template, 0009 backups).
+
+| Table | Holds |
+|---|---|
+| `users` | `email` (unique, lower case, trimmed), `display_name`, `password_hash`, `is_admin`, `disabled_at`, `password_changed_at`, `last_login_at`, `last_seen_at` |
+| `sessions` | `user_id`, `token_hash` (SHA-256 of the cookie's secret; unique), `user_agent` (200 characters at most), `last_seen_at`, `expires_at`. No IP address. |
+| `wedding_members` | `wedding_id`, `user_id`, `role` (`owner` or `editor`), `added_by_user_id`; primary key on wedding and user. A deferred trigger refuses to commit a change that leaves a wedding with members and no owner. |
+| `invites` | `token_hash`, `wedding_id` and `role` (both null for a planner invite), optional `email` and `note`, `invited_by_user_id`, `expires_at`, `accepted_at`, `accepted_by_user_id`, `revoked_at` |
+| `password_resets` | `token_hash`, `user_id`, `created_by_user_id`, `expires_at`, `used_at` |
+| `activity_events` | `kind`, `user_id`, `wedding_id` and `subject_id` (no foreign keys, so events outlive their rows), `detail`, and a `dedupe_key`. Holds sign-ins, admin visits and changes, AI imports, and the hourly `write.*` counters. |
+| `backup_runs` | One row per run of the backup job: trigger (`cron`, `admin` or `owner`), status, counts, failures. Only one is `running` at a time. |
+| `backups` | One row per stored backup: `store_id`, `wedding_id` (no foreign key), `kind` (`nightly`, `manual` or `final`), `pathname`, sizes, `blob_sha256`, `content_sha256`, `image_sha256s`, `format_version` |
+| `backup_images` | A floor plan image in the backup store, once per store by its SHA-256 |
+
+Invite and reset tokens are 32 random bytes, shown once, and stored only as hashes. Notes in a canvas carry `author` (a name) and `authorId`; notes from before accounts hold "Noa" or "Aiden" and no id.
 
 ### Canvas JSON
 
@@ -265,7 +300,7 @@ type Note = Base & {
   kind: 'note'; type: 'sticky' | 'text' | 'arrow' | 'line' | 'box' | 'circle'
   width: number; height: number; points?: { x: number; y: number }[]
   text: string; color: 'yellow' | 'pink' | 'blue' | 'green' | 'purple' | 'grey'
-  author: 'Noa' | 'Aiden'; done: boolean; createdAt: string
+  author: string; authorId?: string; done: boolean; createdAt: string   // the maker's name, and account id when there is one
   attachedTo: { start: string | null; end: string | null }   // arrows follow tables and fixtures
 }
 type Item = Table | Fixture | ChairRow | Shape | Note
@@ -283,20 +318,25 @@ Seat positions are never stored. A pure function works them out from the table's
 
 | Path | Page |
 |---|---|
-| `/login` | Site password |
+| `/login` | Sign in (email and password) |
+| `/setup` | First-run setup: makes the first account. 404 once any account exists. |
+| `/invite`, `/reset` | Accept an invite; use a password reset link. Each reads its one-time token from the `#fragment`. |
+| `/account` | The signed-in person's name, password and signed-in devices |
 | `/` | Home: wedding cards |
-| `/w/[weddingId]/layouts`, `/guests`, `/groups`, `/rules`, `/venues`, `/links` | Wedding tabs |
+| `/w/[weddingId]/layouts`, `/guests`, `/groups`, `/rules`, `/venues`, `/links`, `/people` | Wedding tabs |
 | `/w/[weddingId]/layouts/[layoutId]` | Editor |
 | `/venues/[templateId]` | Template editor and floor plan import |
+| `/admin`, `/admin/weddings`, `/admin/weddings/[weddingId]`, `/admin/users`, `/admin/venues`, `/admin/backups` | Admin area: Overview, Weddings, People, Venues, Backups. Admins only; anyone else gets "Not found". |
 | `/share/[token]` | Venue view, or its password page |
 
 ### Route handlers
 
-All changes go through route handlers; the app uses no Server Actions. The Next.js docs warn that the proxy alone can miss a route after a refactor, so each handler checks the cookie itself too.
+All changes go through route handlers; the app uses no Server Actions. The Next.js docs warn that the proxy alone can miss a route after a refactor, so each handler checks the session itself too, through a wrapper that also records its policy (`src/server/auth/guards.ts`).
 
 | Method and path | Purpose |
 |---|---|
-| `POST /api/auth/login`, `POST /api/auth/logout` | Site password |
+| `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/reset` | Sign in, sign out, use a reset link |
+| `POST /api/setup` | First-run setup |
 | `GET, POST /api/weddings`; `GET, PATCH, DELETE /api/weddings/:id` | Weddings, including settings (name, date, unit, minimum gap). DELETE needs `{ confirm: "delete" }`. |
 | `GET /api/weddings/:id/delete-summary`, `/api/layouts/:id/delete-summary`, `/api/venues/:id/delete-summary` | What the delete dialog lists. For a template still in use, the layouts that block it. |
 | `GET, POST /api/weddings/:id/layouts`; `GET, PUT, PATCH, DELETE /api/layouts/:id` | PUT saves the canvas; PATCH renames or changes the template |
@@ -313,15 +353,24 @@ All changes go through route handlers; the app uses no Server Actions. The Next.
 | `GET /api/weddings/:id/share-links`, `GET, POST /api/layouts/:id/share-links`; `PATCH, DELETE /api/share-links/:id` | Share links |
 | `POST /share/:token/login`, `GET /share/:token/data` | Share password, and the one layout's view data |
 | `GET /api/weddings/:id/backup`, `POST /api/weddings/restore` and `/api/weddings/restore/:jobId/...` | Backup, and restore in steps (section 7) |
+| `GET, POST /api/weddings/:id/backups`, `GET /api/weddings/:id/backups/:backupId`, `POST .../:backupId/restore` | Stored backups of a wedding: list, back up now, download, restore as a new wedding. Owners. |
+| `GET /api/weddings/:id/members`, `PATCH, DELETE /api/weddings/:id/members/:userId`; `GET, POST /api/weddings/:id/invites`, `DELETE /api/invites/:id` | Members and invites. Any member lists; owners change. Any member may remove themselves. |
+| `POST /api/invites/lookup`, `/register`, `/accept` | Opening an invite link, making an account through it, accepting it as a signed-in person |
+| `PATCH /api/account`, `POST /api/account/password`, `GET /api/account/sessions`, `DELETE /api/account/sessions/:id`, `POST /api/account/sessions/revoke-others` | The signed-in person's own account |
+| `/api/admin/users...`, `/invites...`, `/weddings...`, `/venues/:id`, `/backups...` | Admin area actions: turn accounts off, sign out, reset links, planner invites, claim, add a member, transfer or undelete a wedding, library membership, run and restore backups. Admins only (404 to others). |
+| `GET, POST /api/cron/backups` | The nightly job. Takes only `Authorization: Bearer <CRON_SECRET>`; no session. |
 
-### Password gate
+### Sign-in and access
 
-- `src/proxy.ts` runs on every path except Next's static files, the font files and `robots.txt`. Crawlers may read pages, so they see the noindex header; a crawler kept out by `robots.txt` never reads that header, and can still list a bare URL that another page links to. It lets through `/login`, `/api/auth/login` and everything under `/share/`. Anything else needs a valid site cookie: a page request goes to `/login?next=...`, an API request gets 401. The `next` value must be a path on this site, so no one can use the login page to send people to another site.
-- A unit test fails if any handler under `src/app/api` skips the cookie check, apart from `/api/auth/login`. A second test covers every route under `src/app/share/[token]/` and fails unless it requires the site cookie or that link's cookie, apart from the share login route.
-- Login: before comparing, the server adds one to the failure count for this scope and address in a single database statement, and refuses at once if that address or the whole scope is blocked (change 23). It then hashes the typed password and `SITE_PASSWORD` with SHA-256 and compares the hashes with `timingSafeEqual`, which takes the same time whatever the length. A right password clears the count. A wrong one waits about a second before the reply. Counting before comparing means a burst of parallel guesses cannot all slip in before the first failure is written.
-- Two cookies, two keys. The site cookie, `site`, holds `{ typ: "site", exp }`, signed with HMAC-SHA256 under a key made from `AUTH_SECRET` and `SITE_PASSWORD`. A share cookie, `share_<linkId>`, holds `{ typ: "share", linkId, credentialVersion, exp }`, signed under a separate key made from `AUTH_SECRET` alone, so changing the site password leaves venue viewers signed in. Each check rejects the wrong `typ`, so a share cookie copied into the site cookie's place fails. All cookies are HttpOnly, Secure and SameSite=Lax and last 30 days. Share cookies use `Path=/share/<token>`, one per link, so two links never overwrite each other.
-- `/share/<token>` opens if the site cookie is valid, or if this link's own cookie is valid and names the link found from the token. Either way the server checks on every request that the link is on, its layout and wedding still exist, and the cookie's credential version matches. An unknown token still runs a password check against a dummy hash, so timing does not reveal which tokens exist.
-- `X-Robots-Tag: noindex, nofollow` goes on every response, plus a robots meta tag. Share pages also send `Referrer-Policy: no-referrer`, so when a viewer follows a link or the page loads a file from another site, the browser does not send the page address and the token in it.
+- `src/proxy.ts` runs on every path except Next's static files, the font files and `robots.txt`. Crawlers may read pages, so they see the noindex header; a crawler kept out by `robots.txt` never reads that header, and can still list a bare URL that another page links to. It answers 403 to a change sent from another site, lets through the public pages and routes (`/login`, `/setup`, `/invite`, `/reset` and their API routes, the tab icon and manifest), the cron route (which checks its own secret) and everything under `/share/` (its own check), and requires a validly signed, unexpired session cookie for the rest: a page request goes to `/login?next=...`, an API request gets 401. The `next` value must be a path on this site. The proxy never reads the database, so a session that was ended still gets past it; that is why every handler and page checks again.
+- Every route handler is wrapped by a guard in `src/server/auth/guards.ts` and every page calls one in `src/server/auth/pages.ts`: public, any signed-in user, admin, a wedding role (found from the wedding, layout, guest, group, rule, share link, invite or restore job in the request), venue access, share, or the cron secret. A test imports every route file and holds each one's policy to a table, so a new route or a changed policy fails until the table says so too (`src/server/auth/route-auth.test.ts`). A change sent by a browser page must also name the signed-in user in a header; a page left open from before someone else signed in on that browser gets 401 `stale_page`.
+- Accounts. An email is stored trimmed and in lower case; a password is 10 to 200 characters and stored as argon2id. Sign-in counts the try before comparing, per address, per account and across all addresses, in one statement, so a burst of parallel guesses cannot all slip in; it compares against a dummy hash for an unknown email, and waits about a second after a wrong guess.
+- Sessions. The cookie `sp_session` holds a random secret signed under a key made from `AUTH_SECRET`; the `sessions` table holds the secret's hash. A session lasts 30 days from its last use and never more than 365 days from sign-in. It is HttpOnly, Secure and SameSite=Lax. A forged or unsigned cookie is refused before the database is read. Changing a password, Sign out everywhere and a reset link end sessions.
+- Access to a wedding. `weddingAccess` returns the caller's role, or nothing for a non-member who is not an admin, and every caller answers 404 then, so a stranger cannot tell the wedding exists. A member below the role a route needs gets 403. An admin acts as an owner everywhere; each use is logged and shown as the "Admin view" banner.
+- Share cookies. A share cookie, `sp_share_<linkId>`, holds `{ typ: "share", linkId, credentialVersion, exp }`, signed under a key made from `AUTH_SECRET` alone, so a share viewer stays signed in until the link's password changes or it is turned off. Each check rejects the wrong `typ`. Share cookies use `Path=/share/<token>`, one per link, so two links never overwrite each other.
+- `/share/<token>` opens if this link's own cookie is valid and names the link found from the token, or if the request has a session of a member of the link's wedding (any role) or an admin. Either way the server checks on every request that the link is on, its layout and wedding still exist, and the cookie's credential version matches. An unknown token still runs a password check against a dummy hash, so timing does not reveal which tokens exist.
+- First-run setup, invites and reset links: `/setup` is described in change 30 and DECISIONS 124; invite and reset tokens in DECISIONS 125 and 126. Their routes act only on a token, are counted per address and answer an unknown token after about a second.
+- `X-Robots-Tag: noindex, nofollow` goes on every response, plus a robots meta tag. Share, invite and reset pages also send `Referrer-Policy: no-referrer`, so when a viewer follows a link or the page loads a file from another site, the browser does not send the page address and the token in it.
 
 ### Saving layouts
 
@@ -339,7 +388,7 @@ All changes go through route handlers; the app uses no Server Actions. The Next.
 
 ### Migrations
 
-The Vercel build runs `drizzle-kit migrate` only when `VERCEL_ENV` is `production`. Migrations add before they remove: a new column arrives in one release, and the old one goes in a later release, so the deployment still serving during a build keeps working.
+The Vercel build (`npm run vercel-build`) checks the production settings (section 11), then runs `drizzle-kit migrate` only when `VERCEL_ENV` is `production`. Migrations add before they remove: a new column arrives in one release, and the old one goes in a later release, so the deployment still serving during a build keeps working.
 
 ---
 
@@ -421,15 +470,17 @@ The zoom level and the zoom in, zoom out, 100% and fit buttons sit in the bottom
 
 **Ceremony.** The ceremony shape panel holds the seating block tool, a single chair row, the ceremony fixtures (ceremony structure with an editable label, officiant spot, aisle runner, musicians, sound desk, welcome sign, entrance) and plain shapes; it has no tables. The seating block tool asks for rows, chairs per row, aisle width and side labels, with defaults of 20 in per chair, 36 in from one row to the next, a 6 ft aisle, and "Noa's side" and "Aiden's side". It places one chair row per side per row, numbered from the front. After that each row is its own item: "Select block" picks all rows of a block to move or change together, "Add row behind" adds a row 36 in back with the next number, and changing a row's chair count uses the same unseat dialog as tables. Rows can be reserved with a label such as "Family, row 1" or seated by name.
 
-**Annotations.** Sticky note, text, arrow, line, box and circle in six colors, on the notes layer, with a button to show or hide all notes and one to lock them. Each note records its author from the Noa / Aiden switch. An arrow attached to a table or fixture at either end recomputes that end when the item moves. The Notes tab lists every note; clicking one pans to it; marking it done greys it out.
+**Annotations.** Sticky note, text, arrow, line, box and circle in six colors, on the notes layer, with a button to show or hide all notes and one to lock them. Each note records its author, the signed-in person's name and account id. An arrow attached to a table or fixture at either end recomputes that end when the item moves. The Notes tab lists every note; clicking one pans to it; marking it done greys it out.
 
 **Exports.** The floor plan export dialog offers PDF or SVG, detail level (full names, initials, or table names only), include notes (on by default), and Letter or Tabloid paper in landscape. The print renderer draws only the chosen level, with plain SVG attributes and no CSS classes or variables, since the PDF library ignores page CSS. Names use the same label fitting as the screen at the paper's scale, at 6 pt or larger; the dialog suggests Tabloid or initials when Letter would push names smaller, and Tabloid is the default for full names. Static Noto Sans Regular and Bold files are embedded so accents print. The table list (PDF and CSV) gives each table with its guests and meal counts and leaves out guest notes. The escort card list (PDF and CSV) sorts seated guests by last name with their table number. The ceremony list (PDF) gives reserved rows and named seats. CSV files start with a byte order mark so Excel reads accents, and cells that start with `=`, `+`, `-` or `@` get a leading apostrophe, so Excel shows them as text and never runs them as formulas.
 
-**Backup and restore.** Backup downloads one JSON file with the wedding's guests, groups, rules, layouts and the templates they use, images included. Restore creates a new wedding. It builds one map from old ids to new ones and rewrites every guest id inside seats, partner links, group members and rule guests through it, then writes each canvas through `writeCanvas()`. Templates follow change 5. Vercel refuses request bodies over 4.5 MB, so the browser sends the restore in steps: the wedding's rows, then each layout, then each template, then each image as raw bytes. Share links are left out.
+**Backup and restore.** Backup downloads one JSON file (format `seat-plan-backup`, version 2, which also reads version 1) with the wedding's guests, groups, rules, layouts, members and the templates they use, images included. Restore creates a new wedding. It builds one map from old ids to new ones and rewrites every guest id inside seats, partner links, group members and rule guests through it, then writes each canvas through `writeCanvas()`. Templates follow change 5. Vercel refuses request bodies over 4.5 MB, so the browser sends the restore in steps: the wedding's rows, then each layout, then each template, then each image as raw bytes. Share links are left out.
+
+**Stored backups.** The same file is also made every night. `vercel.json` has a cron entry (`0 8 * * *`) for `/api/cron/backups`, which takes only the `CRON_SECRET` bearer. The job (`src/server/backups/runner.ts`) saves each wedding whose content hash changed, gzipped, to a private Vercel Blob store (a folder named by `BACKUP_STORE_DIR` locally), stores each floor plan image once by hash, gives a deleted wedding one final backup, then prunes by the retention rule (30 days, then the first of each month for 12 months, the newest of every wedding always, a final backup for 12 months). It never lists the store and stays within 1,500 uploads in any 30 days. Owners see a wedding's saved backups in Wedding settings, with Back up now, Download and Restore as a new wedding; the admin Backups page shows every run and backup. A restore from the store works as a restore from a file, on the server (DECISIONS 136).
 
 **Share view.** The share page shows the layout in View mode with search (when names are on), nothing else. The server builds its data from the link's settings (change 24). The page fetches again when it regains focus and every 60 seconds, and when the link has been turned off or its password changed, it clears the plan and shows the password page.
 
-**Seed.** `npm run seed` makes a demo wedding from a fixed random seed, so every run gives the same data: about 120 made-up guests, 8 groups, 20 couples and 5 rules. Its reception layout has about 14 tables of mixed presets, including a head table and a sweetheart table, with about 100 guests seated, one broken apart rule, one split couple, one tight table, and a few notes including an attached arrow. Its ceremony layout has a seating block, one reserved row and a few named seats. The seed also makes the empty Toronto Beach Club template. `npm run seed:perf` makes the 40 table layout for the speed test. Neither holds real data or the password.
+**Seed.** `npm run seed` makes a demo wedding from a fixed random seed, so every run gives the same data: about 120 made-up guests, 8 groups, 20 couples and 5 rules. Its reception layout has about 14 tables of mixed presets, including a head table and a sweetheart table, with about 100 guests seated, one broken apart rule, one split couple, one tight table, and a few notes including an attached arrow. Its ceremony layout has a seating block, one reserved row and a few named seats. The seed needs the first account (it belongs to the first admin, who is its owner and the author of its notes) and uses the Toronto Beach Club template that migrations already hold. `npm run seed:perf` makes the 40 table layout for the speed test. Neither holds real data or the password.
 
 ---
 
@@ -457,7 +508,8 @@ seat-plan/
     proxy.ts
     app/
       layout.tsx  globals.css  robots.ts
-      login/
+      login/  setup/  invite/  reset/
+      (app)/account/  (app)/admin/
       (app)/page.tsx                                       # home
       (app)/w/[weddingId]/(tabs)/layouts|guests|groups|rules|venues|links/page.tsx
       (app)/w/[weddingId]/layouts/[layoutId]/page.tsx      # editor
@@ -475,11 +527,13 @@ seat-plan/
       backup/  schema.ts  remap.ts
     server/                       # each file imports 'server-only'
       db/  schema.ts  client.ts
-      auth/  password.ts  cookies.ts  throttle.ts  require.ts
+      auth/  guards.ts  pages.ts  access.ts  session.ts  tokens.ts  passwords.ts  throttle.ts  share.ts  setup.ts  venue-access.ts
       canvas-write.ts             # writeCanvas(): every canvas write goes through here
       repo/  weddings.ts  layouts.ts  guests.ts  groups.ts  rules.ts  venues.ts  share-links.ts
+             users.ts  sessions.ts  members.ts  invites.ts  password-resets.ts  activity.ts  admin-*.ts  backups.ts
       ai/  floorplan-import.ts
       backup.ts
+      backups/  runner.ts  build.ts  restore.ts  store-vercel.ts  store-fs.ts
     client/
       sync/  outbox.ts  autosave.ts  row-save.ts  tab-lock.ts  ConflictDialog.tsx
       editor/  Editor.tsx  Viewport.tsx  WorldSvg.tsx  Overlay.tsx
@@ -495,15 +549,15 @@ seat-plan/
 - **Vitest, pure modules.** Every file in `src/domain/` has tests: seat placement, Fit seats and seat moves on resize, neighbors per side rule, detail level switching, label fitting (no two label boxes overlap in the seeded layout, on screen or in print), camera math, snapping, gap distances, rules (with the 8 ms benchmark), closeness, CSV decode, column guessing, partner matching, name folding and duplicates, re-import diff, the pdf.js reader against generated vector PDFs (one with a rotated page), AI draft schema and conversion, scale from labels, unit formatting, backup id remapping, print SVG (no class or style attributes; each seated name appears once).
 - **Vitest, server.** Repository functions and route handlers run against a real local Postgres test database: version conflicts, saved-twice protection, one seat per guest, guest removal across layouts racing a save, partner links pointing both ways, share link sign-out, a share cookie used as a site cookie (401), the login counter under parallel guesses, and a check that `layout_seats` matches every stored canvas.
 - **Playwright.** Two projects for every flow: `desktop` at 1440 x 900 and `phone` at 390 x 844 with touch. They run against a production build and a fresh, seeded test database. Touch drags and long presses go through Chrome's own touch events, as they would in Chrome on a phone. A third `perf` project runs the speed test. The AI import tests point the SDK at a small local stand-in server (the SDK honors `ANTHROPIC_BASE_URL`) that returns recorded replies, so they need no key.
-- **Signed-out access.** One test visits every page and API route without the cookie and expects a redirect or 401, with no guest name anywhere in the reply. Another signs in, records every response the app loads, and checks none contains the password.
-- **Secret check.** `scripts/check-secrets.ts` reads `SITE_PASSWORD` from the environment and fails if it appears in `.next/static` or anywhere in `git log -p --all`. Tests sign in with a password made fresh for each run, so the real one never appears in a test.
+- **Signed-out access and isolation.** One test visits every page and API route without a session and expects a redirect or 401 (the public ones, their documented answer), with no guest name anywhere in the reply. Another signs in, records every response the app loads, and checks none contains a password or `AUTH_SECRET`. A third signs in as someone who is not a member and walks the same tables as an outsider: every page is "Not found", every wedding route 404, every admin route 404, and the owner's data is unchanged. Unit tests hold every route's guard to a table.
+- **Secret check.** `scripts/check-secrets.ts` reads `AUTH_SECRET` (and `SITE_PASSWORD`, `CRON_SECRET` and `BLOB_READ_WRITE_TOKEN` when set) from the environment and fails if it appears in `.next/static` or anywhere in `git log -p --all`. Tests make their own accounts with passwords made fresh for each run, so no real one appears in a test.
 - **CI.** GitHub Actions with a Postgres service: typecheck, lint, Vitest, build, bundle secret check, Playwright. If you add the real password as a GitHub secret named `SITE_PASSWORD_REAL`, CI also runs the history check.
 
 | # | Acceptance check (spec section 13) | Tests | Who |
 |---|---|---|---|
-| 1 | Password page in a private window; wrong password errors; right one opens and survives a browser restart | `e2e/auth.spec.ts`; cookie attributes and 30 day expiry | Tests, and you for a real browser restart |
-| 2 | No page or route returns data without the cookie; password not in bundle or git history | `e2e/signed-out.spec.ts`; route auth unit tests; `check-secrets` | Tests |
-| 3 | Noa adds a table on a laptop; Aiden reloads on a phone and sees it | `e2e/two-devices.spec.ts` (desktop and phone contexts) | Tests, and you on real devices |
+| 1 | Sign-in page in a private window; a wrong password errors; the right one opens and survives a browser restart (a session lasts 30 days from its last use) | `e2e/auth.spec.ts`; cookie attributes and 30 day expiry | Tests, and you for a real browser restart |
+| 2 | No page or route returns data without a session; no secret in the bundle or git history | `e2e/signed-out.spec.ts`; route auth unit tests; `check-secrets` | Tests |
+| 3 | One planner adds a table on a laptop; the same account on a phone sees it | `e2e/two-devices.spec.ts` (desktop and phone contexts) | Tests, and you on real devices |
 | 4 | Phone opens in View, drag pans without moving anything, Edit allows changes; laptop opens in Edit | `e2e/modes.spec.ts` | Tests |
 | 5 | Search a name, click it, canvas pans to the seat, on phone and laptop | `e2e/search.spec.ts` | Tests |
 | 6 | Dragging a name onto a table seats them (dark blue); unseating turns the circle grey | `e2e/seating.spec.ts` | Tests |
@@ -546,19 +600,18 @@ Same order as the spec. Each milestone goes on its own branch. At the end I run 
 9. **Annotations.** Note tools, notes layer controls, attached arrows, Notes tab.
 10. **Exports, backup and share links.** Floor plan PDF and SVG with the dialog's options, table list, escort card and ceremony exports, backup and stepwise restore, share links (create, change password, turn off, names and notes options), the Links tab, and the share view.
 
+After milestone 10 came the multi-user version, in this order: the accounts schema, sessions and sign-in, first-run setup and the end-to-end tests signing in as their own accounts; partner names; wedding membership checks on every page and route, with the cross-user isolation test; the venue library and Liberty Grand template; members, invites, the account page and the admin area; edits attributed to accounts with per-user drafts; stored backups; admin statistics and the AI import cap; the rebrand. Changes 30 to 37 say what each did to the spec.
+
 ---
 
 ## 11. Deploy steps for you
 
-Once the repo exists and holds milestone 1:
+`README.md` holds the live steps, with a "Going live with this version" checklist for an existing site, so they are not repeated here. In outline, once the repo exists:
 
-1. In Vercel, choose Add New, then Project, and import the GitHub repo. Keep the defaults; the repo's `vercel.json` sets the build command. This first deployment fails, because there is no database or password yet. That is expected; step 4 redeploys it.
-2. In the project, open Storage, then the Marketplace, then Neon. Create a new database in **AWS us-east-1**, where Vercel runs the app by default, and connect it to **Production only** (change 29).
-3. In Settings, then Environment Variables, add these for Production:
-   - `SITE_PASSWORD`: the site password (see the advice under section 2).
-   - `AUTH_SECRET`: a random string of at least 32 characters. In a terminal: `openssl rand -base64 32`.
-   - `ANTHROPIC_API_KEY`: needed from milestone 7.
-4. Redeploy. The build checks these settings and names any that are missing, runs the database migrations, builds the app and runs the secret check on the build output.
-5. Open the URL in a private window. You should see the password page.
+1. Import the GitHub repo in Vercel. `vercel.json` sets the build command (`npm run vercel-build`) and the nightly backup cron. The first deployment fails, because there is no database or secret yet. That is expected.
+2. Connect a Neon database in **AWS us-east-1** to **Production only** (change 29), and create a **private** Blob store connected to **Production** (change 35).
+3. Set `AUTH_SECRET` and `CRON_SECRET` for Production, plus `SITE_PASSWORD` and `BOOTSTRAP_ADMIN_EMAIL` until setup is done, and `ANTHROPIC_API_KEY` for the floor plan import.
+4. Redeploy. The build names any missing setting, runs the migrations, builds the app and runs the secret check.
+5. Open `/setup`, make the first account, then invite everyone else from the app. Check the nightly backup once (Admin, then Backups), then remove `SITE_PASSWORD`.
 
-To run it on a laptop of your own: copy `env.example` to `.env.local`, fill in the same values plus a local `DATABASE_URL`, then run `npm install`, `npm run db:migrate`, `npm run seed` and `npm run dev`.
+To run it on a laptop of your own: copy `env.example` to `.env.local`, fill in a local `DATABASE_URL`, `AUTH_SECRET` and `SITE_PASSWORD`, run `npm install`, `npm run db:migrate` and `npm run dev`, make the first account at `/setup`, then (optional) `npm run seed`, which needs that account.
