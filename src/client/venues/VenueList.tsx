@@ -133,7 +133,7 @@ function VenueCard({ weddingId, venue }: { weddingId: string; venue: VenueSummar
             onClick={() => void makeCopy.copy()}
             disabled={makeCopy.busy}
             aria-label={`Make my own copy of ${venue.name}`}
-            className={`${secondaryButton} flex-1`}
+            className={`${secondaryButton} flex-[2] whitespace-nowrap`}
             data-testid="venue-copy"
           >
             {makeCopy.busy ? 'Copying…' : 'Make my own copy'}

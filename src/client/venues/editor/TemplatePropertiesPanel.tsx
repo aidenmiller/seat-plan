@@ -70,7 +70,8 @@ export function TemplatePropertiesPanel({
     return (
       <Section title="Venue" testId="template-properties">
         <p className="text-sm text-stone-700">{itemCount === 0 ? 'Nothing drawn yet.' : `${itemCount} ${itemCount === 1 ? 'item' : 'items'} on the plan.`}</p>
-        <p className="text-sm text-stone-600">Pick a tool to draw walls, rooms, doors and the rest, or import a floor plan.</p>
+        {/* Not for someone who can only view the venue: they have no tools. */}
+        {canEdit && <p className="text-sm text-stone-600">Pick a tool to draw walls, rooms, doors and the rest, or import a floor plan.</p>}
         {onImport && (
           <button type="button" className={smallButton} onClick={onImport} disabled={!canEdit} data-testid="import-plan-properties">
             Import a floor plan

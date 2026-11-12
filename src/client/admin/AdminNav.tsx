@@ -9,6 +9,7 @@ export const ADMIN_SECTIONS: readonly { href: string; label: string; exact?: boo
   { href: '/admin/weddings', label: 'Weddings' },
   { href: '/admin/users', label: 'People' },
   { href: '/admin/venues', label: 'Venues' },
+  { href: '/admin/backups', label: 'Backups' },
 ]
 
 /** The admin pages' tabs. On a phone they scroll sideways inside their own strip, never the page. */
