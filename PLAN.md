@@ -236,7 +236,7 @@ Couple rules have no rows (change 8). One pure function returns the wedding's ru
 
 ### Accounts, membership and backups (changes 30 to 36)
 
-Migrations 0005 to 0009 add these (0005 the tables, 0006 the backfill and the last-owner trigger, 0007 partner names, 0008 the Liberty Grand template, 0009 backups).
+Migrations 0005 to 0010 add these (0005 the tables, 0006 the backfill and the last-owner trigger, 0007 partner names, 0008 the Liberty Grand template, 0009 backups).
 
 | Table | Holds |
 |---|---|
