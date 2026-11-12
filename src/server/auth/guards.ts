@@ -1,9 +1,10 @@
 import 'server-only'
 import { NextResponse, type NextRequest } from 'next/server'
+import { activityKind, routeLabel } from '@/domain/activity'
 import { json, notFound } from '../api-route'
 import { runAfterResponse } from '../after-response'
 import { getDb } from '../db/client'
-import { recordEvent } from '../repo/activity'
+import { countWrite, recordEvent } from '../repo/activity'
 import { touchSession, type SessionLookup } from '../repo/sessions'
 import {
   effectiveRole,
@@ -35,7 +36,10 @@ import { requireTemplate, type TemplateAccess, type Viewer } from './venue-acces
  *     this browser, and another site's forms and scripts, which cannot add
  *     the header.
  * Then each wrapper's own checks. After the reply, the session is touched
- * (at most every 10 minutes) and the browser's cookie lifetime renewed with it.
+ * (at most every 10 minutes) and the browser's cookie lifetime renewed with it,
+ * and a change that worked (any method but GET, HEAD or OPTIONS, status
+ * below 400) adds one to its hourly usage counter (countWrite), once the
+ * reply has gone.
  *
  * A non-member gets 404 for a wedding, never 403, so they cannot tell it
  * exists. A member whose role is too low gets 403 { error: 'forbidden' }.
@@ -98,11 +102,22 @@ async function signedIn(req: NextRequest): Promise<Signed> {
   return { ok: true, session }
 }
 
-/** After a reply to a signed-in request: renew the cookie and touch the session when due. */
-async function afterSignedIn(req: NextRequest, session: SessionLookup, res: Response): Promise<Response> {
+/**
+ * After a reply to a signed-in request: renew the cookie and touch the session
+ * when due, and count a change that worked. `weddingId` is the wedding a
+ * wedding route acted on.
+ */
+async function afterSignedIn(req: NextRequest, session: SessionLookup, res: Response, weddingId: string | null = null): Promise<Response> {
   if (session.touchDue) {
     refreshSessionCookie(res, req)
     await runAfterResponse(() => touchSession(getDb(), session.user))
+  }
+  if (isUnsafeMethod(req.method) && res.status < 400) {
+    // The kind is worked out inside, so nothing here can throw into the reply.
+    await runAfterResponse(async () => {
+      const kind = activityKind(routeLabel(req.method, req.nextUrl.pathname))
+      if (kind) await countWrite(getDb(), { userId: session.user.id, weddingId, kind })
+    })
   }
   return res
 }
@@ -185,7 +200,7 @@ export function withWeddingRole<Ctx>(
     // Logged before the handler runs, so an attempt that fails part way is still on record.
     if (access.viaAdmin) await recordAdminAccess(req, access, resolver.name)
     const res = await handler(req, ctx, access)
-    return afterSignedIn(req, signed.session, res)
+    return afterSignedIn(req, signed.session, res, access.weddingId)
   })
 }
 

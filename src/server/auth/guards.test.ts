@@ -1,12 +1,12 @@
 /**
  * The route guards with the database and session lookups mocked: the order of
  * the checks, what each refusal looks like, the admin log, the session touch,
- * and the policy tag on every wrapper.
+ * the usage counter, and the policy tag on every wrapper.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getDb } from '../db/client'
-import { recordEvent } from '../repo/activity'
+import { countWrite, recordEvent } from '../repo/activity'
 import { findSession, touchSession } from '../repo/sessions'
 import { weddingAccess } from './access'
 import { AUTH_POLICY, policyOf, publicRoute, withAdmin, withUser, withVenueAccess, withWeddingRole } from './guards'
@@ -16,7 +16,7 @@ import { requireTemplate } from './venue-access'
 
 vi.mock('../db/client', () => ({ getDb: vi.fn() }))
 vi.mock('../repo/sessions', () => ({ findSession: vi.fn(), touchSession: vi.fn() }))
-vi.mock('../repo/activity', () => ({ recordEvent: vi.fn() }))
+vi.mock('../repo/activity', () => ({ recordEvent: vi.fn(), countWrite: vi.fn() }))
 vi.mock('./access', async (importOriginal) => ({ ...(await importOriginal<typeof import('./access')>()), weddingAccess: vi.fn() }))
 vi.mock('./venue-access', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./venue-access')>()),
@@ -47,6 +47,7 @@ beforeEach(() => {
   vi.mocked(findSession).mockReset().mockResolvedValue({ user: member, touchDue: false })
   vi.mocked(touchSession).mockReset().mockResolvedValue(true)
   vi.mocked(recordEvent).mockReset().mockResolvedValue(undefined)
+  vi.mocked(countWrite).mockReset().mockResolvedValue(undefined)
   vi.mocked(weddingAccess).mockReset()
   vi.mocked(requireTemplate).mockReset()
 })
@@ -322,6 +323,54 @@ describe('withVenueAccess', () => {
     const res = await withVenueAccess('read', { name: 'none', resolve: async () => null }, handler)(request('GET'), templateCtx)
     expect(res.status).toBe(404)
     expect(requireTemplate).not.toHaveBeenCalled()
+  })
+})
+
+describe('counting changes (the admin pages’ usage counters)', () => {
+  const layoutPath = `/api/layouts/${TEMPLATE_ID}`
+  beforeEach(() => {
+    vi.mocked(weddingAccess).mockResolvedValue({ user: member, weddingId: WEDDING_ID, role: 'editor', viaAdmin: false })
+  })
+
+  it('counts a change that worked once, with the user, the wedding and the kind its route has', async () => {
+    const res = await withWeddingRole(resolverTo(WEDDING_ID), 'editor', async () => ok())(request('PUT', { path: layoutPath }), ctx)
+    expect(res.status).toBe(200)
+    expect(countWrite).toHaveBeenCalledTimes(1)
+    expect(countWrite).toHaveBeenCalledWith(FAKE_DB, { userId: USER_ID, weddingId: WEDDING_ID, kind: 'write.layout' })
+  })
+
+  it('counts a venue change with no wedding', async () => {
+    vi.mocked(requireTemplate).mockResolvedValue({ ok: true, access: { read: true, edit: true, library: false, ownerUserId: USER_ID, ownerName: 'Pat' } })
+    const byTemplate = { name: 'byTemplateId', resolve: async () => TEMPLATE_ID }
+    await withVenueAccess('write', byTemplate, async () => ok())(request('PATCH', { path: `/api/venues/${TEMPLATE_ID}` }), ctx)
+    expect(countWrite).toHaveBeenCalledWith(FAKE_DB, { userId: USER_ID, weddingId: null, kind: 'write.venue' })
+  })
+
+  it('counts no read, no refusal, no failure, and no change that logs an event of its own', async () => {
+    const route = (status: number) => withWeddingRole(resolverTo(WEDDING_ID), 'editor', async () => NextResponse.json({}, { status }))
+    await route(200)(request('GET', { path: layoutPath }), ctx)
+    await route(200)(request('HEAD', { path: layoutPath }), ctx)
+    await route(409)(request('PUT', { path: layoutPath }), ctx)
+    await route(422)(request('POST', { path: layoutPath }), ctx)
+    await route(500)(request('PUT', { path: layoutPath }), ctx)
+    await route(200)(request('DELETE', { path: `/api/weddings/${WEDDING_ID}` }), ctx)
+    await route(200)(request('PATCH', { path: `/api/weddings/${WEDDING_ID}/members/${USER_ID}` }), ctx)
+    // Refused by the guard: no access.
+    vi.mocked(weddingAccess).mockResolvedValue(null)
+    await route(200)(request('PUT', { path: layoutPath }), ctx)
+    // The admin routes log their own events.
+    vi.mocked(findSession).mockResolvedValue({ user: admin, touchDue: false })
+    await withAdmin(async () => ok())(request('POST', { path: `/api/admin/weddings/${WEDDING_ID}/undelete` }), {})
+    expect(countWrite).not.toHaveBeenCalled()
+  })
+
+  it('answers as usual when counting fails', async () => {
+    vi.mocked(countWrite).mockRejectedValue(new Error('log is down'))
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await withWeddingRole(resolverTo(WEDDING_ID), 'editor', async () => ok())(request('PUT', { path: layoutPath }), ctx)
+    expect(await body(res)).toEqual({ status: 200, body: { ok: true } })
+    expect(countWrite).toHaveBeenCalledTimes(1)
+    spy.mockRestore()
   })
 })
 

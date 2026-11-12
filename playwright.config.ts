@@ -83,6 +83,8 @@ export default defineConfig({
       ANTHROPIC_BASE_URL: process.env.E2E_STAND_IN_URL,
       ANTHROPIC_API_KEY: 'stand-in-dummy-key',
       FLOORPLAN_MODEL: '',
+      // The tests import many plans as the same planners; the cap itself is tested in import-quota.int.test.ts.
+      AI_IMPORT_MONTHLY_LIMIT: '1000',
     },
   },
 })
