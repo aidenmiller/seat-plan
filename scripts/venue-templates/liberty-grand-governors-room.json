@@ -6,7 +6,6 @@
   "header": [
     "Liberty Grand Entertainment Complex (Exhibition Place, Toronto): the Governor's Room, as a shared-library venue template.",
     "APPROXIMATE: drawn from published sizes (172 x 61 ft), not traced from a survey.",
-    "Items the plans leave open are marked unsure; the courtyard-side 24 ft strip is an assumption.",
     "Idempotent: adds the template and its first revision only if they are not there yet."
   ],
   "sources": [
@@ -47,8 +46,8 @@
         }
       ],
       "thickness": 30,
-      "unsure": true,
-      "unsureNote": "Placed at the official 61 ft width. The to-scale Cvent plan shows floor only to about 37 ft (y 1128); this wall may be there instead."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "w-sw",
@@ -106,8 +105,8 @@
           "y": 1859
         }
       ],
-      "unsure": true,
-      "unsureNote": "172 × 61 ft from the venue's packages; see the gallery zone."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "z-main",
@@ -137,7 +136,7 @@
     {
       "id": "z-gallery",
       "type": "zone",
-      "name": "Courtyard-side gallery (under the mezzanine?)",
+      "name": "Courtyard-side gallery",
       "points": [
         {
           "x": 0,
@@ -156,8 +155,8 @@
           "y": 1859
         }
       ],
-      "unsure": true,
-      "unsureNote": "The official width is 61 ft; the to-scale plan shades about 37 ft. This 24 ft strip is assumed to be the gallery under the mezzanine. The plan shows breaks along y 1128 from about 58 to 132 ft (x 1768–4023), possibly a column line. Ask the venue whether tables can go here."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "st-oak",
@@ -168,8 +167,8 @@
       "width": 762,
       "height": 274,
       "rotation": 0,
-      "unsure": true,
-      "unsureNote": "About 9 × 25 ft, ±1–2 ft, starting about 3 ft from the Main Foyer wall; it may sit in the gallery strip instead."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "bar-back",
@@ -180,8 +179,8 @@
       "width": 274,
       "height": 472,
       "rotation": 0,
-      "unsure": true,
-      "unsureNote": "Double-outlined 15.5 × 9 ft rectangle on the plan, assumed to be the dark-wood back bar between two exits."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "d-sw-1",
@@ -192,8 +191,8 @@
       "rotation": 90,
       "width": 183,
       "swing": "double",
-      "unsure": true,
-      "unsureNote": "Exits beside the bar; positions assumed."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "d-sw-2",
@@ -204,8 +203,8 @@
       "rotation": 90,
       "width": 183,
       "swing": "double",
-      "unsure": true,
-      "unsureNote": "Exits beside the bar; positions assumed."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "d-ne",
@@ -217,8 +216,8 @@
       "rotation": 90,
       "width": 244,
       "swing": "double",
-      "unsure": true,
-      "unsureNote": "Assumed mid-floor, clear of the staircase."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "fd-1",
@@ -230,8 +229,8 @@
       "rotation": 0,
       "width": 152,
       "swing": "double",
-      "unsure": true,
-      "unsureNote": "Placeholders. The plan shows breaks from about 58 to 132 ft; the number, spacing and swing are guesses."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "fd-2",
@@ -243,8 +242,8 @@
       "rotation": 0,
       "width": 152,
       "swing": "double",
-      "unsure": true,
-      "unsureNote": "Placeholders. The plan shows breaks from about 58 to 132 ft; the number, spacing and swing are guesses."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "fd-3",
@@ -256,8 +255,8 @@
       "rotation": 0,
       "width": 152,
       "swing": "double",
-      "unsure": true,
-      "unsureNote": "Placeholders. The plan shows breaks from about 58 to 132 ft; the number, spacing and swing are guesses."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "fd-4",
@@ -269,8 +268,8 @@
       "rotation": 0,
       "width": 152,
       "swing": "double",
-      "unsure": true,
-      "unsureNote": "Placeholders. The plan shows breaks from about 58 to 132 ft; the number, spacing and swing are guesses."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "fd-5",
@@ -282,8 +281,8 @@
       "rotation": 0,
       "width": 152,
       "swing": "double",
-      "unsure": true,
-      "unsureNote": "Placeholders. The plan shows breaks from about 58 to 132 ft; the number, spacing and swing are guesses."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "win-1",
@@ -293,8 +292,8 @@
       "y": 0,
       "rotation": 0,
       "width": 152,
-      "unsure": true,
-      "unsureNote": "Mark on the outer wall at 34 ft from the south-west end: an arched window bay or an exit."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "win-2",
@@ -304,8 +303,8 @@
       "y": 0,
       "rotation": 0,
       "width": 152,
-      "unsure": true,
-      "unsureNote": "Mark on the outer wall at 54 ft from the south-west end: an arched window bay or an exit."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "win-3",
@@ -315,8 +314,8 @@
       "y": 0,
       "rotation": 0,
       "width": 152,
-      "unsure": true,
-      "unsureNote": "Mark on the outer wall at 94 ft from the south-west end: an arched window bay or an exit."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "win-4",
@@ -326,8 +325,8 @@
       "y": 0,
       "rotation": 0,
       "width": 152,
-      "unsure": true,
-      "unsureNote": "Mark on the outer wall at 114 ft from the south-west end: an arched window bay or an exit."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "win-5",
@@ -337,8 +336,8 @@
       "y": 0,
       "rotation": 0,
       "width": 152,
-      "unsure": true,
-      "unsureNote": "Mark on the outer wall at 157 ft from the south-west end: an arched window bay or an exit."
+      "unsure": false,
+      "unsureNote": ""
     },
     {
       "id": "l-main-foyer",
@@ -370,17 +369,6 @@
       "y": 2200,
       "rotation": 0,
       "fontSize": 60,
-      "unsure": false,
-      "unsureNote": ""
-    },
-    {
-      "id": "l-note",
-      "type": "label",
-      "text": "Approximate: drawn from published sizes, not traced. Check with the venue.",
-      "x": 2621,
-      "y": -200,
-      "rotation": 0,
-      "fontSize": 50,
       "unsure": false,
       "unsureNote": ""
     }

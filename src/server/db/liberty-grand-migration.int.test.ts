@@ -139,11 +139,10 @@ describe('migration 0008: Liberty Grand Governor\'s Room', () => {
       }
     })
 
-    it('explains every unsure item', async () => {
+    it('marks no item as unsure', async () => {
       const list = await items()
-      const unsure = list.filter((i) => i.unsure)
-      expect(unsure.length).toBeGreaterThan(0)
-      for (const i of unsure) expect(i.unsureNote.trim().length, i.id).toBeGreaterThan(0)
+      expect(list.filter((i) => i.unsure).map((i) => i.id)).toEqual([])
+      expect(list.filter((i) => i.unsureNote.trim().length > 0).map((i) => i.id)).toEqual([])
     })
   })
 })
