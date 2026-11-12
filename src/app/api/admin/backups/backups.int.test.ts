@@ -179,6 +179,23 @@ describe('the admin’s backup routes', () => {
     await db.update(rules).set({ note: null }).where(eq(rules.id, w.ruleId))
   })
 
+  it('take the nightly run that ended last as the last one, so a second delivery that gave up waiting does not hide a good night', async () => {
+    const r = await routes()
+    // Later than every other run in this file.
+    const base = Date.now()
+    const at = (minutes: number) => new Date(base + minutes * 60_000)
+    await db.insert(backupRuns).values([
+      { trigger: 'cron', status: 'ok', startedAt: at(10), heartbeatAt: at(14), finishedAt: at(14) },
+      { trigger: 'cron', status: 'failed', startedAt: at(12), heartbeatAt: at(12), finishedAt: at(12), error: 'Did not run: another nightly run was still going.' },
+    ])
+    const overview = (await call(r.overview, 'GET', {}, cookies.admin)).body as AdminBackupsReply
+    expect(overview.lastCronRun).toEqual({ startedAt: at(10).toISOString(), status: 'ok' })
+    expect(overview.lastSuccessfulCronRunAt).toBe(at(10).toISOString())
+    // A night that could not start at all is the last one.
+    await db.insert(backupRuns).values({ trigger: 'cron', status: 'failed', startedAt: at(20), heartbeatAt: at(20), finishedAt: at(20), error: 'Did not run.' })
+    expect(((await call(r.overview, 'GET', {}, cookies.admin)).body as AdminBackupsReply).lastCronRun).toEqual({ startedAt: at(20).toISOString(), status: 'failed' })
+  })
+
   it('say when backups are not set up', async () => {
     const r = await routes()
     try {

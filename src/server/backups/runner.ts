@@ -32,8 +32,10 @@ import { backupPathname, BackupStoreError, imagePathname, type BackupStore } fro
  *     nothing, and a cron run records that as a failed run, so the admin page
  *     shows it.
  *  2. Reads one stored backup back (checkOneBackup, the self-check): the one
- *     checked longest ago. One read a night, so every backup is read back in
- *     turn; one found missing or damaged is marked unreadable and reported.
+ *     known good longest ago, each wedding's newest first. One read a night,
+ *     so every backup is read back in turn; one found missing or damaged is
+ *     marked unreadable and reported, and when it was its wedding's newest
+ *     this same run makes a fresh one.
  *  3. Lists the weddings to back up (orderedCandidates): every live wedding,
  *     and every wedding deleted in the last 12 months whose deletion is newer
  *     than its last readable backup (it gets one 'final' backup). Only
@@ -390,7 +392,8 @@ async function checkUploadLimit(db: Db, needed: number, kind: BackupKind, opts: 
  * Before anything else the backup is checked against the backup format
  * (format.ts), so a wedding that would not restore fails here, by field,
  * rather than be stored, or found "unchanged" since a backup that would not
- * restore either. A last backup marked unreadable is never "unchanged".
+ * restore either. A last backup marked unreadable, or one naming an image
+ * the store no longer has a row for, is never "unchanged".
  *
  * Images go up first, each once per store (backup_images, by sha256,
  * overwrite allowed since the bytes are the same), then the gzipped head,
@@ -417,7 +420,25 @@ export async function backupOneWedding(
   const fits = checkHeadJson(json)
   if (!fits.ok) throw new BackupError(`Not backed up: this wedding does not fit the backup format (${fits.problem}).`)
 
-  if (opts.kind !== 'final') {
+  // Each image once, by content: the ones the store has no row for go up with this backup.
+  const wanted = [...new Map(built.images.map((image) => [image.sha256, image])).values()]
+  const shas = wanted.map((image) => image.sha256)
+  const known =
+    shas.length === 0
+      ? new Set<string>()
+      : new Set(
+          (
+            await db
+              .select({ sha256: backupImages.sha256 })
+              .from(backupImages)
+              .where(and(eq(backupImages.storeId, store.id), inArray(backupImages.sha256, shas)))
+          ).map((r) => r.sha256),
+        )
+  const missing = wanted.filter((image) => !known.has(image.sha256))
+
+  // Unchanged: the same content as the newest backup, which is readable and whose images are all still in the
+  // store (one found missing on a download or restore is forgotten, read.ts, so it goes up again here).
+  if (opts.kind !== 'final' && missing.length === 0) {
     const [latest] = await db
       .select({ id: backups.id, contentSha256: backups.contentSha256, unreadableAt: backups.unreadableAt })
       .from(backups)
@@ -433,22 +454,6 @@ export async function backupOneWedding(
       if (checked) return { status: 'unchanged', backup: checked }
     }
   }
-
-  // Each image once, by content.
-  const wanted = [...new Map(built.images.map((image) => [image.sha256, image])).values()]
-  const shas = wanted.map((image) => image.sha256)
-  const known =
-    shas.length === 0
-      ? new Set<string>()
-      : new Set(
-          (
-            await db
-              .select({ sha256: backupImages.sha256 })
-              .from(backupImages)
-              .where(and(eq(backupImages.storeId, store.id), inArray(backupImages.sha256, shas)))
-          ).map((r) => r.sha256),
-        )
-  const missing = wanted.filter((image) => !known.has(image.sha256))
 
   await checkUploadLimit(db, missing.length + 1, opts.kind, opts)
 
@@ -515,10 +520,25 @@ export async function backupOneWedding(
 // ---------------------------------------------------------------- the self-check
 
 /**
- * Reads one stored backup back, the one checked longest ago (never-checked
- * first, then oldest): its file is there, matches its checksum, unzips and
- * fits the format (read.ts, openStoredBackup). One read a run, so the check
- * costs one Blob operation a night and still reaches every backup in turn.
+ * Which backup the self-check reads next: the one known good longest ago,
+ * known good being when it was written (its checksum was taken then) or last
+ * read back whole. Each wedding's newest backup goes 30 days ahead of the
+ * rest: it is the one "unchanged" trusts, retention keeps longest and a
+ * restore most often wants, and a wedding nobody changes has only that one.
+ * So the newest backups come round about once every as many nights as there
+ * are weddings, and older ones once they have gone 30 days unread.
+ */
+const CHECK_ORDER = sql`coalesce("backups"."verified_at", "backups"."created_at") - case when exists (
+    select 1 from "backups" n
+    where n."store_id" = "backups"."store_id" and n."wedding_id" = "backups"."wedding_id" and n."unreadable_at" is null
+      and (n."created_at", n."id") > ("backups"."created_at", "backups"."id")
+  ) then interval '0 days' else interval '30 days' end`
+
+/**
+ * Reads one stored backup back (CHECK_ORDER): its file is there, matches its
+ * checksum, unzips and fits the format (read.ts, openStoredBackup). One read
+ * a run, so the check costs one Blob operation a night and still reaches
+ * every backup in turn.
  *
  * A backup that fails is marked unreadable (it is never again what
  * "unchanged" compares with, so when it was its wedding's newest the run
@@ -531,7 +551,7 @@ async function checkOneBackup(db: Db, store: BackupStore, summary: RunSummary): 
       .select({ id: backups.id, weddingId: backups.weddingId, pathname: backups.pathname, blobSha256: backups.blobSha256, createdAt: backups.createdAt })
       .from(backups)
       .where(and(eq(backups.storeId, store.id), isNull(backups.unreadableAt)))
-      .orderBy(sql`${backups.verifiedAt} asc nulls first`, asc(backups.createdAt), asc(backups.id))
+      .orderBy(asc(CHECK_ORDER), asc(backups.createdAt), asc(backups.id))
       .limit(1)
     if (!backup) return
     const opened = await openStoredBackup(store, backup)

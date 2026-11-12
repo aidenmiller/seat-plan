@@ -18,6 +18,7 @@ import { makeGridPng } from '@/domain/floorplan/__fixtures__/plans'
 import { backupImages, backupRuns, backups, guests, rules, weddings } from '../db/schema'
 import { buildBackup } from './build'
 import { sha256Hex } from './hash'
+import { restoreStoredBackup } from './restore'
 import { backupPathname, BackupStoreError, type BackupStore } from './store'
 import { createMemoryStore, type MemoryStore } from './store-memory'
 import { backupOneWedding, pruneBackups, runBackups, type RunOptions } from './runner'
@@ -710,6 +711,33 @@ describe('the nightly self-check', () => {
     expect(store.calls.get).toBe(before)
   })
 
+  it('reads each wedding’s newest backup first, then older ones, each by when it was last known good', async () => {
+    const a = await makeBackupWedding(db, owner.id)
+    const b = await makeBackupWedding(db, owner.id)
+    await run()
+    await db.update(guests).set({ notes: 'Changed' }).where(eq(guests.id, a.guestIds.ann))
+    await run()
+    const [aOld, aNew] = await backupRows(a.weddingId)
+    const [bOnly] = await backupRows(b.weddingId)
+    const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000)
+    // Written long ago, never read back since: a's older backup 60 days ago, its newest 40, b's only one 50.
+    for (const [row, days] of [
+      [aOld!, 60],
+      [aNew!, 40],
+      [bOnly!, 50],
+    ] as const) {
+      await db.update(backups).set({ createdAt: daysAgo(days), checkedAt: daysAgo(days), verifiedAt: null }).where(eq(backups.id, row.id))
+    }
+    const readBack: string[] = []
+    for (let i = 0; i < 3; i++) {
+      await run()
+      const [latest] = await db.select({ id: backups.id }).from(backups).where(sql`verified_at is not null`).orderBy(sql`verified_at desc`).limit(1)
+      readBack.push(latest!.id)
+    }
+    // The two newest first (b's, written longer ago, before a's), then a's older one.
+    expect(readBack).toEqual([bOnly!.id, aNew!.id, aOld!.id])
+  })
+
   for (const [what, spoil] of [
     ['missing', async (pathname: string) => store.delete([pathname])],
     ['damaged', async (pathname: string) => store.tamper(pathname, new Uint8Array([1, 2, 3]))],
@@ -747,6 +775,25 @@ describe('the nightly self-check', () => {
     const summary = await run()
     expect(summary.results).toEqual([expect.objectContaining({ weddingId: a.weddingId, status: 'created' })])
     expect((await backupRows(a.weddingId)).map((r) => r.kind)).toEqual(['final', 'final'])
+  })
+})
+
+describe('a floor plan image missing from the store', () => {
+  it('is forgotten when a restore finds it gone, and the next run uploads it again, which mends the old backup too', async () => {
+    const a = await makeBackupWedding(db, owner.id)
+    await run()
+    const [backup] = await backupRows(a.weddingId)
+    const imagePath = images(store)[0]!
+    // Deleted by hand in the store's dashboard.
+    await store.delete([imagePath])
+    const broken = await restoreStoredBackup(db, store, backup!.id, { jobId: randomUUID(), actor: { userId: owner.id, isAdmin: false } })
+    expect(broken).toEqual({ status: 'corrupt', message: expect.stringMatching(/^This backup is unreadable: its floor plan image .* is missing from the backup store\. Use Back up now/) })
+    expect(await db.select().from(backupImages)).toEqual([])
+    // Nothing changed in the wedding, but its newest backup names an image the store lost: a fresh backup, image and all.
+    const next = await run()
+    expect(next.results).toEqual([expect.objectContaining({ weddingId: a.weddingId, status: 'created' })])
+    expect(images(store)).toEqual([imagePath])
+    expect(await restoreStoredBackup(db, store, backup!.id, { jobId: randomUUID(), actor: { userId: owner.id, isAdmin: false } })).toMatchObject({ status: 'restored' })
   })
 })
 

@@ -181,7 +181,12 @@ export async function storageUsed(db: Db, storeId: string | null): Promise<Backu
   return { backupCount: files?.n ?? 0, backupBytes, imageCount: images?.n ?? 0, imageBytes, totalBytes: backupBytes + imageBytes }
 }
 
-/** The start of the newest cron run that finished 'ok', and the newest cron run of any outcome. */
+/**
+ * The start of the newest cron run that finished 'ok', and the cron run that
+ * ended last (one still running counts as the newest). By when it ended: a
+ * second delivery of the same night's call that gave up waiting is recorded
+ * as failed before the first one finishes, and must not hide that it did.
+ */
 export async function cronRunTimes(db: Db): Promise<{ lastSuccessAt: Date | null; last: { startedAt: Date; status: BackupRunInfo['status'] } | null }> {
   const [success] = await db
     .select({ startedAt: backupRuns.startedAt })
@@ -193,7 +198,7 @@ export async function cronRunTimes(db: Db): Promise<{ lastSuccessAt: Date | null
     .select({ startedAt: backupRuns.startedAt, status: backupRuns.status })
     .from(backupRuns)
     .where(eq(backupRuns.trigger, 'cron'))
-    .orderBy(desc(backupRuns.startedAt))
+    .orderBy(sql`${backupRuns.finishedAt} desc nulls first`, desc(backupRuns.startedAt))
     .limit(1)
   return { lastSuccessAt: success?.startedAt ?? null, last: last ?? null }
 }
