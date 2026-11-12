@@ -107,6 +107,62 @@ body:has(> [data-surface="plain"]) {
   --color-stone-50: #f3f6fb;
 }
 
+/*
+ * Blueprint paper, under the signed-out pages (src/client/ui/SignedOutShell.tsx):
+ * heritage navy ruled like drafting paper in forget-me-not, a fine line every
+ * 24 px and a firmer one every fifth, centered on the page, darkening a little
+ * towards the edges. Text placed straight on it must be white (10.36:1).
+ */
+.blueprint-paper {
+  background-color: #1e3a8a;
+  background-image:
+    radial-gradient(ellipse at center, transparent 35%, rgb(10 24 66 / 0.45) 100%),
+    linear-gradient(to right, rgb(158 200 248 / 0.13) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(158 200 248 / 0.13) 1px, transparent 1px),
+    linear-gradient(to right, rgb(158 200 248 / 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(158 200 248 / 0.06) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    120px 120px,
+    120px 120px,
+    24px 24px,
+    24px 24px;
+  background-position: center;
+}
+
+/*
+ * Crop marks at the corners of the card on blueprint paper, in line with its
+ * edges, as on a drawing sheet. Wide screens only: on a phone the card nearly
+ * meets the screen's edges, with no room round it for them.
+ */
+@media (min-width: 40rem) {
+  .blueprint-marks {
+    position: relative;
+  }
+
+  .blueprint-marks::before {
+    --mark: rgb(158 200 248 / 0.5);
+    content: "";
+    position: absolute;
+    inset: -24px;
+    pointer-events: none;
+    background:
+      linear-gradient(var(--mark) 0 0) left 0 top 24px / 16px 1px no-repeat,
+      linear-gradient(var(--mark) 0 0) left 24px top 0 / 1px 16px no-repeat,
+      linear-gradient(var(--mark) 0 0) right 0 top 24px / 16px 1px no-repeat,
+      linear-gradient(var(--mark) 0 0) right 24px top 0 / 1px 16px no-repeat,
+      linear-gradient(var(--mark) 0 0) left 0 bottom 24px / 16px 1px no-repeat,
+      linear-gradient(var(--mark) 0 0) left 24px bottom 0 / 1px 16px no-repeat,
+      linear-gradient(var(--mark) 0 0) right 0 bottom 24px / 16px 1px no-repeat,
+      linear-gradient(var(--mark) 0 0) right 24px bottom 0 / 1px 16px no-repeat;
+  }
+}
+
+/* Past the page's ends (a phone's rubber banding) the navy carries on. */
+html:has(> body > [data-signed-out]) {
+  background-color: #1e3a8a;
+}
+
 @layer base {
   /* Tailwind 4 gives buttons the default cursor; a hand reads as tappable. */
   button:not(:disabled),

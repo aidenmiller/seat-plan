@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { assetUrl } from '@/brand/brand'
+import horizontalWhiteFile from '@/brand/logo-horizontal-white.svg'
 import horizontalFile from '@/brand/logo-horizontal.svg'
 import markFile from '@/brand/logo-mark.svg'
-import { BrandLine, Logo, LOGO_MIN_WIDTH, SignedOutBrand } from './Logo'
+import { Logo, LOGO_MIN_WIDTH } from './Logo'
 
 function unescapeHtml(text: string): string {
   return text.replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
@@ -34,23 +35,17 @@ describe('Logo', () => {
     expect(horizontal?.src).toBe(assetUrl(horizontalFile))
   })
 
-  it('never goes below the brand minimums: 320 px for the lockup, 24 px for the mark', () => {
-    expect(LOGO_MIN_WIDTH).toEqual({ mark: 24, horizontal: 320 })
+  it('has the lockup in white for navy, the same shape as the full-color one', () => {
+    const [white] = images(renderToStaticMarkup(<Logo variant="horizontal-white" width={328} />))
+    expect(white).toMatchObject({ alt: 'Something Blueprint.', width: '328', height: '56', 'data-logo': 'horizontal-white' })
+    expect(white?.src).toBe(assetUrl(horizontalWhiteFile))
+    expect(white?.src).not.toBe(assetUrl(horizontalFile))
+  })
+
+  it('never goes below the brand minimums: 320 px for the lockups, 24 px for the mark', () => {
+    expect(LOGO_MIN_WIDTH).toEqual({ mark: 24, horizontal: 320, 'horizontal-white': 320 })
     expect(images(renderToStaticMarkup(<Logo variant="horizontal" width={200} />))[0]?.width).toBe('320')
+    expect(images(renderToStaticMarkup(<Logo variant="horizontal-white" width={200} />))[0]?.width).toBe('320')
     expect(images(renderToStaticMarkup(<Logo variant="mark" width={16} />))[0]?.width).toBe('24')
-  })
-
-  it('puts the lockup and the optional line above the sign-in card', () => {
-    const markup = renderToStaticMarkup(<SignedOutBrand tagline="Romance meets precision." />)
-    expect(images(markup)).toEqual([expect.objectContaining({ alt: 'Something Blueprint.', width: '320', 'data-logo': 'horizontal' })])
-    expect(markup).toContain('font-editorial')
-    expect(markup).toContain('Romance meets precision.')
-    expect(renderToStaticMarkup(<SignedOutBrand />)).not.toContain('<p')
-  })
-
-  it('pairs a decorative mark with the name in text, so the name is read once', () => {
-    const markup = renderToStaticMarkup(<BrandLine />)
-    expect(images(markup)).toEqual([expect.objectContaining({ alt: '', 'data-logo': 'mark' })])
-    expect(markup.replace(/<[^>]+>/g, '')).toBe('Something Blueprint.')
   })
 })
