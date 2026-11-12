@@ -8,8 +8,8 @@
  * It also reads each handler's policy tag (guards.ts) and holds it to
  * EXPECTED_POLICY below, route by route and method by method, so a new
  * route, a new method or a changed policy fails here until the table says
- * so too, and shows up in review. Only the sign-in, setup and share-password
- * routes are public.
+ * so too, and shows up in review. Only the sign-in, setup, share-password,
+ * invite-link and reset-link routes are public.
  */
 import { readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
@@ -22,13 +22,28 @@ import { SESSION_COOKIE, SITE_COOKIE, createShareToken, newOpaqueToken, shareCoo
 const APP_DIR = path.resolve(__dirname, '../../app')
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const
 
-/** Routes anyone may call: signing in, first-run setup (404 once an account exists), and a share link's own password. */
-const PUBLIC_ROUTES = new Set(['api/auth/login/route.ts', 'api/setup/route.ts', 'share/[token]/login/route.ts'])
+/**
+ * Routes anyone may call, each for a person who cannot have a session yet:
+ * signing in, first-run setup (404 once an account exists), a share link's
+ * own password, opening an invite link and making an account through it
+ * (the person may have no account), and using a reset link an admin made
+ * (the person cannot sign in until they have). The invite and reset routes
+ * act only on a 32-byte token and are throttled per address.
+ */
+const PUBLIC_ROUTES = new Set([
+  'api/auth/login/route.ts',
+  'api/setup/route.ts',
+  'share/[token]/login/route.ts',
+  'api/invites/lookup/route.ts',
+  'api/invites/register/route.ts',
+  'api/auth/reset/route.ts',
+])
 
 /**
  * Who may call each route, as policyKey() writes a policy:
  *  - 'public': anyone (PUBLIC_ROUTES only);
- *  - 'user': any signed-in user;
+ *  - 'user': any signed-in user (the account routes act only on the caller);
+ *  - 'admin': admins only; anyone else signed in gets 404 (withAdmin);
  *  - 'share': a share link's cookie, or a member's session (share.ts);
  *  - 'wedding:<least role>:<resolver>': a member of the wedding the resolver
  *    finds, with at least that role (an admin always; logged);
@@ -40,6 +55,27 @@ const EXPECTED_POLICY: Record<string, Partial<Record<(typeof METHODS)[number], s
   'api/setup/route.ts': { POST: 'public' },
   'share/[token]/login/route.ts': { POST: 'public' },
   'share/[token]/data/route.ts': { GET: 'share' },
+  'api/auth/reset/route.ts': { POST: 'public' },
+
+  'api/invites/lookup/route.ts': { POST: 'public' },
+  'api/invites/register/route.ts': { POST: 'public' },
+  'api/invites/accept/route.ts': { POST: 'user' },
+  'api/invites/[id]/route.ts': { DELETE: 'wedding:owner:byInviteId' },
+
+  'api/account/route.ts': { PATCH: 'user' },
+  'api/account/password/route.ts': { POST: 'user' },
+  'api/account/sessions/route.ts': { GET: 'user' },
+  'api/account/sessions/[id]/route.ts': { DELETE: 'user' },
+  'api/account/sessions/revoke-others/route.ts': { POST: 'user' },
+
+  'api/admin/users/route.ts': { GET: 'admin' },
+  'api/admin/users/[id]/route.ts': { PATCH: 'admin' },
+  'api/admin/users/[id]/reset-link/route.ts': { POST: 'admin' },
+  'api/admin/users/[id]/sign-out/route.ts': { POST: 'admin' },
+  'api/admin/invites/route.ts': { GET: 'admin', POST: 'admin' },
+  'api/admin/invites/[id]/route.ts': { DELETE: 'admin' },
+  'api/admin/weddings/route.ts': { GET: 'admin' },
+  'api/admin/weddings/[id]/claim/route.ts': { POST: 'admin' },
 
   'api/weddings/route.ts': { GET: 'user', POST: 'user' },
   'api/weddings/[id]/route.ts': { GET: 'wedding:editor:byWeddingId', PATCH: 'wedding:owner:byWeddingId', DELETE: 'wedding:owner:byWeddingId' },
@@ -55,6 +91,12 @@ const EXPECTED_POLICY: Record<string, Partial<Record<(typeof METHODS)[number], s
   'api/weddings/[id]/groups/route.ts': { GET: 'wedding:editor:byWeddingId', POST: 'wedding:editor:byWeddingId' },
   'api/weddings/[id]/rules/route.ts': { GET: 'wedding:editor:byWeddingId', POST: 'wedding:editor:byWeddingId' },
   'api/weddings/[id]/share-links/route.ts': { GET: 'wedding:editor:byWeddingId' },
+  // Any member may see who belongs; changing a role needs an owner. Removing:
+  // the guard lets any member through so they can leave, and the handler
+  // wants an owner (or an admin's power) to remove someone else (403).
+  'api/weddings/[id]/members/route.ts': { GET: 'wedding:editor:byWeddingId' },
+  'api/weddings/[id]/members/[userId]/route.ts': { PATCH: 'wedding:owner:byWeddingId', DELETE: 'wedding:editor:byWeddingId' },
+  'api/weddings/[id]/invites/route.ts': { GET: 'wedding:owner:byWeddingId', POST: 'wedding:owner:byWeddingId' },
   'api/weddings/restore/route.ts': { POST: 'user' },
   'api/weddings/restore/[jobId]/templates/route.ts': { POST: 'wedding:owner:byRestoreJob' },
   'api/weddings/restore/[jobId]/templates/[templateId]/image/route.ts': { PUT: 'wedding:owner:byRestoreJob' },

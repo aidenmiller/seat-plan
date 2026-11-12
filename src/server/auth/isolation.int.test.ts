@@ -3,29 +3,34 @@
  * planner's weddings through the API, whatever ids they send.
  *
  * Planner A owns wedding W_A (guests, a group with a member, a rule, layouts,
- * share links, a private venue template of A's that a layout uses) and a
- * restore job; E is an editor of both; B owns W_B; an admin belongs to
- * nothing. This test walks every route file under src/app, as route-auth.test.ts
- * does, and calls every handler with a request built from A's ids (ROWS below:
- * a route or method without a row fails the test).
+ * share links, a private venue template of A's that a layout uses, a second
+ * editor, invites) and a restore job; E is an editor of both; B owns W_B; an
+ * admin belongs to nothing. This test walks every route file under src/app,
+ * as route-auth.test.ts does, and calls every handler with a request built
+ * from A's ids (ROWS below: a route or method without a row fails the test).
  *
  *  - As B, every wedding route answers 404, every route about A's private
  *    template 404, nothing of A's changes, and no reply names anything of
  *    A's. B's own routes (the list, a create with A's id, a restore with A's
  *    job id) leak nothing either, and replies about who uses a venue B may
- *    read only count A's layouts.
+ *    read only count A's layouts. Every admin route answers 404 and changes
+ *    nothing; the account routes act only on B; a made-up invite or reset
+ *    link, or a real invite locked to someone else's email, gets B nothing.
  *  - As E, owner-only routes answer 403 and change nothing; the rest work.
+ *    E may see who belongs to W_A and leave it, but remove nobody else; the
+ *    admin routes answer 404.
  *  - As the admin, every route works, and each wedding opened is logged.
  * Signed out is route-auth.test.ts's job.
  */
 import { readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL, makeTestDb, truncateAll } from '../../../test/db'
 import { makeMember, makeUser, makeWeddingFor, sessionCookie, type TestUser } from '../../../test/auth'
+import { freshAddress, sessionCookieFrom } from '../../../test/routes'
 import { restoreStartSchema } from '@/domain/backup/schema'
 import { makeGridPng } from '@/domain/floorplan/__fixtures__/plans'
 import { createGroupBody, createRuleBody } from '@/shared/api'
@@ -35,11 +40,15 @@ import {
   groupMembers,
   groups,
   guests,
+  invites,
   layoutSeats,
   layouts,
+  passwordResets,
   ruleGuests,
   rules,
+  sessions,
   shareLinks,
+  users,
   venueImages,
   venueTemplateRevisions,
   venueTemplates,
@@ -48,11 +57,19 @@ import {
 } from '../db/schema'
 import { addGroupMembers, createGroup, deleteGroup, removeGroupMember, updateGroup } from '../repo/groups'
 import { deleteGuest, guestDeleteSummary, updateGuest } from '../repo/guests'
+import { createInvite } from '../repo/invites'
 import { createRule, deleteRule, setCoupleRule, updateRule } from '../repo/rules'
+import { lookupSession } from '../repo/sessions'
 import { createShareLink, deleteShareLink, listLayoutShareLinks, updateShareLink } from '../repo/share-links'
-import { canvasOf, makeGuest, makeLayout, roundTable } from '../repo/test-fixtures'
+import { canvasOf, makeGuest, makeLayout, makeWedding, roundTable } from '../repo/test-fixtures'
 import { addTemplateImage, createTemplate } from '../repo/venues'
 import { policyOf } from './guards'
+
+// As in the invite and reset route tests: a made-up token is answered at once, not after about a second.
+vi.mock('@/server/auth/throttle', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/server/auth/throttle')>()),
+  wrongGuessDelay: async () => {},
+}))
 
 const APP_DIR = path.resolve(__dirname, '../../app')
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const
@@ -93,6 +110,17 @@ type World = {
   bGuest: string
   bLayout: string
   bTemplate: string
+  /** A second editor of W_A, for removing. */
+  spareMember: string
+  /** A pending owner invite to W_A, locked to an email none of the actors has. */
+  lockedInvite: string
+  lockedToken: string
+  /** A pending editor invite to W_A, for cancelling. */
+  spareInvite: string
+  /** A pending planner invite (no wedding) an admin sent. */
+  plannerInvite: string
+  /** A wedding nobody belongs to, for an admin to claim. */
+  ownerless: string
   /** Strings no reply to B may hold. */
   secrets: string[]
 }
@@ -127,6 +155,10 @@ beforeAll(async () => {
 afterAll(async () => {
   vi.unstubAllEnvs()
   await pool.end()
+})
+// The invite, reset and password routes count tries per address: each call here comes from a fresh one, and each test starts from zero.
+beforeEach(async () => {
+  await pool.query('delete from login_attempts')
 })
 
 /** A fresh W_A (owned by A, E an editor), A's restore job, and W_B (owned by B). */
@@ -183,6 +215,14 @@ async function makeWorld(): Promise<World> {
   const bGuest = await makeGuest(db, weddingB, 'Bo', `Guest${tag}`)
   const bLayout = await makeLayout(db, weddingB, canvasOf(), { name: 'Bo layout' })
 
+  const spare = await makeUser(db, { displayName: 'Sid' })
+  await makeMember(db, weddingA, spare.id, 'editor')
+  const lockedEmail = `someone-else-${tag}@example.com`
+  const locked = await createInvite(db, { weddingId: weddingA, role: 'owner', email: lockedEmail, invitedBy: userA.id })
+  const spareInvite = await createInvite(db, { weddingId: weddingA, role: 'editor', invitedBy: userA.id })
+  const plannerInvite = await createInvite(db, { invitedBy: admin.id })
+  const ownerless = await makeWedding(db, `Ownerless ${tag}`)
+
   return {
     tag,
     weddingA,
@@ -212,6 +252,12 @@ async function makeWorld(): Promise<World> {
     bGuest,
     bLayout,
     bTemplate: bMade.venue.id,
+    spareMember: spare.id,
+    lockedInvite: locked.invite.id,
+    lockedToken: locked.token,
+    spareInvite: spareInvite.invite.id,
+    plannerInvite: plannerInvite.invite.id,
+    ownerless,
     secrets: [
       weddingA,
       weddingName,
@@ -234,6 +280,17 @@ async function makeWorld(): Promise<World> {
       `Secret rule ${tag}`,
       `Secret link ${tag}`,
       token!.token,
+      // Who belongs to W_A, and its invites.
+      userA.email,
+      userE.email,
+      spare.email,
+      lockedEmail,
+      locked.invite.id,
+      locked.token,
+      spareInvite.invite.id,
+      spareInvite.token,
+      plannerInvite.invite.id,
+      plannerInvite.token,
     ],
   }
 }
@@ -303,6 +360,7 @@ async function snapshot(w: World) {
       .where(inArray(ruleGuests.weddingId, ids))
       .orderBy(asc(ruleGuests.ruleId), asc(ruleGuests.guestId)),
     shareLinks: await db.select().from(shareLinks).where(inArray(shareLinks.weddingId, ids)).orderBy(asc(shareLinks.id)),
+    invites: await db.select().from(invites).where(inArray(invites.weddingId, ids)).orderBy(asc(invites.id)),
     template: await db.select().from(venueTemplates).where(eq(venueTemplates.id, w.template)),
     images: await db.select({ id: venueImages.id }).from(venueImages).where(eq(venueImages.templateId, w.template)).orderBy(asc(venueImages.id)),
     revisions: await db
@@ -315,10 +373,55 @@ async function snapshot(w: World) {
   }
 }
 
+/**
+ * Everyone's account rows, row by row: who exists and can sign in, who is
+ * signed in where, who belongs to which wedding, and every invite and reset
+ * link. Compared around one call, so nothing else runs in between.
+ */
+async function accountState() {
+  return {
+    users: await db
+      .select({
+        id: users.id,
+        email: users.email,
+        displayName: users.displayName,
+        passwordHash: users.passwordHash,
+        isAdmin: users.isAdmin,
+        disabledAt: users.disabledAt,
+      })
+      .from(users)
+      .orderBy(asc(users.id)),
+    sessions: await db.select({ id: sessions.id, userId: sessions.userId }).from(sessions).orderBy(asc(sessions.id)),
+    members: await db.select().from(weddingMembers).orderBy(asc(weddingMembers.weddingId), asc(weddingMembers.userId)),
+    invites: await db.select().from(invites).orderBy(asc(invites.id)),
+    resets: await db.select().from(passwordResets).orderBy(asc(passwordResets.id)),
+  }
+}
+
+/** The accountState users, but for one. */
+async function usersExcept(userId: string) {
+  return (await accountState()).users.filter((u) => u.id !== userId)
+}
+
+async function roleIn(weddingId: string, userId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ role: weddingMembers.role })
+    .from(weddingMembers)
+    .where(and(eq(weddingMembers.weddingId, weddingId), eq(weddingMembers.userId, userId)))
+  return row?.role ?? null
+}
+
+const cookieValue = (cookie: string) => cookie.slice(cookie.indexOf('=') + 1)
+const signedIn = async (cookie: string) => (await lookupSession(db, cookieValue(cookie))) !== null
+const sessionIdOf = async (cookie: string) => (await lookupSession(db, cookieValue(cookie)))!.sessionId
+/** A well-formed invite or reset token that matches nothing. */
+const madeUpToken = () => randomBytes(32).toString('base64url')
+
 // ---------------------------------------------------------------- calling routes
 
-type Req = { params: Record<string, string>; body?: unknown; raw?: Uint8Array; query?: string; cookie?: string }
-type Reply = { status: number; text: string; body: unknown }
+/** `ip` is sent as x-real-ip, the address the throttle counts by. */
+type Req = { params: Record<string, string>; body?: unknown; raw?: Uint8Array; query?: string; cookie?: string; ip?: string }
+type Reply = { status: number; text: string; body: unknown; headers: Headers }
 
 function routeFiles(dir: string): string[] {
   const out: string[] = []
@@ -341,6 +444,7 @@ async function handlersOf(file: string): Promise<[Method, Handler][]> {
 
 async function send(handler: Handler, file: string, method: string, req: Req, cookie: string): Promise<Reply> {
   const headers: Record<string, string> = { cookie: req.cookie ?? cookie }
+  if (req.ip) headers['x-real-ip'] = req.ip
   let body: BodyInit | undefined
   if (req.raw) body = new Uint8Array(req.raw)
   if (req.body !== undefined) {
@@ -356,16 +460,62 @@ async function send(handler: Handler, file: string, method: string, req: Req, co
   } catch {
     parsed = null
   }
-  return { status: res.status, text, body: parsed }
+  return { status: res.status, text, body: parsed, headers: res.headers }
 }
 
 /** A custom check: calls the route as the actor and checks what came back. */
 type Check = (w: World, call: (req: Req) => Promise<Reply>) => Promise<void>
 
+const userOf = (actor: Actor): TestUser => ({ outsider: userB, editor: userE, admin })[actor]
+
+/** The same check for every actor, for routes that act only on the caller or on a token, never on an id of A's. */
+function everyActor(check: (actor: Actor) => Check): Record<Actor, Check> {
+  return { outsider: check('outsider'), editor: check('editor'), admin: check('admin') }
+}
+
+/**
+ * An admin route. Anyone else signed in (B, and E, who is not an admin) gets
+ * the guard's 404, as if the route did not exist, for each of `refused`'s
+ * requests, and nothing changes: no account, session, membership, invite or
+ * reset link, and nothing of A's. `admin` checks what the admin gets.
+ */
+function adminOnly(refused: (w: World) => Req[], adminCheck: Check): Row {
+  const refuse: Check = async (w, call) => {
+    for (const req of refused(w)) {
+      const before = { accounts: await accountState(), a: await snapshot(w) }
+      const res = await call(req)
+      expect(res, `refused ${JSON.stringify(req.params)}: ${res.text.slice(0, 300)}`).toMatchObject({ status: 404, body: { error: 'not_found' } })
+      expect({ accounts: await accountState(), a: await snapshot(w) }).toEqual(before)
+    }
+  }
+  return { checks: { outsider: refuse, editor: refuse, admin: adminCheck } }
+}
+
+/**
+ * A public route called with a made-up token: 404 and nothing else (no name,
+ * email or wedding), whoever calls, and no account, session, membership,
+ * invite or reset link changes. Each call comes from a fresh address.
+ */
+function madeUpTokenRow(bodies: () => Record<string, unknown>[]): Row {
+  return {
+    checks: everyActor((actor) => async (w, call) => {
+      for (const body of bodies()) {
+        const before = { accounts: await accountState(), a: await snapshot(w) }
+        const res = await call({ params: {}, body, ip: freshAddress() })
+        expect(res.status, `${Object.keys(body).join(', ')} as ${actor}: ${res.text.slice(0, 300)}`).toBe(404)
+        expect(res.body).toEqual({ error: 'not_found' })
+        expect({ accounts: await accountState(), a: await snapshot(w) }).toEqual(before)
+      }
+    }),
+  }
+}
+
 /**
  * How each route is called with A's ids. `req` builds the request; what each
  * actor should get follows from the route's policy (see expectFor), unless
- * `checks` says so for a route that is not about one wedding or template.
+ * `checks` says so for a route that is not about one wedding or template
+ * (the account, admin and invite-link routes), or whose answer depends on
+ * more than the caller's role (removing a member: anyone may leave).
  * `ok` lists the statuses that mean "let in and done" when that is not 200
  * or 201. `late` runs a change that would spoil the calls after it last.
  */
@@ -470,6 +620,68 @@ const ROWS: Record<string, Partial<Record<Method, Row>>> = {
     POST: { req: (w) => ({ ...id(w.weddingA), body: { kind: 'apart', guestIds: [w.ann, w.cat] } }) },
   },
   'api/weddings/[id]/share-links/route.ts': { GET: { req: (w) => id(w.weddingA) } },
+  'api/weddings/[id]/members/route.ts': { GET: { req: (w) => id(w.weddingA) } },
+  'api/weddings/[id]/members/[userId]/route.ts': {
+    // E trying to make themselves an owner.
+    PATCH: { req: (w) => ({ params: { id: w.weddingA, userId: userE.id }, body: { role: 'owner' } }) },
+    // The guard lets any member in, so they can leave; removing someone else needs an owner.
+    DELETE: {
+      checks: {
+        outsider: async (w, call) => {
+          const before = await snapshot(w)
+          // Taking anyone out, B included (as if leaving a wedding B never joined).
+          for (const userId of [userA.id, userE.id, w.spareMember, userB.id]) {
+            const res = await call({ params: { id: w.weddingA, userId } })
+            expect(res.status, `remove ${userId} as outsider: ${res.text.slice(0, 300)}`).toBe(404)
+          }
+          expect(await snapshot(w)).toEqual(before)
+        },
+        editor: async (w, call) => {
+          const before = await snapshot(w)
+          for (const userId of [userA.id, w.spareMember]) {
+            expect(await call({ params: { id: w.weddingA, userId } }), `remove ${userId} as editor`).toMatchObject({ status: 403, body: { error: 'forbidden' } })
+          }
+          expect(await snapshot(w)).toEqual(before)
+          // Leaving is E's own business.
+          expect(await call({ params: { id: w.weddingA, userId: userE.id } })).toMatchObject({ status: 200, body: { ok: true } })
+          expect(await roleIn(w.weddingA, userE.id)).toBeNull()
+          expect(await roleIn(w.weddingA, userA.id)).toBe('owner')
+          // Back in, so whatever runs after this still finds E there.
+          await makeMember(db, w.weddingA, userE.id, 'editor')
+        },
+        admin: async (w, call) => {
+          expect(await call({ params: { id: w.weddingA, userId: w.spareMember } })).toMatchObject({ status: 200, body: { ok: true } })
+          expect(await roleIn(w.weddingA, w.spareMember)).toBeNull()
+        },
+      },
+    },
+  },
+  'api/weddings/[id]/invites/route.ts': {
+    GET: { req: (w) => id(w.weddingA) },
+    POST: { req: (w) => ({ ...id(w.weddingA), body: { role: 'owner' } }) },
+  },
+  'api/invites/[id]/route.ts': { DELETE: { req: (w) => id(w.spareInvite), late: 3 } },
+  'api/invites/accept/route.ts': {
+    POST: {
+      // A working link lets its holder in: that is the feature. A made-up one, or one locked to another email, never does.
+      checks: everyActor((actor) => async (w, call) => {
+        const before = { accounts: await accountState(), a: await snapshot(w) }
+        expect(await call({ params: {}, body: { token: madeUpToken() } }), `made-up token as ${actor}`).toMatchObject({ status: 404, body: { error: 'not_found' } })
+        expect(await call({ params: {}, body: { token: w.lockedToken } }), `locked invite as ${actor}`).toMatchObject({
+          status: 409,
+          body: { error: 'invite_unusable', reason: 'email-mismatch' },
+        })
+        expect({ accounts: await accountState(), a: await snapshot(w) }).toEqual(before)
+      }),
+    },
+  },
+  'api/invites/lookup/route.ts': { POST: madeUpTokenRow(() => [{ token: madeUpToken() }]) },
+  // With A's email: a made-up link must not say whether that email has an account.
+  'api/invites/register/route.ts': {
+    POST: madeUpTokenRow(() => [{ token: madeUpToken(), email: userA.email, displayName: 'Nova', password: 'a brand new password' }]),
+  },
+  // Looking a link up, and setting a password with it.
+  'api/auth/reset/route.ts': { POST: madeUpTokenRow(() => [{ token: madeUpToken() }, { token: madeUpToken(), password: 'a brand new password' }]) },
 
   'api/weddings/restore/route.ts': {
     POST: {
@@ -592,6 +804,161 @@ const ROWS: Record<string, Partial<Record<Method, Row>>> = {
     },
   },
   'api/venues/[id]/duplicate/route.ts': { POST: { req: (w) => ({ ...id(w.template), body: { name: 'A copy' } }) } },
+
+  // The account routes act on the caller only, whatever ids come with the request.
+  'api/account/route.ts': {
+    PATCH: {
+      checks: everyActor((actor) => async (w, call) => {
+        const me = userOf(actor)
+        const others = await usersExcept(me.id)
+        const res = await call({ params: { id: userA.id }, body: { displayName: `Renamed ${w.tag}` } })
+        expect(res).toMatchObject({ status: 200, body: { id: me.id, email: me.email, displayName: `Renamed ${w.tag}` } })
+        expect(await usersExcept(me.id)).toEqual(others)
+        // Back as it was.
+        expect((await call({ params: {}, body: { displayName: me.displayName } })).status).toBe(200)
+      }),
+    },
+  },
+  'api/account/password/route.ts': {
+    POST: {
+      // Ends the caller's sessions (this browser gets a new one), and nobody else's.
+      checks: everyActor((actor) => async (_w, call) => {
+        const me = userOf(actor)
+        const others = await usersExcept(me.id)
+        const old = cookies[actor]
+        const changed = await call({ params: { id: userA.id }, body: { current: me.password, next: 'another isolation password' }, ip: freshAddress() })
+        expect(changed.status, changed.text).toBe(200)
+        const fresh = sessionCookieFrom(changed)!
+        expect(await signedIn(old)).toBe(false)
+        expect(await signedIn(fresh)).toBe(true)
+        expect(await signedIn(cookies.owner)).toBe(true)
+        expect(await usersExcept(me.id)).toEqual(others)
+        // Back to the old password, so the rest of the file signs in as before.
+        const back = await call({ params: {}, body: { current: 'another isolation password', next: me.password }, ip: freshAddress(), cookie: fresh })
+        expect(back.status, back.text).toBe(200)
+        cookies[actor] = sessionCookieFrom(back)!
+        expect(await signedIn(cookies[actor])).toBe(true)
+        expect(await signedIn(cookies.owner)).toBe(true)
+      }),
+    },
+  },
+  'api/account/sessions/route.ts': {
+    GET: {
+      checks: everyActor((actor) => async (_w, call) => {
+        const res = await call({ params: { id: userA.id } })
+        expect(res.status).toBe(200)
+        const listed = (res.body as { id: string }[]).map((s) => s.id)
+        expect(listed).toContain(await sessionIdOf(cookies[actor]))
+        const owners = await db.select({ userId: sessions.userId }).from(sessions).where(inArray(sessions.id, listed))
+        expect(new Set(owners.map((o) => o.userId))).toEqual(new Set([userOf(actor).id]))
+        expect(res.text).not.toContain(await sessionIdOf(cookies.owner))
+      }),
+    },
+  },
+  'api/account/sessions/[id]/route.ts': {
+    DELETE: {
+      checks: everyActor((actor) => async (_w, call) => {
+        // A's session: as if there were none, and A stays signed in.
+        expect(await call(id(await sessionIdOf(cookies.owner)))).toMatchObject({ status: 404, body: { error: 'not_found' } })
+        expect(await signedIn(cookies.owner)).toBe(true)
+        // One of the caller's own ends.
+        const mine = await sessionCookie(db, userOf(actor).id)
+        expect(await call(id(await sessionIdOf(mine)))).toMatchObject({ status: 200, body: { ok: true } })
+        expect(await signedIn(mine)).toBe(false)
+        expect(await signedIn(cookies[actor])).toBe(true)
+      }),
+    },
+  },
+  'api/account/sessions/revoke-others/route.ts': {
+    POST: {
+      checks: everyActor((actor) => async (_w, call) => {
+        const mine = await sessionCookie(db, userOf(actor).id)
+        const aSecond = await sessionCookie(db, userA.id)
+        const res = await call({ params: { id: userA.id } })
+        expect(res.status).toBe(200)
+        expect((res.body as { ended: number }).ended).toBeGreaterThanOrEqual(1)
+        expect(await signedIn(mine)).toBe(false)
+        expect(await signedIn(cookies[actor])).toBe(true)
+        expect(await signedIn(cookies.owner)).toBe(true)
+        expect(await signedIn(aSecond)).toBe(true)
+      }),
+    },
+  },
+
+  // Admins only: everyone else gets 404 and changes nothing (adminOnly).
+  'api/admin/users/route.ts': {
+    GET: adminOnly(
+      () => [{ params: {} }],
+      async (_w, call) => expect(idsIn(await call({ params: {} }))).toEqual(expect.arrayContaining([userA.id, userB.id, userE.id])),
+    ),
+  },
+  'api/admin/users/[id]/route.ts': {
+    PATCH: adminOnly(
+      () => [{ ...id(userA.id), body: { disabled: true } }],
+      async (_w, call) => {
+        const someone = await makeUser(db, { displayName: 'Temp' })
+        expect(await call({ ...id(someone.id), body: { disabled: true } })).toMatchObject({ status: 200, body: { id: someone.id, disabled: true } })
+      },
+    ),
+  },
+  'api/admin/users/[id]/reset-link/route.ts': {
+    POST: adminOnly(
+      () => [id(userA.id), id(userB.id)],
+      async (_w, call) => {
+        const someone = await makeUser(db, { displayName: 'Temp' })
+        expect((await call(id(someone.id))).status).toBe(201)
+        expect(await db.select().from(passwordResets).where(eq(passwordResets.userId, someone.id))).toHaveLength(1)
+      },
+    ),
+  },
+  'api/admin/users/[id]/sign-out/route.ts': {
+    POST: adminOnly(
+      () => [id(userA.id)],
+      async (_w, call) => {
+        const someone = await makeUser(db, { displayName: 'Temp' })
+        const theirs = await sessionCookie(db, someone.id)
+        expect(await call(id(someone.id))).toMatchObject({ status: 200, body: { ended: 1 } })
+        expect(await signedIn(theirs)).toBe(false)
+        expect(await signedIn(cookies.owner)).toBe(true)
+      },
+    ),
+  },
+  'api/admin/invites/route.ts': {
+    GET: adminOnly(
+      () => [{ params: {} }],
+      async (w, call) => expect(idsIn(await call({ params: {} }))).toContain(w.plannerInvite),
+    ),
+    POST: adminOnly(
+      () => [{ params: {}, body: {} }],
+      async (_w, call) => expect((await call({ params: {}, body: {} })).status).toBe(201),
+    ),
+  },
+  'api/admin/invites/[id]/route.ts': {
+    DELETE: adminOnly(
+      (w) => [id(w.plannerInvite)],
+      async (_w, call) => {
+        const { invite } = await createInvite(db, { invitedBy: admin.id })
+        expect(await call(id(invite.id))).toMatchObject({ status: 200, body: { ok: true } })
+      },
+    ),
+  },
+  'api/admin/weddings/route.ts': {
+    GET: adminOnly(
+      () => [{ params: {} }],
+      async (w, call) => expect(idsIn(await call({ params: {} }))).toEqual(expect.arrayContaining([w.weddingA, w.ownerless])),
+    ),
+  },
+  'api/admin/weddings/[id]/claim/route.ts': {
+    POST: adminOnly(
+      (w) => [id(w.weddingA), id(w.ownerless)],
+      async (w, call) => {
+        // Refused while the wedding has an owner: an admin can open it anyway, and does not become a member.
+        expect(await call(id(w.weddingA))).toMatchObject({ status: 409, body: { error: 'has_owner' } })
+        expect(await roleIn(w.weddingA, admin.id)).toBeNull()
+        expect(await call(id(w.ownerless))).toMatchObject({ status: 200, body: { id: w.ownerless, members: [{ userId: admin.id, role: 'owner' }] } })
+      },
+    ),
+  },
 }
 
 /** Every handler with its row, in the table's order with late ones last; fails for a handler without a row. */
@@ -665,14 +1032,14 @@ describe('every route is in this test', () => {
     const rows = new Set(Object.entries(ROWS).flatMap(([file, methods]) => Object.keys(methods).map((m) => `${m} ${file}`)))
     expect([...handled].filter((x) => !rows.has(x)), 'routes with no row').toEqual([])
     expect([...rows].filter((x) => !handled.has(x)), 'rows for routes that do not exist').toEqual([])
-    // Only the public routes are left uncalled.
+    // Only the sign-in, setup and share-password routes are left uncalled; the invite and reset links are tried with made-up tokens.
     const notCalled = Object.entries(ROWS).flatMap(([file, methods]) => Object.values(methods).filter((r) => r.notCalled).map(() => file))
     expect(notCalled.sort()).toEqual(['api/auth/login/route.ts', 'api/setup/route.ts', 'share/[token]/login/route.ts'])
   })
 })
 
 describe('a planner outside the wedding (B)', () => {
-  it('gets 404 from every wedding route and every route about A’s private venue, changes nothing, and learns nothing', async () => {
+  it('gets 404 from every wedding route, every route about A’s private venue and every admin route, changes nothing, and learns nothing', async () => {
     const w = await makeWorld()
     const before = await snapshot(w)
     const replies = await runAll('outsider', w)
@@ -800,13 +1167,13 @@ describe('the calls behind the child-id routes', () => {
 })
 
 describe('an editor of the wedding (E)', () => {
-  it('gets 403 from every owner-only route, changing nothing, and gets through every other route', async () => {
+  it('gets 403 from every owner-only route and 404 from every admin route, changing nothing, and gets through every other route', async () => {
     const w = await makeWorld()
     const before = await snapshot(w)
     await runAll('editor', w, (expected) => expected === 403)
     expect(await snapshot(w)).toEqual(before)
     await runAll('editor', w, (expected) => expected === 'ok')
-    // The custom checks too (lists, creates, the share page).
+    // The custom checks too (lists, creates, the share page, leaving, the account and admin routes).
     for (const { file, method, handler, row } of await plan()) {
       if (row.checks) await row.checks.editor(w, (req) => send(handler, file, method, req, cookies.editor))
     }
@@ -822,6 +1189,20 @@ describe('an admin who belongs to nothing', () => {
       .from(activityEvents)
       .where(and(eq(activityEvents.kind, 'admin_access'), eq(activityEvents.userId, admin.id), inArray(activityEvents.weddingId, [w.weddingA, w.restoredWedding])))
     expect(new Set(logged.map((e) => e.weddingId))).toEqual(new Set([w.weddingA, w.restoredWedding]))
+    // Each change to W_A's members and invites was logged on its own (reads are logged once a day, so only changes are counted here).
+    const changes = await db
+      .select({ detail: activityEvents.detail })
+      .from(activityEvents)
+      .where(and(eq(activityEvents.kind, 'admin_access'), eq(activityEvents.userId, admin.id), eq(activityEvents.weddingId, w.weddingA)))
+    const written = changes.map((e) => e.detail as { method: string; path: string; write: boolean }).filter((d) => d.write)
+    expect(written.map((d) => `${d.method} ${d.path}`)).toEqual(
+      expect.arrayContaining([
+        'PATCH /api/weddings/[id]/members/[userId]',
+        'DELETE /api/weddings/[id]/members/[userId]',
+        'POST /api/weddings/[id]/invites',
+        'DELETE /api/invites/[id]',
+      ]),
+    )
     // Using the power never made them a member.
     expect(await db.select().from(weddingMembers).where(and(eq(weddingMembers.userId, admin.id), inArray(weddingMembers.weddingId, [w.weddingA, w.restoredWedding])))).toEqual([])
     // The last call deleted A's wedding.

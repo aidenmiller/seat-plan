@@ -84,8 +84,8 @@ export async function dbMarkTemplateDeleted(templateId: string): Promise<void> {
   }
 }
 
-/** Runs one statement against the end-to-end database. */
-async function dbQuery<T extends pg.QueryResultRow>(text: string, values: unknown[]): Promise<T[]> {
+/** Runs one statement against the end-to-end database. Local databases only. */
+async function dbQuery<T extends pg.QueryResultRow>(text: string, values: unknown[] = []): Promise<T[]> {
   const url = process.env.E2E_DATABASE_URL
   if (!url) throw new Error('E2E_DATABASE_URL is not set; run through playwright.config.ts')
   assertLocalDatabase(url)
@@ -98,6 +98,14 @@ async function dbQuery<T extends pg.QueryResultRow>(text: string, values: unknow
   }
 }
 
+// ---------- Weddings and members, for the isolation, people, account and admin specs ----------
+
+/** Adds a wedding with no members, and returns its id. */
+export async function dbCreateWedding(name: string): Promise<string> {
+  const rows = await dbQuery<{ id: string }>('insert into weddings (name) values ($1) returning id', [name])
+  return rows[0]!.id
+}
+
 /** The id of the account with this email. */
 export async function dbUserId(email: string): Promise<string> {
   const rows = await dbQuery<{ id: string }>('select id from users where email = $1', [normalizeEmail(email)])
@@ -105,8 +113,14 @@ export async function dbUserId(email: string): Promise<string> {
   return rows[0].id
 }
 
-/** Makes the user a member of the wedding, or changes their role. */
-export async function dbAddMember(weddingId: string, userId: string, role: 'owner' | 'editor'): Promise<void> {
+/**
+ * Makes an account a member of the wedding with this role, or changes the role
+ * it has there. `user` is the account's id or its email. Straight to the
+ * database, so a spec does not depend on who creating a wedding through the
+ * app makes its owner.
+ */
+export async function dbAddMember(weddingId: string, user: string, role: 'owner' | 'editor'): Promise<void> {
+  const userId = user.includes('@') ? await dbUserId(user) : user
   await dbQuery(
     `insert into wedding_members (wedding_id, user_id, role) values ($1, $2, $3)
      on conflict (wedding_id, user_id) do update set role = excluded.role`,
@@ -126,4 +140,12 @@ export async function dbCountActivity(kind: string, userId: string, weddingId: s
     [kind, userId, weddingId],
   )
   return Number(rows[0]!.n)
+}
+
+/**
+ * Forgets every counted sign-in, invite and reset try. Every test comes from
+ * one address, so the specs that open many links start each test from zero.
+ */
+export async function dbClearAttemptCounts(): Promise<void> {
+  await dbQuery('delete from login_attempts where true')
 }
