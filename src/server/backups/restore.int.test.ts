@@ -14,6 +14,7 @@ import { makeMember, makeUser, sessionCookie, type TestUser } from '../../../tes
 import { backupFileSchema, type BackupFile } from '@/domain/backup/schema'
 import type { Canvas } from '@/domain/canvas-schema'
 import type { RestoredTemplate, RestoreStarted } from '@/shared/api'
+import { templateAccess } from '../auth/venue-access'
 import { restoredWeddingId } from '../backup'
 import {
   backups as backupsTable,
@@ -67,7 +68,7 @@ async function storedBackupOf(w: BackupWedding): Promise<BackupRow> {
 /** The stored backup as the download gives it: a normal file. */
 async function downloadedFile(backup: BackupRow): Promise<BackupFile> {
   const opened = await openStoredBackup(store, backup)
-  if (!opened.ok) throw new Error(opened.message)
+  if (!opened.ok) throw new Error(opened.problem)
   return backupFileSchema.parse(JSON.parse(await new Response(backupFileStream(opened.head, storeImageReader(store))).text()))
 }
 
@@ -302,6 +303,49 @@ describe('restoreStoredBackup', () => {
     const afterDelete = await restoreStoredBackup(db, store, backup.id, { jobId: randomUUID(), actor: { userId: admin.id, isAdmin: true } })
     if (afterDelete.status !== 'restored') throw new Error(afterDelete.status)
     expect(await members(afterDelete.weddingId)).toEqual([{ userId: admin.id, role: 'owner' }])
+  })
+
+  it('gives the venues of an admin’s restore to the planners it brings back: their own venue when the walls match, else a copy they own and can change', async () => {
+    const coOwner = await makeUser(db, { displayName: 'Cora' })
+    const w = await makeBackupWedding(db, owner.id)
+    await makeMember(db, w.weddingId, coOwner.id, 'owner')
+    const backup = await storedBackupOf(w)
+    const dinnerVenue = async (weddingId: string) => {
+      const [row] = await db.select({ templateId: layouts.venueTemplateId }).from(layouts).where(and(eq(layouts.weddingId, weddingId), eq(layouts.name, 'Dinner')))
+      const [template] = await db.select().from(venueTemplates).where(eq(venueTemplates.id, row!.templateId!))
+      return template!
+    }
+    const asAdmin = (jobId: string) => restoreStoredBackup(db, store, backup.id, { jobId, actor: { userId: admin.id, isAdmin: true } })
+
+    // The walls are as they were: the planner's own venue, used as it is.
+    const reused = await asAdmin(randomUUID())
+    if (reused.status !== 'restored') throw new Error(reused.status)
+    expect((await dinnerVenue(reused.weddingId)).id).toBe(w.templateId)
+
+    // The walls changed since: a copy with the floor plan image, owned by the first owner of the source wedding.
+    await db.update(venueTemplates).set({ fixedItems: [] }).where(eq(venueTemplates.id, w.templateId))
+    const jobId = randomUUID()
+    const copied = await asAdmin(jobId)
+    if (copied.status !== 'restored') throw new Error(copied.status)
+    const copy = await dinnerVenue(copied.weddingId)
+    expect(copy.id).not.toBe(w.templateId)
+    expect(copy.ownerUserId).toBe(owner.id)
+    expect(copy.referenceImageId).not.toBeNull()
+    expect(copy.name).toMatch(/ \(restored\)$/)
+    // The planner can change it; the admin's own list does not hold it.
+    expect(await templateAccess(db, { userId: owner.id, isAdmin: false }, copy.id)).toMatchObject({ read: true, edit: true })
+    expect(await db.select().from(venueTemplates).where(and(eq(venueTemplates.ownerUserId, admin.id), eq(venueTemplates.id, copy.id)))).toEqual([])
+    // A retry of the same job finds the same copy.
+    const again = await asAdmin(jobId)
+    if (again.status !== 'restored') throw new Error(again.status)
+    expect(again.existed).toBe(true)
+    expect((await dinnerVenue(again.weddingId)).id).toBe(copy.id)
+
+    // No planner brought back (the source is deleted): the admin owns the copy, as before.
+    await db.update(weddings).set({ deletedAt: new Date() }).where(eq(weddings.id, w.weddingId))
+    const alone = await asAdmin(randomUUID())
+    if (alone.status !== 'restored') throw new Error(alone.status)
+    expect((await dinnerVenue(alone.weddingId)).ownerUserId).toBe(admin.id)
   })
 })
 

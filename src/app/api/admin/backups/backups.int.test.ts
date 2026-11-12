@@ -15,7 +15,7 @@ import { TEST_DATABASE_URL, makeTestDb, truncateAll } from '../../../../../test/
 import { makeUser, sessionCookie, type TestUser } from '../../../../../test/auth'
 import { backupFileSchema } from '@/domain/backup/schema'
 import type { AdminBackupsReply, RestoredBackupReply, RunBackupsReply } from '@/shared/backups-api'
-import { activityEvents, backupRuns, weddingMembers, weddings } from '@/server/db/schema'
+import { activityEvents, backupRuns, rules, weddingMembers, weddings } from '@/server/db/schema'
 import { makeBackupWedding } from '@/server/backups/test-wedding'
 
 const { pool, db } = makeTestDb()
@@ -95,7 +95,16 @@ describe('the admin’s backup routes', () => {
     expect(event).toMatchObject({ subjectId: summary.runId, detail: { status: 'ok', backedUp: 2 } })
 
     const overview = (await call(r.overview, 'GET', {}, cookies.admin)).body as AdminBackupsReply
-    expect(overview).toMatchObject({ configured: true, storeKind: 'filesystem', totalBackups: 2, uploadsLast30Days: 3, uploadLimit30Days: 1500 })
+    expect(overview).toMatchObject({
+      configured: true,
+      storeKind: 'filesystem',
+      totalBackups: 2,
+      uploadsLast30Days: 3,
+      uploadLimit30Days: 1500,
+      // None by hand; their share is what the nightly run's 1000 leaves.
+      manualUploadsLast30Days: 0,
+      manualUploadLimit30Days: 500,
+    })
     const byWedding = Object.fromEntries(overview.backups.map((b) => [b.weddingId, b]))
     expect(byWedding[live.weddingId]).toMatchObject({ kind: 'nightly', weddingState: 'live', inThisStore: true })
     expect(byWedding[gone.weddingId]).toMatchObject({ kind: 'final', weddingState: 'deleted', inThisStore: true })
@@ -150,6 +159,41 @@ describe('the admin’s backup routes', () => {
     expect(await db.select({ userId: weddingMembers.userId }).from(weddingMembers).where(eq(weddingMembers.weddingId, reply.weddingId))).toEqual([{ userId: admin.id }])
     expect((await call(r.restore, 'POST', { backupId: final.id }, cookies.admin, { jobId })).status).toBe(200)
     expect((await call(r.restore, 'POST', { backupId: final.id }, cookies.admin, { jobId: 'x' })).status).toBe(422)
+  })
+
+  it('show a wedding that does not fit the backup format as a failure of the run, by name and field, and store nothing for it', async () => {
+    const r = await routes()
+    const w = await makeBackupWedding(db, owner.id)
+    // Longer than the API takes, written straight to the database.
+    await db.update(rules).set({ note: 'n'.repeat(10_001) }).where(eq(rules.id, w.ruleId))
+    const ran = (await call(r.run, 'POST', {}, cookies.admin)).body as RunBackupsReply
+    const failure = {
+      weddingId: w.weddingId,
+      weddingName: expect.stringMatching(/^Backup wedding/),
+      message: 'Not backed up: this wedding does not fit the backup format (rules.0.note is longer than 10000 characters).',
+    }
+    expect(ran).toMatchObject({ status: 'partial', failures: [failure] })
+    const overview = (await call(r.overview, 'GET', {}, cookies.admin)).body as AdminBackupsReply
+    expect(overview.runs[0]).toMatchObject({ id: ran.runId, failures: [failure] })
+    expect(overview.backups.filter((b) => b.weddingId === w.weddingId)).toEqual([])
+    await db.update(rules).set({ note: null }).where(eq(rules.id, w.ruleId))
+  })
+
+  it('take the nightly run that ended last as the last one, so a second delivery that gave up waiting does not hide a good night', async () => {
+    const r = await routes()
+    // Later than every other run in this file.
+    const base = Date.now()
+    const at = (minutes: number) => new Date(base + minutes * 60_000)
+    await db.insert(backupRuns).values([
+      { trigger: 'cron', status: 'ok', startedAt: at(10), heartbeatAt: at(14), finishedAt: at(14) },
+      { trigger: 'cron', status: 'failed', startedAt: at(12), heartbeatAt: at(12), finishedAt: at(12), error: 'Did not run: another nightly run was still going.' },
+    ])
+    const overview = (await call(r.overview, 'GET', {}, cookies.admin)).body as AdminBackupsReply
+    expect(overview.lastCronRun).toEqual({ startedAt: at(10).toISOString(), status: 'ok' })
+    expect(overview.lastSuccessfulCronRunAt).toBe(at(10).toISOString())
+    // A night that could not start at all is the last one.
+    await db.insert(backupRuns).values({ trigger: 'cron', status: 'failed', startedAt: at(20), heartbeatAt: at(20), finishedAt: at(20), error: 'Did not run.' })
+    expect(((await call(r.overview, 'GET', {}, cookies.admin)).body as AdminBackupsReply).lastCronRun).toEqual({ startedAt: at(20).toISOString(), status: 'failed' })
   })
 
   it('say when backups are not set up', async () => {

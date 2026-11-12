@@ -69,8 +69,13 @@ export async function runBackupNow(call: () => Promise<BackupNowReply>): Promise
     return { tone: 'ok', message: 'Backed up.', reload: true }
   } catch (err) {
     if (err instanceof ApiRequestError) {
-      if (err.status === 429) return { tone: 'info', message: 'This wedding was already backed up in the last few minutes.', reload: false }
-      if (err.status === 409) return { tone: 'info', message: 'A backup run is in progress. Try again shortly.', reload: false }
+      if (err.status === 429) {
+        // Too soon for this wedding; or this person's backups by hand for the day, or the share of uploads kept for them, are used up.
+        const error = (err.body as { error?: unknown } | null)?.error
+        if (error === 'daily_limit' || error === 'upload_limit') return { tone: 'info', message: bodyMessage(err) ?? 'Back up now is paused for now.', reload: false }
+        return { tone: 'info', message: 'This wedding was already backed up in the last few minutes.', reload: false }
+      }
+      if (err.status === 409) return { tone: 'info', message: bodyMessage(err) ?? 'A backup run is in progress. Try again shortly.', reload: false }
       if (err.status === 503) return { tone: 'error', message: 'Backups are not set up yet.', reload: false }
       if (err.status === 500) return { tone: 'error', message: `The backup did not work. ${bodyMessage(err) ?? 'Try again.'}`, reload: false }
     }
@@ -83,7 +88,8 @@ export function restoreErrorMessage(err: unknown): string {
   if (err instanceof ApiRequestError) {
     if (err.status === 503) return 'Backups are not set up yet.'
     if (err.status === 500 && (err.body as { error?: unknown } | null)?.error === 'corrupt') {
-      return `This backup cannot be restored. ${bodyMessage(err) ?? ''}`.trim()
+      // The server says it is unreadable, why, and to use Back up now.
+      return bodyMessage(err) ?? 'This backup cannot be restored.'
     }
     if (err.status === 409) return 'This restore was started by someone else. Close this and start it again.'
   }
@@ -125,12 +131,20 @@ export type NightlyStatus =
   | { state: 'not-set-up' }
   | { state: 'never' }
   | { state: 'stale'; lastIso: string }
+  /** The newest nightly run failed (or could not start), after the last one that worked. */
+  | { state: 'failed'; lastIso: string; failedIso: string }
   | { state: 'fresh'; lastIso: string }
 
-export function nightlyStatus(configured: boolean, lastSuccessIso: string | null, nowMs: number): NightlyStatus {
+export function nightlyStatus(
+  configured: boolean,
+  lastSuccessIso: string | null,
+  nowMs: number,
+  lastRun: { startedAt: string; status: string } | null = null,
+): NightlyStatus {
   if (!configured) return { state: 'not-set-up' }
   if (!lastSuccessIso) return { state: 'never' }
   const last = Date.parse(lastSuccessIso)
   if (!Number.isFinite(last) || nowMs - last > STALE_AFTER_MS) return { state: 'stale', lastIso: lastSuccessIso }
+  if (lastRun && lastRun.status === 'failed' && Date.parse(lastRun.startedAt) > last) return { state: 'failed', lastIso: lastSuccessIso, failedIso: lastRun.startedAt }
   return { state: 'fresh', lastIso: lastSuccessIso }
 }

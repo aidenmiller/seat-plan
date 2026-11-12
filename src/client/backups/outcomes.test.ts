@@ -49,9 +49,18 @@ describe('runBackupNow', () => {
     expect(result).toEqual({ tone: 'info', message: 'This wedding was already backed up in the last few minutes.', reload: false })
   })
 
-  it('says a run is in progress (409)', async () => {
+  it('says why Back up now is paused: this person’s backups by hand for the day, or the uploads kept for the nightly run (429)', async () => {
+    const daily = await runBackupNow(fail(429, { error: 'daily_limit', message: 'You have made 10 backups by hand in the last 24 hours.' }))
+    expect(daily).toEqual({ tone: 'info', message: 'You have made 10 backups by hand in the last 24 hours.', reload: false })
+    const budget = await runBackupNow(fail(429, { error: 'upload_limit', message: 'Back up now is paused: backups made by hand used 500 of the 500 uploads.' }))
+    expect(budget.message).toMatch(/^Back up now is paused/)
+  })
+
+  it('says a run is in progress (409), in the server’s words when it gives them', async () => {
     const result = await runBackupNow(fail(409, { error: 'busy' }))
     expect(result.message).toBe('A backup run is in progress. Try again shortly.')
+    const wedding = await runBackupNow(fail(409, { error: 'busy', message: 'This wedding is being backed up right now. Try again in a minute.' }))
+    expect(wedding.message).toBe('This wedding is being backed up right now. Try again in a minute.')
   })
 
   it('says backups are not set up (503)', async () => {
@@ -90,10 +99,12 @@ describe('createRestoreAttempt', () => {
     expect(createRestoreAttempt(send).jobId).not.toBe(createRestoreAttempt(send).jobId)
   })
 
-  it('says why a backup that fails its checks cannot be restored', async () => {
-    const attempt = createRestoreAttempt(fail(500, { error: 'corrupt', message: 'The file is damaged.' }), () => 'job-2')
-    const result = await attempt.run()
-    expect(result).toEqual({ ok: false, message: 'This backup cannot be restored. The file is damaged.' })
+  it('says why a backup that fails its checks cannot be restored, in the server’s words', async () => {
+    const message = 'This backup is unreadable: its file does not match its checksum. Use Back up now to make a fresh one.'
+    const attempt = createRestoreAttempt(fail(500, { error: 'corrupt', message }), () => 'job-2')
+    expect(await attempt.run()).toEqual({ ok: false, message })
+    const bare = createRestoreAttempt(fail(500, { error: 'corrupt' }), () => 'job-3')
+    expect(await bare.run()).toEqual({ ok: false, message: 'This backup cannot be restored.' })
   })
 })
 
@@ -107,5 +118,15 @@ describe('nightlyStatus', () => {
     expect(nightlyStatus(true, ago(STALE_AFTER_MS + 1000), now).state).toBe('stale')
     expect(nightlyStatus(true, null, now).state).toBe('never')
     expect(nightlyStatus(false, ago(1000), now).state).toBe('not-set-up')
+  })
+
+  it('says the last nightly run failed when a failed one (or one that could not start) came after the last that worked', () => {
+    const lastGood = ago(25 * 3600_000)
+    expect(nightlyStatus(true, lastGood, now, { startedAt: ago(3600_000), status: 'failed' })).toEqual({ state: 'failed', lastIso: lastGood, failedIso: ago(3600_000) })
+    // An older failure, or a newer run that only partly worked (it ran out of time), is not one.
+    expect(nightlyStatus(true, lastGood, now, { startedAt: ago(30 * 3600_000), status: 'failed' }).state).toBe('fresh')
+    expect(nightlyStatus(true, lastGood, now, { startedAt: ago(3600_000), status: 'partial' }).state).toBe('fresh')
+    // Stale wins: it says more.
+    expect(nightlyStatus(true, ago(STALE_AFTER_MS + 1000), now, { startedAt: ago(3600_000), status: 'failed' }).state).toBe('stale')
   })
 })

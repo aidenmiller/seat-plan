@@ -1,6 +1,6 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
-import { and, eq, isNull, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import { type BackupLayout, type BackupTemplate, type RestoreStart } from '@/domain/backup/schema'
 import { partnerPairs, remapCanvas, remapWeddingRows, restoredName, sameWalls } from '@/domain/backup/remap'
 import { nameKey } from '@/domain/names'
@@ -9,6 +9,7 @@ import type { RestoredLayout, RestoredTemplate, RestoreStarted } from '@/shared/
 import { canUseTemplateInWedding, type Viewer } from './auth/venue-access'
 import { backupFileStream, type ImageReader } from './backups/assemble'
 import { buildBackup } from './backups/build'
+import { checkHeadJson } from './backups/format'
 import { writeCanvas } from './canvas-write'
 import {
   groupMembers,
@@ -89,16 +90,25 @@ export function databaseImageReader(db: Db): ImageReader {
   }
 }
 
+export type BackupStreamResult = { ok: true; fileName: string; stream: ReadableStream<Uint8Array> } | { ok: false; problem: string }
+
 /**
  * The backup file of the wedding as it is now, as a stream of UTF-8 JSON,
  * with its file name. Null when the wedding is missing or deleted. The rows
  * are read in one transaction (backups/build.ts); images are read one at a
  * time as the stream is pulled (backups/assemble.ts).
+ *
+ * Checked against the backup format first, with the same check the nightly
+ * job makes before it stores a backup (backups/format.ts): a file "Restore
+ * from file" would refuse is never handed over as a backup. The problem
+ * names the field, never its value.
  */
-export async function backupStream(db: Db, weddingId: string): Promise<{ fileName: string; stream: ReadableStream<Uint8Array> } | null> {
+export async function backupStream(db: Db, weddingId: string): Promise<BackupStreamResult | null> {
   const built = await buildBackup(db, weddingId)
   if (!built) return null
-  return { fileName: backupFileName(built.weddingName), stream: backupFileStream(built.head, databaseImageReader(db)) }
+  const fits = checkHeadJson(JSON.stringify(built.head))
+  if (!fits.ok) return { ok: false, problem: fits.problem }
+  return { ok: true, fileName: backupFileName(built.weddingName), stream: backupFileStream(built.head, databaseImageReader(db)) }
 }
 
 // ---------------------------------------------------------------- restore: the wedding's rows
@@ -231,20 +241,32 @@ function storedItems(value: unknown): FixedItem[] {
  * "<name> (restored)", owned by them, is made from the backup. The copy needs
  * its floor plan image next (step 3). Someone else's template is never read
  * here beyond its owner and library flag, so the reply says nothing about it.
+ *
+ * `opts.owners` restores the venues for other people instead (an admin's
+ * restore of a planner's wedding, backups/restore.ts): a template of any of
+ * theirs may be used as it is, and the copy belongs to the first of them, so
+ * the planners can change the venues of the wedding they got back.
  */
-export async function restoreTemplate(db: Db, jobId: string, body: BackupTemplate, userId: string): Promise<RestoreTemplateResult> {
+export async function restoreTemplate(
+  db: Db,
+  jobId: string,
+  body: BackupTemplate,
+  userId: string,
+  opts: { owners?: readonly string[] } = {},
+): Promise<RestoreTemplateResult> {
   if (!(await liveRestoredWedding(db, jobId))) return { status: 'not-found' }
   const copyId = restoredId(jobId, body.id)
+  const owners = opts.owners && opts.owners.length > 0 ? [...opts.owners] : [userId]
 
   return db.transaction(async (tx): Promise<RestoreTemplateResult> => {
     // Made by an earlier try of this step.
     const [copy] = await tx
       .select({ referenceImageId: venueTemplates.referenceImageId })
       .from(venueTemplates)
-      .where(and(eq(venueTemplates.id, copyId), eq(venueTemplates.ownerUserId, userId), isNull(venueTemplates.deletedAt)))
+      .where(and(eq(venueTemplates.id, copyId), inArray(venueTemplates.ownerUserId, owners), isNull(venueTemplates.deletedAt)))
     if (copy) return { status: 'ok', templateId: copyId, reused: false, needsImage: body.imageId !== null && copy.referenceImageId === null }
 
-    // Only the library or the restorer's own is a candidate, checked before the walls are compared.
+    // Only the library or the owners' own is a candidate, checked before the walls are compared.
     const [old] = await tx
       .select({ fixedItems: venueTemplates.fixedItems })
       .from(venueTemplates)
@@ -252,7 +274,7 @@ export async function restoreTemplate(db: Db, jobId: string, body: BackupTemplat
         and(
           eq(venueTemplates.id, body.id),
           isNull(venueTemplates.deletedAt),
-          or(eq(venueTemplates.isLibrary, true), eq(venueTemplates.ownerUserId, userId)),
+          or(eq(venueTemplates.isLibrary, true), inArray(venueTemplates.ownerUserId, owners)),
         ),
       )
     if (old && sameWalls(storedItems(old.fixedItems), body.fixedItems)) {
@@ -268,7 +290,7 @@ export async function restoreTemplate(db: Db, jobId: string, body: BackupTemplat
         reference: body.reference,
         importedBy: body.importedBy,
         editedBy: null,
-        ownerUserId: userId,
+        ownerUserId: owners[0]!,
         isLibrary: false,
       })
       .onConflictDoNothing({ target: venueTemplates.id })
@@ -291,7 +313,8 @@ export async function restoreTemplate(db: Db, jobId: string, body: BackupTemplat
  * Step 3: the floor plan image of a template step 2 made, as raw bytes. It
  * becomes the template's reference image. 'not-found' when this job made no
  * copy of that template owned by `userId` (a reused template keeps its own
- * image).
+ * image). `userId` is whoever owns the copy: the person restoring, or the
+ * first of step 2's `owners`.
  */
 export async function restoreTemplateImage(
   db: Db,
@@ -324,6 +347,10 @@ export async function restoreTemplateImage(
 
 // ---------------------------------------------------------------- restore: layouts
 
+function isViewerList(viewer: Viewer | readonly Viewer[]): viewer is readonly Viewer[] {
+  return Array.isArray(viewer)
+}
+
 export type RestoreLayoutResult =
   | ({ status: 'created'; existed: boolean } & RestoredLayout)
   | { status: 'not-found' }
@@ -337,12 +364,15 @@ export type RestoreLayoutResult =
  * the old template when it was reused, or a blank canvas when neither exists.
  * Either one must be a template the restorer may use in the restored wedding
  * (canUseTemplateInWedding, as for any layout), so a file that names someone
- * else's private template gets a blank canvas, never that template.
+ * else's private template gets a blank canvas, never that template. Given
+ * several viewers (step 2's `owners`, each a member of the restored wedding),
+ * a template any one of them may use there.
  */
-export async function restoreLayout(db: Db, jobId: string, body: BackupLayout, viewer: Viewer): Promise<RestoreLayoutResult> {
+export async function restoreLayout(db: Db, jobId: string, body: BackupLayout, viewer: Viewer | readonly Viewer[]): Promise<RestoreLayoutResult> {
   const weddingId = restoredWeddingId(jobId)
   const layoutId = restoredId(jobId, body.id)
   const canvas = remapCanvas(body.canvas, (old) => restoredId(jobId, old))
+  const viewers: readonly Viewer[] = isViewerList(viewer) ? viewer : [viewer]
 
   const result = await db.transaction(async (tx) => {
     let venueTemplateId: string | null = null
@@ -354,7 +384,10 @@ export async function restoreLayout(db: Db, jobId: string, body: BackupLayout, v
           .from(venueTemplates)
           .where(and(eq(venueTemplates.id, candidate), isNull(venueTemplates.deletedAt)))
           .for('share')
-        if (row && (await canUseTemplateInWedding(tx, viewer, row.id, weddingId))) {
+        if (!row) continue
+        let usable = false
+        for (const who of viewers) if (!usable && (await canUseTemplateInWedding(tx, who, row.id, weddingId))) usable = true
+        if (usable) {
           venueTemplateId = row.id
           break
         }

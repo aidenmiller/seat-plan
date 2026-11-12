@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../../test/db'
@@ -16,7 +16,7 @@ import { makeMember, makeUser, sessionCookie, type TestUser } from '../../../../
 import { backupFileSchema } from '@/domain/backup/schema'
 import type { RestoredLayout, RestoredTemplate, RestoreStarted } from '@/shared/api'
 import type { BackupNowReply, RestoredBackupReply, WeddingBackupsReply } from '@/shared/backups-api'
-import { activityEvents, backupRuns, backups, guests, layouts, weddingMembers } from '@/server/db/schema'
+import { activityEvents, backupRuns, backups, guests, layouts, rules, weddingMembers } from '@/server/db/schema'
 import type { Db } from '@/server/locks'
 import { getBackupStore } from '@/server/backups/store'
 import { makeBackupWedding, type BackupWedding } from '@/server/backups/test-wedding'
@@ -79,6 +79,33 @@ async function wedding(): Promise<BackupWedding> {
   return w
 }
 
+/** A planner of their own with a wedding, so their backups by hand do not count against `owner`'s 10 a day. */
+async function ownWedding(): Promise<{ w: BackupWedding; cookie: string }> {
+  const planner = await makeUser(db, { displayName: 'Rowan' })
+  return { w: await makeBackupWedding(db, planner.id), cookie: await sessionCookie(db, planner.id) }
+}
+
+/** A backup row of another store, for counting: nothing reads its file. */
+function fakeBackup(opts: { createdBy: string | null; createdAt: Date }): typeof backups.$inferInsert {
+  const id = randomUUID()
+  return {
+    id,
+    storeId: 'memory:counted-only',
+    weddingId: randomUUID(),
+    weddingName: 'Elsewhere',
+    kind: 'manual',
+    pathname: `backups/w/${randomUUID()}/2026/01/20260101T000000Z-manual-${id}.json.gz`,
+    byteSize: 1,
+    blobSha256: 'a'.repeat(64),
+    contentSha256: 'b'.repeat(64),
+    formatVersion: 2,
+    guestCount: 0,
+    layoutCount: 0,
+    createdBy: opts.createdBy,
+    createdAt: opts.createdAt,
+  }
+}
+
 /** Lets the next Back up now of this wedding through the 5-minute rule. */
 async function age(weddingId: string) {
   await db
@@ -135,14 +162,69 @@ describe('the wedding’s backup routes', () => {
     expect(same).toMatchObject({ status: 200, body: { status: 'unchanged', backup: { id: (changed.body as BackupNowReply).backup.id } } })
   })
 
-  it('answers 409 while another run is going', async () => {
+  it('goes ahead while the nightly run is going (it never takes the run’s lease), and answers 409 only while this wedding is being backed up', async () => {
     const w = await wedding()
     const r = await routes()
     const [alive] = await db.insert(backupRuns).values({ trigger: 'cron' }).returning({ id: backupRuns.id })
     try {
-      expect(await call(r.list, 'POST', { id: w.weddingId }, { cookie: cookies.owner })).toMatchObject({ status: 409, body: { error: 'busy' } })
+      expect(await call(r.list, 'POST', { id: w.weddingId }, { cookie: cookies.owner })).toMatchObject({ status: 201, body: { status: 'created' } })
+      // The nightly run is still the only running run.
+      expect((await db.select().from(backupRuns).where(eq(backupRuns.status, 'running'))).map((x) => x.id)).toEqual([alive!.id])
     } finally {
       await db.update(backupRuns).set({ status: 'ok', finishedAt: new Date() }).where(eq(backupRuns.id, alive!.id))
+    }
+    // While the wedding's backup lock is held (as the nightly run holds it while it backs this wedding up): 409.
+    const other = await wedding()
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`backup:wedding:${other.weddingId}`}, 0))`)
+      expect(await call(r.list, 'POST', { id: other.weddingId }, { cookie: cookies.owner })).toMatchObject({
+        status: 409,
+        body: { error: 'busy', message: 'This wedding is being backed up right now. Try again in a minute.' },
+      })
+    })
+    expect(await db.select().from(backups).where(eq(backups.weddingId, other.weddingId))).toEqual([])
+  })
+
+  it('holds one person to 10 backups by hand in 24 hours, across all their weddings, with a plain 429', async () => {
+    const planner = await makeUser(db, { displayName: 'Paula' })
+    const cookie = await sessionCookie(db, planner.id)
+    const w = await makeBackupWedding(db, planner.id)
+    const r = await routes()
+    // Ten backups by hand of other weddings in the last day, the oldest 20 hours ago.
+    const ids: string[] = []
+    for (let i = 0; i < 10; i++) {
+      const [row] = await db.insert(backups).values(fakeBackup({ createdBy: planner.id, createdAt: new Date(Date.now() - (20 - i) * 3600_000) })).returning({ id: backups.id })
+      ids.push(row!.id)
+    }
+    const refused = await call(r.list, 'POST', { id: w.weddingId }, { cookie })
+    expect(refused).toMatchObject({ status: 429, body: { error: 'daily_limit', message: expect.stringMatching(/^You have made 10 backups by hand in the last 24 hours/) } })
+    // Retry-After: when the oldest of the ten is a day old, about 4 hours on.
+    expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(3.9 * 3600)
+    expect(Number(refused.headers.get('retry-after'))).toBeLessThanOrEqual(4 * 3600)
+    // Someone else is not held back by it.
+    expect((await call(r.list, 'POST', { id: (await wedding()).weddingId }, { cookie: cookies.owner })).status).toBe(201)
+    // A day on, the planner may again.
+    await db.update(backups).set({ createdAt: new Date(Date.now() - 25 * 3600_000) }).where(inArray(backups.id, ids))
+    expect((await call(r.list, 'POST', { id: w.weddingId }, { cookie })).status).toBe(201)
+    await db.delete(backups).where(inArray(backups.id, ids))
+  })
+
+  it('answers 429 when backups by hand have used their share of the upload limit, which is kept apart from the nightly run’s', async () => {
+    const planner = await makeUser(db, { displayName: 'Quinn' })
+    const cookie = await sessionCookie(db, planner.id)
+    const w = await makeBackupWedding(db, planner.id)
+    const r = await routes()
+    // 500 manual backups in the last 30 days (another store's, by nobody here): the whole share, with this file's own on top.
+    const rows = Array.from({ length: 500 }, () => fakeBackup({ createdBy: null, createdAt: new Date(Date.now() - 10 * 86_400_000) }))
+    const ids = (await db.insert(backups).values(rows).returning({ id: backups.id })).map((x) => x.id)
+    try {
+      expect(await call(r.list, 'POST', { id: w.weddingId }, { cookie })).toMatchObject({
+        status: 429,
+        body: { error: 'upload_limit', message: expect.stringMatching(/^Back up now is paused: backups made by hand used 5\d\d of the 500 uploads they may make in 30 days/) },
+      })
+      expect(await db.select().from(backups).where(eq(backups.weddingId, w.weddingId))).toEqual([])
+    } finally {
+      await db.delete(backups).where(inArray(backups.id, ids))
     }
   })
 
@@ -227,20 +309,62 @@ describe('the wedding’s backup routes', () => {
   })
 
   it('answers 500 corrupt for a backup that fails its checks, and makes nothing', async () => {
-    const w = await wedding()
+    const { w, cookie } = await ownWedding()
     const r = await routes()
-    const made = ((await call(r.list, 'POST', { id: w.weddingId }, { cookie: cookies.owner })).body as BackupNowReply).backup
+    const made = ((await call(r.list, 'POST', { id: w.weddingId }, { cookie })).body as BackupNowReply).backup
     const [row] = await db.select({ pathname: backups.pathname }).from(backups).where(eq(backups.id, made.id))
     const store = getBackupStore()!
     await store.put(row!.pathname, new Uint8Array([1, 2, 3]), 'application/gzip', { overwrite: true })
-    expect(await call(r.one, 'GET', { id: w.weddingId, backupId: made.id }, { cookie: cookies.owner })).toMatchObject({
-      status: 500,
-      body: { error: 'corrupt', message: 'The backup file does not match its checksum.' },
-    })
+    // Short: what is wrong, and to make a fresh one.
+    const message = 'This backup is unreadable: its file does not match its checksum. Use Back up now to make a fresh one.'
+    expect(await call(r.one, 'GET', { id: w.weddingId, backupId: made.id }, { cookie })).toMatchObject({ status: 500, body: { error: 'corrupt', message } })
     const jobId = randomUUID()
-    expect((await call(r.restore, 'POST', { id: w.weddingId, backupId: made.id }, { cookie: cookies.owner, body: { jobId } })).body).toMatchObject({ error: 'corrupt' })
+    expect((await call(r.restore, 'POST', { id: w.weddingId, backupId: made.id }, { cookie, body: { jobId } })).body).toEqual({ error: 'corrupt', message })
     const { restoredWeddingId } = await import('@/server/backup')
     expect(await db.select().from(weddingMembers).where(eq(weddingMembers.weddingId, restoredWeddingId(jobId)))).toEqual([])
+    // Marked unreadable, so the next backup is made afresh instead of finding the wedding unchanged since it.
+    const [marked] = await db.select({ unreadableAt: backups.unreadableAt }).from(backups).where(eq(backups.id, made.id))
+    expect(marked!.unreadableAt).not.toBeNull()
+    await age(w.weddingId)
+    expect(await call(r.list, 'POST', { id: w.weddingId }, { cookie })).toMatchObject({ status: 201, body: { status: 'created' } })
+  })
+
+  it('downloads, stores and restores a wedding with a rule note of 10,000 characters, as long as the API takes', async () => {
+    const { w, cookie } = await ownWedding()
+    const r = await routes()
+    const note = `${'Keep apart.\n'.repeat(833)}1234`
+    expect(note).toHaveLength(10_000)
+    await db.update(rules).set({ note }).where(eq(rules.id, w.ruleId))
+
+    // The download of the wedding as it is now reads as a backup file.
+    const live = await import('../backup/route')
+    const res = await call(live, 'GET', { id: w.weddingId }, { cookie })
+    expect(res.status).toBe(200)
+    expect(backupFileSchema.parse(JSON.parse(res.text)).rules.find((x) => x.kind === 'apart')!.note).toBe(note)
+
+    // Stored, then downloaded and restored.
+    const made = await call(r.list, 'POST', { id: w.weddingId }, { cookie })
+    expect(made).toMatchObject({ status: 201, body: { status: 'created' } })
+    const backupId = (made.body as BackupNowReply).backup.id
+    const stored = await call(r.one, 'GET', { id: w.weddingId, backupId }, { cookie })
+    expect(stored.status).toBe(200)
+    expect(backupFileSchema.parse(JSON.parse(stored.text)).rules.find((x) => x.kind === 'apart')!.note).toBe(note)
+    const restored = await call(r.restore, 'POST', { id: w.weddingId, backupId }, { cookie, body: { jobId: randomUUID() } })
+    expect(restored.status).toBe(201)
+    const notes = await db.select({ note: rules.note }).from(rules).where(eq(rules.weddingId, (restored.body as RestoredBackupReply).weddingId))
+    expect(notes.map((x) => x.note)).toContain(note)
+  })
+
+  it('refuses to download a wedding that does not fit the backup format, naming the field and never its value', async () => {
+    const w = await wedding()
+    // Longer than the API takes, written straight to the database.
+    await db.update(rules).set({ note: 'n'.repeat(10_001) }).where(eq(rules.id, w.ruleId))
+    const live = await import('../backup/route')
+    const res = await call(live, 'GET', { id: w.weddingId }, { cookie: cookies.owner })
+    expect(res).toMatchObject({
+      status: 500,
+      body: { error: 'unrestorable', message: 'This wedding cannot be saved as a backup file: rules.0.note is longer than 10000 characters.' },
+    })
   })
 
   it('says plainly when backups are not set up', async () => {

@@ -113,7 +113,7 @@ export function BackupStatus({
   message: RunMessage | null
   onRun: () => void
 }) {
-  const status = nightlyStatus(data.configured, data.lastSuccessfulCronRunAt, nowMs)
+  const status = nightlyStatus(data.configured, data.lastSuccessfulCronRunAt, nowMs, data.lastCronRun)
   return (
     <section aria-labelledby="backup-status-heading" className="space-y-3">
       <h3 id="backup-status-heading" className="text-lg font-semibold tracking-tight">
@@ -132,6 +132,11 @@ export function BackupStatus({
       {status.state === 'stale' && (
         <p role="alert" className="rounded-xl border border-red-300 bg-red-50 p-4 text-sm font-medium text-red-800" data-testid="backup-banner" data-state="stale">
           The nightly backup has not run since {backupTime(status.lastIso)}. Check the schedule in Vercel.
+        </p>
+      )}
+      {status.state === 'failed' && (
+        <p role="alert" className="rounded-xl border border-red-300 bg-red-50 p-4 text-sm font-medium text-red-800" data-testid="backup-banner" data-state="failed">
+          The last nightly backup, at {backupTime(status.failedIso)}, failed or could not start. See Recent runs below.
         </p>
       )}
       <dl className="grid gap-x-6 gap-y-2 rounded-xl border border-stone-200 bg-white p-4 text-sm sm:grid-cols-[max-content_1fr]">
@@ -154,8 +159,8 @@ export function BackupStatus({
           {formatSize(data.storage.totalBytes)} ({plural(data.storage.backupCount, 'backup')}, {plural(data.storage.imageCount, 'floor plan image')})
         </dd>
         <dt className="text-xs font-medium uppercase tracking-wide text-stone-600 sm:text-sm sm:normal-case sm:tracking-normal sm:text-stone-700">Uploads in 30 days</dt>
-        <dd className="mb-2 sm:mb-0">
-          {data.uploadsLast30Days} of {data.uploadLimit30Days}
+        <dd className="mb-2 sm:mb-0" data-testid="backup-uploads">
+          {data.uploadsLast30Days} of {data.uploadLimit30Days} (by hand: {data.manualUploadsLast30Days} of the {data.manualUploadLimit30Days} Back up now may use)
         </dd>
       </dl>
       <div>
