@@ -22,15 +22,18 @@ type Rule = {
 
 /**
  * Pages that open without a session, each with the check it must run
- * instead. invite and reset are the next phase's pages; they do not exist yet.
+ * instead. The invite and reset pages hold no secret: their token stays in
+ * the address's #fragment, and the routes they call do the checks.
  */
 const OPEN_PAGES = new Map<string, Rule>([
   // Sends a signed-in visitor on only when the database still holds their session.
   ['login/page.tsx', { guard: 'getSessionUser()', required: /await getSessionUser\(/, layouts: false }],
   // The 404 page unless setup is still open.
   ['setup/page.tsx', { guard: 'the setup check', required: /if \(!\(await setupOpen\(\)\)\) notFound\(\)/, layouts: false }],
-  ['invite/page.tsx', { guard: 'its own check', required: /\S/, layouts: false }],
-  ['reset/page.tsx', { guard: 'its own check', required: /\S/, layouts: false }],
+  // Offers to accept for a signed-in visitor only when the database still holds their session.
+  ['invite/page.tsx', { guard: 'getSessionUser()', required: /await getSessionUser\(/, layouts: false }],
+  // Reads nothing from the request: the form sends the token to /api/auth/reset, which checks it.
+  ['reset/page.tsx', { guard: 'no check (it reads no request)', required: /\S/, layouts: false }],
 ])
 
 const WEDDING_RULE: Rule = { guard: 'await requireWeddingPage(', required: /await requireWeddingPage\(/, layouts: true }
@@ -103,8 +106,8 @@ describe('the rules map each path to its guard', () => {
 describe('pages check the session themselves', () => {
   const files = relative(walk(APP_DIR, (name) => name === 'page.tsx' || name === 'page.ts'))
 
-  it('finds the open pages that exist', () => {
-    for (const file of ['login/page.tsx', 'setup/page.tsx']) expect(files).toContain(file)
+  it('finds the open pages', () => {
+    for (const file of OPEN_PAGES.keys()) expect(files).toContain(file)
   })
 
   for (const file of files) {
