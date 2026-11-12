@@ -11,7 +11,7 @@ import { SAMPLE_COLUMNS } from './columns'
 import { CSV_BOM, csvLines } from './export'
 
 export const SAMPLE_CSV_FILE_NAME = 'guests-sample.csv'
-/** Where the app serves the sample file (behind the password gate). */
+/** Where the app serves the sample file (behind sign-in). */
 export const SAMPLE_CSV_URL = `/samples/${SAMPLE_CSV_FILE_NAME}`
 
 const EXTRA_COLUMN = 'Table wish'

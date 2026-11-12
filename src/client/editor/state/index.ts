@@ -10,7 +10,7 @@
  *   const [editor] = useState(() => createEditorState({
  *     layoutId: layout.id,
  *     store,
- *     canEdit: () => canEditRef.current,          // saver ready, author picked, no conflict
+ *     canEdit: () => canEditRef.current,          // saver ready, no conflict
  *     onCommit: (canvas) => sessionRef.current?.noteEdit(canvas),
  *     settings: () => ({ unit: wedding.unit, minGapCm: wedding.minGapCm }),
  *     venueItems: () => template?.fixedItems ?? [],  // fit to content takes the venue in

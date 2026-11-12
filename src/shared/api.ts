@@ -252,7 +252,7 @@ export const MAX_VENUE_IMAGE_BYTES = 3.5 * 1024 * 1024
 /** The largest side of a stored image, in pixels (the model's own hard limit). */
 export const MAX_VENUE_IMAGE_SIDE = 8000
 
-/** A stored floor plan image. `url` serves it behind the site cookie. */
+/** A stored floor plan image. `url` serves it only to a signed-in person who may read the venue. */
 export type VenueImageInfo = {
   id: string
   templateId: string
