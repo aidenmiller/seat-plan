@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { anyUnsaved, flushAll, isLeavingForSignOut, markLeavingForSignOut, registerSaver, stopAll, type LiveSaver } from './saver-registry'
+import { anyUnsaved, flushAll, isLeavingForSignOut, markLeavingForSignOut, registerSaver, resumeAll, stopAll, type LiveSaver } from './saver-registry'
 
 function fake(unsaved: boolean, flush: () => Promise<void> = async () => undefined): LiveSaver & { stopped: boolean } {
   const s = {
@@ -54,6 +54,22 @@ describe('the saver registry', () => {
     expect(a.stopped).toBe(true)
     expect(gone.stopped).toBe(false)
     expect(anyUnsaved()).toBe(false)
+  })
+
+  it('resumes every live saver that can (the same person signed in again), and a broken one stops no other', () => {
+    const a = { ...fake(true), resume: vi.fn() }
+    const broken = {
+      ...fake(true),
+      resume: vi.fn(() => {
+        throw new Error('broken')
+      }),
+    }
+    const plain = fake(true)
+    const offs = [registerSaver(broken), registerSaver(a), registerSaver(plain)]
+    resumeAll()
+    expect(broken.resume).toHaveBeenCalledTimes(1)
+    expect(a.resume).toHaveBeenCalledTimes(1)
+    for (const off of offs) off()
   })
 
   it('remembers that the page leaves for a sign-out', () => {

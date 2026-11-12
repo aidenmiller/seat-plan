@@ -248,9 +248,17 @@ export function openLayoutSession({ layout, store, user, events, deps }: OpenLay
     events.onStatus(saver.getStatus())
 
     const active = saver
+    /** Deleting the closed tab's draft once the server has its edits. */
+    let orphanDeleted: Promise<unknown> = Promise.resolve()
     unregister = d.registerSaver({
-      flush: () => active.flush(),
+      // Signing out reads this user's storage next, and counts a draft still there as unsaved: wait for the deletes.
+      async flush() {
+        await active.flush()
+        await active.whenStored()
+        await orphanDeleted
+      },
       hasUnsavedChanges: () => active.hasUnsavedChanges(),
+      resume: () => active.resume(),
       async stop() {
         active.dispose()
         await active.whenStored()
@@ -266,7 +274,7 @@ export function openLayoutSession({ layout, store, user, events, deps }: OpenLay
         const stop = active.subscribe(() => {
           if (active.getStatus().kind !== 'saved' || active.hasUnsavedChanges()) return
           stop()
-          void d.drafts.deleteDraft(orphan.layoutId, orphan.tabId)
+          orphanDeleted = d.drafts.deleteDraft(orphan.layoutId, orphan.tabId)
         })
       }
     } else if (next?.decision.kind === 'conflict') {

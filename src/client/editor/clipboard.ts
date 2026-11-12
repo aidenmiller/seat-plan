@@ -7,8 +7,15 @@
  *
  * Seats are emptied on copy (PLAN change 9): a pasted table never carries a
  * guest, and no guest ids sit in storage.
+ *
+ * A copy belongs to the signed-in person who made it: it is stored with their
+ * id, and only they can paste it. On a shared device, someone signing in over
+ * another person's session (without that person signing out, which clears the
+ * clipboard) finds the copy cleared, not pasteable: notes in it can hold
+ * guest names.
  */
 import { z } from 'zod'
+import { currentUserId } from '@/client/current-user'
 import { itemSchema, type Item } from '@/domain/canvas-schema'
 import type { StorageLike } from './state/device-view'
 import { emptySeats } from '@/domain/seats'
@@ -23,6 +30,8 @@ export type ClipboardData = {
   layoutId: string
   copiedAt: number
   items: Item[]
+  /** Who copied it: the signed-in user's id (null on a page with no one signed in). */
+  userId: string | null
 }
 
 export type EditorClipboard = {
@@ -40,6 +49,8 @@ const storedSchema = z.object({
   layoutId: z.string().max(100),
   copiedAt: z.number().finite(),
   items: z.array(itemSchema).max(3000),
+  // Missing in copies stored before copies had an owner: nobody's, so never pasted.
+  userId: z.string().max(200).nullable().optional(),
 })
 
 /** One clipboard per tab, shared by every layout opened in it. */
@@ -60,12 +71,15 @@ export type ClipboardOptions = {
   now?: () => number
   /** Tests pass their own; the editor shares one per tab. */
   memory?: { data: ClipboardData | null; pastes: Map<string, number> }
+  /** Who is copying and pasting. Default: the user this page was rendered for (src/client/current-user.tsx). */
+  userId?: () => string | null
 }
 
 export function createClipboard(options: ClipboardOptions = {}): EditorClipboard {
   const storage = options.storage ?? null
   const now = options.now ?? Date.now
   const memory = options.memory ?? tabMemory
+  const me = options.userId ?? currentUserId
 
   function readStored(): ClipboardData | null {
     if (!storage) return null
@@ -73,7 +87,14 @@ export function createClipboard(options: ClipboardOptions = {}): EditorClipboard
       const raw = storage.getItem(CLIPBOARD_KEY)
       if (!raw) return null
       const parsed = storedSchema.safeParse(JSON.parse(raw))
-      return parsed.success ? parsed.data : null
+      if (!parsed.success) return null
+      const userId = me()
+      if ((parsed.data.userId ?? null) !== userId) {
+        // Someone else's copy: never pasted here. A signed-in person clears it, so it does not linger on a shared device.
+        if (userId !== null) storage.removeItem(CLIPBOARD_KEY)
+        return null
+      }
+      return { ...parsed.data, userId }
     } catch {
       return null
     }
@@ -82,7 +103,7 @@ export function createClipboard(options: ClipboardOptions = {}): EditorClipboard
   return {
     write(items, layoutId) {
       if (items.length === 0) return
-      const data: ClipboardData = { copyId: randomCopyId(), layoutId, copiedAt: now(), items: items.map(clearSeats) }
+      const data: ClipboardData = { copyId: randomCopyId(), layoutId, copiedAt: now(), items: items.map(clearSeats), userId: me() }
       memory.data = data
       if (!storage) return
       try {
@@ -95,7 +116,7 @@ export function createClipboard(options: ClipboardOptions = {}): EditorClipboard
     },
     read() {
       const stored = readStored()
-      const mine = memory.data
+      const mine = memory.data && memory.data.userId === me() ? memory.data : null
       if (stored && (!mine || stored.copiedAt > mine.copiedAt)) return stored
       return mine
     },

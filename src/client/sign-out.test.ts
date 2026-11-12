@@ -7,15 +7,22 @@
 import 'fake-indexeddb/auto'
 import { set } from 'idb-keyval'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { emptyCanvas } from '@/domain/canvas-schema'
 import { openKeyvalStore } from './sync/idb'
+import { createDraftStore } from './sync/outbox'
+import { createRowStore } from './sync/row-save'
 import { CLIPBOARD_STORAGE_KEY, DRAFT_STORE_NAME, draftDbName, LEGACY_AUTHOR_KEY, ROW_STORE_NAME, rowDbName } from './sync/storage-names'
-import { signOut, UNSAVED_QUESTION, wipeUserStorage, type SignOutDeps } from './sign-out'
+import type { DraftSnapshot } from './sync/types'
+import { unsentOnDevice } from './sync/unsent'
+import { signOut, UNSAVED_QUESTION, unsavedQuestion, wipeUserStorage, type SignOutDeps } from './sign-out'
 
 const USER = '11111111-1111-4111-8111-111111111111'
+const NOTHING_STORED = { layouts: 0, guests: 0, groups: 0 }
 
 function deps(over: Partial<SignOutDeps> = {}) {
   const log: string[] = []
   const d: SignOutDeps = {
+    sendStoredRows: vi.fn(),
     flushHere: vi.fn(async () => {
       log.push('flush here')
       return { unsaved: false }
@@ -24,6 +31,7 @@ function deps(over: Partial<SignOutDeps> = {}) {
       log.push('flush other tabs')
       return { unsaved: false }
     }),
+    inspectStored: vi.fn(async () => NOTHING_STORED),
     confirm: vi.fn(() => {
       log.push('confirm')
       return true
@@ -113,6 +121,145 @@ describe('signOut', () => {
     expect(d.wipe).not.toHaveBeenCalled()
     expect(d.broadcast).not.toHaveBeenCalled()
     expect(d.leave).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Edits no live saver holds: a draft left by a closed or crashed tab (or a
+ * phone tab the browser killed), a layout whose save failed, guest edits
+ * queued while no guest page is open, drafts from before accounts that were
+ * never opened. They are only in this person's databases, which signing out
+ * deletes, so the sign-out reads those databases itself before it asks.
+ */
+describe('signOut with edits stored on this device', () => {
+  let n = 0
+  const L1 = '6f1c2b9e-3d4a-4c5b-8e7f-0a1b2c3d4e5f'
+  const L2 = '7a2d3c0f-4e5b-4d6c-9f80-1b2c3d4e5f60'
+  const fresh = () => `33333333-3333-4333-8333-${String(++n).padStart(12, '0')}`
+
+  function draft(userId: string, layoutId: string, tabId: string, over: Partial<DraftSnapshot> = {}): DraftSnapshot {
+    return { layoutId, tabId, baseVersion: 2, canvas: emptyCanvas(), userId, inFlight: null, dirty: true, updatedAt: '2026-11-09T12:00:00.000Z', ...over }
+  }
+
+  async function names(): Promise<string[]> {
+    return (await indexedDB.databases()).map((d) => d.name ?? '')
+  }
+
+  /** A draft from a closed tab, a layout whose last save never answered, and edits to two guests and a group from closed tabs. */
+  async function leftBehind(userId: string) {
+    const drafts = createDraftStore({ userId })
+    await drafts.putDraft(draft(userId, L1, 'closed-tab'))
+    await drafts.putDraft(draft(userId, L1, 'crashed-tab'))
+    await drafts.putDraft(draft(userId, L2, 'phone-tab', { dirty: false, inFlight: { saveId: 's1', baseVersion: 2, canvas: emptyCanvas() } }))
+    const rows = createRowStore({ userId })
+    await rows.put({ queueId: 'q1', kind: 'guest', id: 'g1', patch: { meal: 'Fish' }, queuedAt: '2026-11-09T12:00:00.000Z' })
+    await rows.put({ queueId: 'q2', kind: 'guest', id: 'g1', patch: { table: 'T2' }, queuedAt: '2026-11-09T12:01:00.000Z' })
+    await rows.put({ queueId: 'q2', kind: 'guest', id: 'g2', patch: { meal: 'Veg' }, queuedAt: '2026-11-09T12:01:00.000Z' })
+    await rows.put({ queueId: 'q2', kind: 'group', id: 'gr1', patch: { name: 'Cousins' }, queuedAt: '2026-11-09T12:01:00.000Z' })
+  }
+
+  /** Nobody live holds anything (this tab and the other tabs say all is sent); the real storage is read and deleted. */
+  function noLiveSavers(confirm: (q: string) => boolean) {
+    return deps({ inspectStored: unsentOnDevice, wipe: wipeUserStorage, confirm: vi.fn(confirm) })
+  }
+
+  it('asks, naming what is stored unsent, though no live saver holds anything; no deletes nothing', async () => {
+    const user = fresh()
+    await leftBehind(user)
+    const { d } = noLiveSavers(() => false)
+    expect(await signOut(user, d)).toBe('cancelled')
+    expect(d.confirm).toHaveBeenCalledWith(
+      'Some changes are not saved yet. Changes to 2 layouts, 2 guests and 1 group are kept only on this device, and signing out deletes them. To save them first, cancel and open those layouts again. Sign out anyway?',
+    )
+    expect(d.logout).not.toHaveBeenCalled()
+    expect(d.stopSavers).not.toHaveBeenCalled()
+    expect(await createDraftStore({ userId: user }).listDrafts(L1)).toHaveLength(2)
+    expect(await createRowStore({ userId: user }).list()).toHaveLength(4)
+  })
+
+  it('yes deletes them, as before', async () => {
+    const user = fresh()
+    await leftBehind(user)
+    vi.stubGlobal('window', { localStorage: { removeItem: () => undefined } })
+    const { d } = noLiveSavers(() => true)
+    expect(await signOut(user, d)).toBe('signed-out')
+    expect(d.confirm).toHaveBeenCalledTimes(1)
+    const all = await names()
+    expect(all).not.toContain(draftDbName(user))
+    expect(all).not.toContain(rowDbName(user))
+  })
+
+  it('asks nothing when nothing unsent is stored or held anywhere', async () => {
+    const user = fresh()
+    // A draft that holds nothing unsaved, and a note that an edit from before accounts was adopted.
+    await createDraftStore({ userId: user }).putDraft(draft(user, L1, 'done', { dirty: false }))
+    await set('legacy-adopted:rows:x', { adoptedAt: '2026-11-09T12:00:00.000Z' }, openKeyvalStore(rowDbName(user), ROW_STORE_NAME))
+    const { d } = noLiveSavers(() => true)
+    expect(await signOut(user, d)).toBe('signed-out')
+    expect(d.confirm).not.toHaveBeenCalled()
+    // Nor for someone who never stored anything.
+    const { d: d2 } = noLiveSavers(() => true)
+    expect(await signOut(fresh(), d2)).toBe('signed-out')
+    expect(d2.confirm).not.toHaveBeenCalled()
+  })
+
+  it('counts the stored edits of another tab that does not answer: unknown, never saved', async () => {
+    const user = fresh()
+    // A tab still open (a phone tab in the background, frozen) wrote this draft; it never answers the flush.
+    await createDraftStore({ userId: user }).putDraft(draft(user, L1, 'silent-tab'))
+    const { d } = noLiveSavers(() => false)
+    expect(await signOut(user, d)).toBe('cancelled')
+    expect(d.confirm).toHaveBeenCalledWith(
+      'Some changes are not saved yet. Changes to 1 layout are kept only on this device, and signing out deletes them. To save them first, cancel and open the layout again. Sign out anyway?',
+    )
+  })
+
+  it('reads the storage after the flushes, so what they sent is not counted, and before it asks', async () => {
+    const order: string[] = []
+    const { d } = deps({
+      sendStoredRows: vi.fn(() => void order.push('start row queue')),
+      flushHere: vi.fn(async () => {
+        order.push('flush')
+        return { unsaved: false }
+      }),
+      inspectStored: vi.fn(async () => {
+        order.push('inspect')
+        return { layouts: 0, guests: 1, groups: 0 }
+      }),
+      confirm: vi.fn(() => {
+        order.push('confirm')
+        return false
+      }),
+    })
+    expect(await signOut(USER, d)).toBe('cancelled')
+    expect(order).toEqual(['start row queue', 'flush', 'inspect', 'confirm'])
+    expect(d.sendStoredRows).toHaveBeenCalledWith(USER)
+    expect(d.inspectStored).toHaveBeenCalledWith(USER)
+  })
+
+  it('asks when the storage cannot be read: what it holds is unknown', async () => {
+    const { d } = deps({ inspectStored: vi.fn(async () => Promise.reject(new DOMException('gone', 'UnknownError'))), confirm: vi.fn(() => false) })
+    expect(await signOut(USER, d)).toBe('cancelled')
+    expect(d.confirm).toHaveBeenCalledWith(UNSAVED_QUESTION)
+  })
+})
+
+describe('unsavedQuestion', () => {
+  it('names what is stored, in plain words, or asks the short question for edits only a live page holds', () => {
+    const live = { live: true }
+    const none = { live: false }
+    expect(unsavedQuestion(none, { layouts: 0, guests: 0, groups: 0 })).toBeNull()
+    expect(unsavedQuestion(live, { layouts: 0, guests: 0, groups: 0 })).toBe(UNSAVED_QUESTION)
+    expect(unsavedQuestion(none, null)).toBe(UNSAVED_QUESTION)
+    expect(unsavedQuestion(none, { layouts: 1, guests: 0, groups: 0 })).toBe(
+      'Some changes are not saved yet. Changes to 1 layout are kept only on this device, and signing out deletes them. To save them first, cancel and open the layout again. Sign out anyway?',
+    )
+    expect(unsavedQuestion(live, { layouts: 0, guests: 3, groups: 0 })).toBe(
+      'Some changes are not saved yet. Changes to 3 guests are kept only on this device, and signing out deletes them. To save them first, cancel and try again later. Sign out anyway?',
+    )
+    expect(unsavedQuestion(none, { layouts: 1, guests: 1, groups: 2 })).toBe(
+      'Some changes are not saved yet. Changes to 1 layout, 1 guest and 2 groups are kept only on this device, and signing out deletes them. To save them first, cancel and open the layout again. Sign out anyway?',
+    )
   })
 })
 

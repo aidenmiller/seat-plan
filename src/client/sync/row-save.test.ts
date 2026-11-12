@@ -147,6 +147,39 @@ describe('merging edits', () => {
     expect([...store.rows.values()].map((r) => r.patch)).toEqual([{ meal: 'Fish', rsvp: 'yes' }])
   })
 
+  it('resume() after stale_page (the same person signed in again) sends the kept edits and clears them', async () => {
+    const store = memoryStore()
+    const replies = [Response.json({ error: 'stale_page' }, { status: 401 })]
+    const sent: unknown[] = []
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(JSON.parse(String(init?.body)))
+      return replies.shift() ?? Response.json({ ok: true })
+    }) as unknown as typeof fetch
+    const { saver, events } = saverWith({ store, fetch: fetchFn })
+    saver.queue('guest', A, { meal: 'Fish' })
+    await vi.advanceTimersByTimeAsync(300)
+    saver.queue('guest', A, { rsvp: 'yes' })
+    expect(saver.getStatus()).toMatchObject({ kind: 'other-user' })
+
+    saver.resume()
+    await vi.advanceTimersByTimeAsync(0)
+    await saver.flush()
+    expect(sent).toEqual([{ meal: 'Fish' }, { meal: 'Fish', rsvp: 'yes' }])
+    expect(saver.getStatus()).toEqual({ kind: 'saved' })
+    expect(saver.hasUnsavedChanges()).toBe(false)
+    expect(events.map((e) => e.type)).toEqual(['saved'])
+    await saver.whenStored()
+    expect([...store.rows.values()]).toEqual([])
+  })
+
+  it('resume() does nothing to a queue that was not stopped', async () => {
+    const { saver, net } = saverWith()
+    saver.resume()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(net.calls).toHaveLength(0)
+    expect(saver.getStatus()).toEqual({ kind: 'saved' })
+  })
+
   it('keeps retrying a plain 401 (the session ran out), so the edits go once the same person signs in again', async () => {
     const replies = [401, 200]
     const calls: number[] = []

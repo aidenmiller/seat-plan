@@ -27,9 +27,10 @@ export type SaveStatus =
    * session ended (401); the draft stays on this device, and the next try
    * after the same person signs in again (or the next load) sends it.
    * 'other-user': someone else signed in on this browser (401 stale_page).
+   * Nothing is sent again from this tab unless its own user signs in again
+   * on this browser (resume()); the draft stays in this user's storage, and
+   * opening the layout after signing in again sends it too.
    * 'forbidden': the person may no longer change it (403); nothing is retried.
-   * Final for this tab: nothing is sent again from it, and the draft stays
-   * in this user's storage until they sign in again and open the layout.
    */
   | { kind: 'failed'; reason: FailedReason; message: string }
 
@@ -146,6 +147,12 @@ export interface LayoutSaver<T = Canvas> {
   flush(options?: FlushOptions): Promise<void>
   /** True while there are edits the server has not confirmed (drives the beforeunload warning). */
   hasUnsavedChanges(): boolean
+  /**
+   * The user this saver sends as signed in again on this browser: after a
+   * stop for 'other-user' or 'signed-out', send what is kept (the save that
+   * was out first, unchanged). Nothing for any other state.
+   */
+  resume(): void
   /** After "Load their version": forget local edits and start from the server's copy. */
   resetTo(version: number): Promise<void>
   /** Stop timers and listeners. Leaves the draft in IndexedDB if it is still dirty. */

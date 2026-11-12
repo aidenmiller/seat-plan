@@ -2,10 +2,12 @@
  * What this browser's tabs tell each other about signing in and out, on the
  * BroadcastChannel 'seat-plan-auth':
  *
- * - 'signed-in' (posted by the sign-in form): a tab rendered for anyone else
- *   stops (its savers would be refused anyway, src/server/auth/guards.ts)
- *   and says to reload. A tab of the same person tries its waiting saves
- *   again: their session ran out and they signed in again.
+ * - 'signed-in' (posted by the sign-in form and the invite page): a tab
+ *   rendered for anyone else stops (its savers would be refused anyway,
+ *   src/server/auth/guards.ts) and says to reload. A tab of the same person
+ *   tries its waiting saves again: their session ran out, or someone else
+ *   signed in meanwhile, and they signed in again. Such a tab stops showing
+ *   "Someone else signed in", and savers stopped by it send what they kept.
  * - 'flush' and its replies (posted while signing out): every tab of that
  *   person sends what waits and reports whether anything is still unsaved,
  *   so the sign-out can ask first.
@@ -137,7 +139,9 @@ export function listenForAuthChanges(handlers: AuthListenerHandlers, channel: Ch
  * answers: up to `waitMs` in all, and at least `answerMs` for the first
  * answers to come in. Anything a tab reports unsaved, or a tab that started
  * and did not finish in time, counts as unsaved. Tabs the browser has frozen
- * in the background cannot answer and are not counted.
+ * in the background cannot answer, so silence is never taken as saved: the
+ * sign-out also reads this person's storage, where every tab keeps its
+ * edits as it makes them (src/client/sign-out.ts).
  */
 export function flushOtherTabs(
   userId: string,
@@ -181,6 +185,59 @@ export function flushOtherTabs(
   })
 }
 
+// ---------- A sign-in to tell the other tabs about from the next page ----------
+
+/**
+ * Making an account on the invite page signs it in, but the reply does not
+ * say the new account's id, which 'signed-in' carries. So the invite page
+ * leaves word in this tab's sessionStorage, and the first signed-in page
+ * after it (src/client/BrowserSession.tsx) tells the other tabs.
+ */
+export const ANNOUNCE_SIGN_IN_KEY = 'seat-plan:announce-sign-in'
+/** Word older than this is ignored: the page it was for never came. */
+const ANNOUNCE_WITHIN_MS = 5 * 60_000
+
+type SmallStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+function tabStorage(): SmallStorage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.sessionStorage
+  } catch {
+    return null
+  }
+}
+
+const sameEmail = (email: string) => email.trim().toLowerCase()
+
+/** Leaves word that this account signed in, for the next page in this tab. Never throws. */
+export function announceSignInOnNextPage(email: string, { storage = tabStorage(), now = Date.now } = {}): void {
+  try {
+    storage?.setItem(ANNOUNCE_SIGN_IN_KEY, JSON.stringify({ email: sameEmail(email), at: now() }))
+  } catch {
+    // Storage blocked: the server's user header check still keeps the other tabs' edits out of this session.
+  }
+}
+
+/** On a signed-in page: if the page before it signed this person in, tells the other tabs now. Word is used once. */
+export function announcePendingSignIn(
+  user: { id: string; email: string },
+  { storage = tabStorage(), channel = authChannel(), now = Date.now }: { storage?: SmallStorage | null; channel?: ChannelLike | null; now?: () => number } = {},
+): void {
+  let word: { email?: unknown; at?: unknown } | null = null
+  try {
+    const raw = storage?.getItem(ANNOUNCE_SIGN_IN_KEY) ?? null
+    if (raw === null) return
+    storage?.removeItem(ANNOUNCE_SIGN_IN_KEY)
+    word = JSON.parse(raw) as { email?: unknown; at?: unknown }
+  } catch {
+    return
+  }
+  if (!word || typeof word.email !== 'string' || typeof word.at !== 'number') return
+  const age = now() - word.at
+  if (word.email !== sameEmail(user.email) || age < 0 || age > ANNOUNCE_WITHIN_MS) return
+  postAuthMessage({ type: 'signed-in', userId: user.id }, channel)
+}
+
 // ---------- This page's state ----------
 
 export type PageAuthState = 'current' | 'other-user'
@@ -196,6 +253,13 @@ export function pageAuthState(): PageAuthState {
 export function markOtherUser(): void {
   if (state === 'other-user') return
   state = 'other-user'
+  for (const listener of [...listeners]) listener()
+}
+
+/** The page's own user signed in again: this browser's session is theirs once more. */
+export function clearOtherUser(): void {
+  if (state === 'current') return
+  state = 'current'
   for (const listener of [...listeners]) listener()
 }
 

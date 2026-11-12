@@ -3,6 +3,7 @@ import { ApiRequestError } from '@/client/api'
 import { createLayoutSaver } from '@/client/sync/layout-saver'
 import type { DraftSnapshot, DraftStore, LayoutSaver, LayoutSaverOptions, SaveStatus } from '@/client/sync/types'
 import type { WatchRemoteVersionOptions } from '@/client/sync/remote-version'
+import type { LiveSaver } from '@/client/sync/saver-registry'
 import { emptyCanvas, type Canvas } from '@/domain/canvas-schema'
 import { addRoundTable } from '@/domain/round-table'
 import type { LayoutDetail, SaveLayoutOk } from '@/shared/api'
@@ -96,6 +97,7 @@ function fakeSaver(options: LayoutSaverOptions): FakeSaver {
     },
     flush: vi.fn(async () => undefined),
     hasUnsavedChanges: () => saver.dirty,
+    resume: vi.fn(),
     resetTo: vi.fn(async (version: number) => {
       base = version
       saver.dirty = false
@@ -341,6 +343,72 @@ describe('opening a layout', () => {
     expect(registered).toHaveLength(1)
     session.close()
     expect(unregister).toHaveBeenCalledTimes(1)
+  })
+
+  it('its saver resumes when its user signs in again', async () => {
+    let registered: LiveSaver | null = null
+    const savers: FakeSaver[] = []
+    const t = setup()
+    await t.session.ready
+    const session = openLayoutSession({
+      layout: detail(),
+      store: createDocStore(emptyCanvas()),
+      user: ME,
+      events: t.events,
+      deps: {
+        ...t.deps,
+        createSaver: (options) => {
+          const s = fakeSaver(options)
+          savers.push(s)
+          return s
+        },
+        registerSaver: (s) => {
+          registered = s
+          return () => undefined
+        },
+      },
+    })
+    await session.ready
+    registered!.resume!()
+    expect(savers[0]!.resume).toHaveBeenCalledTimes(1)
+    session.close()
+  })
+
+  it('its flush, as signing out calls it, ends only once storage no longer holds what was saved', async () => {
+    // Signing out reads this user's storage right after the flush, and counts any draft left there as unsaved.
+    const left = draft({ baseVersion: 3 })
+    const drafts = memoryDrafts([left])
+    const deleteNow = drafts.deleteDraft
+    drafts.deleteDraft = (layoutId, tabId) => new Promise((resolve) => setTimeout(() => resolve(deleteNow(layoutId, tabId)), 30))
+    const f = fakeFetch()
+    let registered: LiveSaver | null = null
+    const t = setup()
+    await t.session.ready
+    const session = openLayoutSession({
+      layout: detail(),
+      store: createDocStore(emptyCanvas()),
+      user: ME,
+      events: t.events,
+      deps: {
+        ...t.deps,
+        drafts,
+        createSaver: (options) =>
+          createLayoutSaver({ ...options, fetch: f.fn, drafts, debounceMs: 1, maxWaitMs: 1, draftWaitMs: 50, isOnline: () => true, windowTarget: null, documentTarget: null }),
+        registerSaver: (s) => {
+          registered = s
+          return () => undefined
+        },
+      },
+    })
+    await session.ready
+    // The closed tab's draft is applied and sent.
+    await vi.waitFor(() => expect(f.calls).toHaveLength(1))
+    const flushing = registered!.flush()
+    f.calls[0].respond(200, saved(4))
+    await flushing
+    // Neither this tab's draft nor the closed tab's is left to count.
+    expect(drafts.all()).toEqual([])
+    session.close()
   })
 
   it('reports a conflict for a draft made on an older version, and keeps it as a copy', async () => {
