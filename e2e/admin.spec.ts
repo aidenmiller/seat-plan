@@ -132,7 +132,7 @@ test('a new planner signs up through a planner invite', async ({ page, browser }
   const email = uniqueEmail('planner')
   try {
     await planner.page.goto(link)
-    await expect(planner.page.getByRole('heading', { name: /^Make your .* account$/ })).toBeVisible()
+    await expect(planner.page.getByRole('heading', { name: 'Make your account' })).toBeVisible()
     await expect(planner.page.getByTestId('invite-intro')).toContainText('Avery invited you to plan weddings')
     const password = madeUpPassword()
     await planner.page.getByLabel('Email').fill(email)
