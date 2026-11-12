@@ -42,7 +42,7 @@ describe('venue api helpers', () => {
     expect(errorMessage(upload)).toBe('Upload a PNG or JPEG image.')
 
     vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ error: 'conflict', message: 'Aiden saved this venue after you opened it.' }), { status: 409 }))
-    const save = await saveVenue('v1', { baseVersion: 1, saveId: 'x', editedBy: 'Noa', fixedItems: [], reference: null }).catch((e: unknown) => e)
+    const save = await saveVenue('v1', { baseVersion: 1, saveId: 'x', fixedItems: [], reference: null }).catch((e: unknown) => e)
     expect(errorMessage(save)).toBe('Aiden saved this venue after you opened it.')
     expect(venueImageUrl('a b', 'c')).toBe('/api/venues/a%20b/images/c')
   })

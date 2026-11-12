@@ -468,7 +468,8 @@ describe('backup and restore', () => {
       .where(eq(layouts.weddingId, restored.started.weddingId))
     expect(rows.sort((x, y) => x.name.localeCompare(y.name))).toEqual([
       { name: 'Ceremony', editedBy: null, editedByName: 'Dayna K.', editedByUserId: null },
-      { name: 'Dinner', editedBy: 'Noa', editedByName: 'Noa', editedByUserId: null },
+      // The old Noa / Aiden column is no longer written; the name the file gives goes into edited_by_name.
+      { name: 'Dinner', editedBy: null, editedByName: 'Noa', editedByUserId: null },
     ])
   })
 

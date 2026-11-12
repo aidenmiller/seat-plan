@@ -26,11 +26,7 @@ import {
   guestsPath,
   waitForGuestList,
 } from './guest-list'
-import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, presetAuthor, signIn, uniqueName } from './helpers'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
+import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, signIn, uniqueName } from './helpers'
 
 const SAMPLE_HEADER = 'first_name,last_name,partner,household,side,groups,rsvp,meal,child,notes,Table wish'
 

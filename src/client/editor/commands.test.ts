@@ -45,6 +45,10 @@ import {
   snapPoint,
 } from './commands'
 
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
+const AIDEN = { name: 'Aiden', id: '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b' }
+
 const G = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 const FT = 30.48
 
@@ -487,7 +491,7 @@ function noteIn(canvas: Canvas, id: string): Note {
 }
 
 function arrowNote(id: string, start: { x: number; y: number }, end: { x: number; y: number }, attachedTo: Note['attachedTo'] = { start: null, end: null }): Note {
-  return withEnds({ ...makeNote('arrow', { x: 0, y: 0 }, 'Noa', 'blue', NOW, id), attachedTo }, start, end)
+  return withEnds({ ...makeNote('arrow', { x: 0, y: 0 }, NOA, 'blue', NOW, id), attachedTo }, start, end)
 }
 
 function expectAt(p: { x: number; y: number }, x: number, y: number) {
@@ -498,25 +502,25 @@ function expectAt(p: { x: number; y: number }, x: number, y: number) {
 describe('notes', () => {
   it('adds a note on top, with its author, color and time', () => {
     const c = canvasOf([tableAt('round', 'a')])
-    const next = addNote(c, { id: 'n', type: 'sticky', at: { x: 10, y: 20 }, author: 'Aiden', color: 'green', now: NOW })
+    const next = addNote(c, { id: 'n', type: 'sticky', at: { x: 10, y: 20 }, author: AIDEN, color: 'green', now: NOW })
     expect(next.items.map((i) => i.id)).toEqual(['a', 'n'])
     expect(noteIn(next, 'n')).toMatchObject({ x: 10, y: 20, width: 120, height: 120, author: 'Aiden', color: 'green', createdAt: '2026-11-10T18:00:00.000Z' })
     expect(canvasSchema.safeParse(next).success).toBe(true)
   })
 
   it('adds a drawn box at least 10 cm a side, and the default size for no box', () => {
-    const drawn = addNote(emptyCanvas(), { id: 'n', type: 'box', at: { x: 0, y: 0 }, author: 'Noa', color: 'blue', now: NOW, size: { width: 300, height: 4 } })
+    const drawn = addNote(emptyCanvas(), { id: 'n', type: 'box', at: { x: 0, y: 0 }, author: NOA, color: 'blue', now: NOW, size: { width: 300, height: 4 } })
     expect(noteIn(drawn, 'n')).toMatchObject({ width: 300, height: 10 })
-    const none = addNote(emptyCanvas(), { id: 'n', type: 'circle', at: { x: 0, y: 0 }, author: 'Noa', color: 'blue', now: NOW, size: { width: 0, height: 0 } })
+    const none = addNote(emptyCanvas(), { id: 'n', type: 'circle', at: { x: 0, y: 0 }, author: NOA, color: 'blue', now: NOW, size: { width: 0, height: 0 } })
     expect(noteIn(none, 'n')).toMatchObject({ width: 150, height: 150 })
     // Arrows keep their length.
-    const arrow = addNote(emptyCanvas(), { id: 'n', type: 'arrow', at: { x: 0, y: 0 }, author: 'Noa', color: 'blue', now: NOW, size: { width: 50, height: 50 } })
+    const arrow = addNote(emptyCanvas(), { id: 'n', type: 'arrow', at: { x: 0, y: 0 }, author: NOA, color: 'blue', now: NOW, size: { width: 50, height: 50 } })
     expect(storedEnds(noteIn(arrow, 'n'))).toEqual({ start: { x: -100, y: 0 }, end: { x: 100, y: 0 } })
   })
 
   it('adds a drawn arrow with its ends on the items given', () => {
     const c = canvasOf([tableAt('round', 'a'), makeItem('bar', { x: 600, y: 0 }, 'bar', emptyCanvas())])
-    const next = addArrow(c, { id: 'n', type: 'arrow', start: { x: 10, y: 0 }, end: { x: 590, y: 5 }, startOn: 'a', endOn: 'bar', author: 'Noa', color: 'blue', now: NOW })
+    const next = addArrow(c, { id: 'n', type: 'arrow', start: { x: 10, y: 0 }, end: { x: 590, y: 5 }, startOn: 'a', endOn: 'bar', author: NOA, color: 'blue', now: NOW })
     const n = noteIn(next, 'n')
     expect(n.attachedTo).toEqual({ start: 'a', end: 'bar' })
     const ends = resolveArrow(n, next)
@@ -525,17 +529,17 @@ describe('notes', () => {
     // The stored ends are where it is drawn.
     expectAt(storedEnds(n).start, RING, 0)
     expect(canvasSchema.safeParse(next).success).toBe(true)
-    const free = addArrow(c, { id: 'f', type: 'line', start: { x: 0, y: 300 }, end: { x: 50, y: 400 }, author: 'Noa', color: 'grey', now: NOW })
+    const free = addArrow(c, { id: 'f', type: 'line', start: { x: 0, y: 300 }, end: { x: 50, y: 400 }, author: NOA, color: 'grey', now: NOW })
     expect(noteIn(free, 'f')).toMatchObject({ type: 'line', attachedTo: { start: null, end: null } })
     expect(storedEnds(noteIn(free, 'f'))).toEqual({ start: { x: 0, y: 300 }, end: { x: 50, y: 400 } })
   })
 
   it('gives a drawn arrow whose free ends meet its default length', () => {
     const c = canvasOf([tableAt('round', 'a')])
-    const short = addArrow(c, { id: 'n', type: 'line', start: { x: 0, y: 300 }, end: { x: 0.4, y: 300 }, author: 'Noa', color: 'grey', now: NOW })
+    const short = addArrow(c, { id: 'n', type: 'line', start: { x: 0, y: 300 }, end: { x: 0.4, y: 300 }, author: NOA, color: 'grey', now: NOW })
     expect(storedEnds(noteIn(short, 'n'))).toEqual({ start: { x: 0, y: 300 }, end: { x: 200, y: 300 } })
     // Held at the start, it still runs from the table's chairs.
-    const held = addArrow(c, { id: 'n', type: 'arrow', start: { x: 10, y: 0 }, end: { x: 10, y: 0 }, startOn: 'a', author: 'Noa', color: 'grey', now: NOW })
+    const held = addArrow(c, { id: 'n', type: 'arrow', start: { x: 10, y: 0 }, end: { x: 10, y: 0 }, startOn: 'a', author: NOA, color: 'grey', now: NOW })
     const n = noteIn(held, 'n')
     expect(n.attachedTo).toEqual({ start: 'a', end: null })
     expectAt(storedEnds(n).end, 210, 0)
@@ -543,7 +547,7 @@ describe('notes', () => {
   })
 
   it('edits text as typed, cleaned and cut at 5,000 characters', () => {
-    const c = canvasOf([makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'n'), tableAt('round', 'a')])
+    const c = canvasOf([makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 'n'), tableAt('round', 'a')])
     const next = setNoteText(c, 'n', 'Keep Bob\r\naway  \u0000')
     expect(noteIn(next, 'n').text).toBe('Keep Bob\naway  ')
     expect(setNoteText(next, 'n', 'Keep Bob\naway  ')).toBe(next)
@@ -553,12 +557,12 @@ describe('notes', () => {
     expect(cut.isWellFormed()).toBe(true)
     expect(setNoteText(c, 'a', 'Table')).toBe(c)
     // A locked note still takes text (DECISIONS 56).
-    const locked = canvasOf([{ ...makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'n'), locked: true }])
+    const locked = canvasOf([{ ...makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 'n'), locked: true }])
     expect(noteIn(setNoteText(locked, 'n', 'Hi'), 'n').text).toBe('Hi')
   })
 
   it('changes color and done on notes only', () => {
-    const c = canvasOf([makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'n'), makeNote('box', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'm'), tableAt('round', 'a')])
+    const c = canvasOf([makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 'n'), makeNote('box', { x: 0, y: 0 }, NOA, 'yellow', NOW, 'm'), tableAt('round', 'a')])
     const colored = setNoteColor(c, ['n', 'm', 'a'], 'purple')
     expect(noteIn(colored, 'n').color).toBe('purple')
     expect(noteIn(colored, 'm').color).toBe('purple')
@@ -603,7 +607,7 @@ describe('notes', () => {
     expect(attachArrowEnd(locked, 'n', 'start', 'a')).toBe(locked)
     expect(moveArrowEnd(locked, 'n', 'start', { x: 0, y: 0 }, null)).toBe(locked)
     // Not an arrow: nothing to attach.
-    const sticky = canvasOf([tableAt('round', 'a'), makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 's')])
+    const sticky = canvasOf([tableAt('round', 'a'), makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 's')])
     expect(attachArrowEnd(sticky, 's', 'start', 'a')).toBe(sticky)
   })
 
@@ -664,7 +668,7 @@ describe('notes', () => {
     expect(resizeItemFromCenter(c, 'n', { x: 100, y: 0 }, { x: 300, y: 0 })).toBe(c)
     expect(noteIn(setItemBox(c, 'n', { x: 300 }), 'n').x).toBe(300)
     // Sticky notes turn like shapes.
-    const s = canvasOf([makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 's')])
+    const s = canvasOf([makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 's')])
     expect(noteIn(rotateItem(s, 's', { x: 300, y: 0 }), 's').rotation).toBe(90)
   })
 
@@ -707,7 +711,7 @@ describe('notes', () => {
   })
 
   it('moves, resizes and deletes sticky notes like other items', () => {
-    const s = makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 's')
+    const s = makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 's')
     let c = canvasOf([s])
     c = moveItems(c, ['s'], 30, 40)
     expect(noteIn(c, 's')).toMatchObject({ x: 30, y: 40 })

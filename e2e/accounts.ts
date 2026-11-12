@@ -7,7 +7,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { expect, type Browser, type BrowserContext, type Page } from '@playwright/test'
 import { dbCreateUser } from './db'
-import { presetAuthor } from './helpers'
 
 export type Account = { id: string; email: string; displayName: string; password: string }
 
@@ -39,10 +38,9 @@ export async function signInWith(page: Page, email: string, password: string): P
   await expect(page).not.toHaveURL(/\/login/)
 }
 
-/** Another device: a fresh browser context with its own cookies, the author already picked. */
+/** Another device: a fresh browser context with its own cookies. */
 export async function newDevice(browser: Browser): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext()
-  await presetAuthor(context, 'Noa')
   return { context, page: await context.newPage() }
 }
 

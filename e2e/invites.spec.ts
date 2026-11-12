@@ -11,10 +11,9 @@
 import { expect, test } from '@playwright/test'
 import { madeUpPassword, newDevice, readOneTimeLink, uniqueEmail } from './accounts'
 import { dbAddMember, dbClearAttemptCounts, dbCreateWedding } from './db'
-import { E2E_USERS, presetAuthor, signIn, uniqueName, userPassword } from './helpers'
+import { E2E_USERS, signIn, uniqueName, userPassword } from './helpers'
 
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
+test.beforeEach(async () => {
   await dbClearAttemptCounts()
 })
 

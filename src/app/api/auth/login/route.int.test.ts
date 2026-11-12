@@ -89,7 +89,8 @@ describe('POST /api/auth/login', () => {
     await login({ email: pat.email, password: 'wrong password' }, { ip: address })
     const res = await login({ email: ` ${pat.email.toUpperCase()} `, password: pat.password, next: '/w/abc' }, { ip: address })
     expect(res.status).toBe(200)
-    expect(res.body).toEqual({ ok: true, redirect: '/w/abc' })
+    // The user's id, so the sign-in form can tell this browser's other tabs who signed in.
+    expect(res.body).toEqual({ ok: true, redirect: '/w/abc', userId: pat.id })
     expect(res.headers.get('cache-control')).toBe('no-store')
     const cookie = sessionSet(res)!
     expect(cookie.raw).toMatch(/HttpOnly/i)
@@ -214,7 +215,7 @@ describe('POST /api/auth/login', () => {
   it('never sends anyone off the site, or back to a signed-out page', async () => {
     for (const next of ['//evil.example', 'https://evil.example', '/login', '/setup', '/reset']) {
       const res = await login({ email: pat.email, password: pat.password, next }, { ip: ip() })
-      expect(res.body, next).toEqual({ ok: true, redirect: '/' })
+      expect(res.body, next).toEqual({ ok: true, redirect: '/', userId: expect.any(String) })
     }
   })
 })

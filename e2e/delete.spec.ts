@@ -11,15 +11,10 @@ import {
   apiGetLayout,
   canvasTables,
   expectSaved,
-  presetAuthor,
   signIn,
   uniqueName,
   waitForEditor,
 } from './helpers'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 /** Types near misses into the box and checks Delete never wakes up, then types the word. */
 async function confirmDelete(dialog: Locator): Promise<Locator> {

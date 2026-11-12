@@ -1,14 +1,51 @@
 import { describe, expect, it } from 'vitest'
-import { createGuestBody, createLayoutBody, createWeddingBody, duplicateLayoutBody, updateGuestBody, updateLayoutBody, updateWeddingBody } from './api'
+import {
+  acceptImportBody,
+  createGuestBody,
+  createLayoutBody,
+  createVenueBody,
+  createWeddingBody,
+  duplicateLayoutBody,
+  duplicateVenueBody,
+  restoreRevisionBody,
+  saveLayoutBody,
+  saveVenueBody,
+  updateGuestBody,
+  updateLayoutBody,
+  updateWeddingBody,
+} from './api'
+
+const SAVE_ID = '11111111-1111-4111-8111-111111111111'
+const IMAGE_ID = '22222222-2222-4222-8222-222222222222'
+const reference = { scaleCmPerPx: 2, offsetX: 0, offsetY: 0, rotation: 0, opacity: 0.5 }
+
+describe('who made a change', () => {
+  it('is never read from a body: a tab open from before still sends editedBy, which parses and is dropped', () => {
+    const old = { editedBy: 'Noa' }
+    const bodies = [
+      createLayoutBody.parse({ name: 'Dinner', kind: 'reception', venueTemplateId: null, ...old }),
+      saveLayoutBody.parse({ baseVersion: 1, saveId: SAVE_ID, tabId: 'tab', canvas: { schemaVersion: 1, items: [] }, ...old }),
+      duplicateLayoutBody.parse({ ...old }),
+      createVenueBody.parse({ name: 'Hall', ...old }),
+      duplicateVenueBody.parse({ ...old }),
+      saveVenueBody.parse({ baseVersion: 1, saveId: SAVE_ID, fixedItems: [], reference: null, ...old }),
+      acceptImportBody.parse({ baseVersion: 1, saveId: SAVE_ID, fixedItems: [], imageId: IMAGE_ID, reference, importedBy: 'ai', ...old }),
+      restoreRevisionBody.parse({ baseVersion: 1, saveId: SAVE_ID, ...old }),
+    ]
+    for (const body of bodies) expect(body).not.toHaveProperty('editedBy')
+    // Any value at all: it is not looked at.
+    expect(saveLayoutBody.safeParse({ baseVersion: 1, saveId: SAVE_ID, tabId: 'tab', canvas: { schemaVersion: 1, items: [] }, editedBy: 'Dayna' }).success).toBe(true)
+  })
+})
 
 describe('names in request bodies', () => {
   it('drop NUL, mend lone surrogates, then trim', () => {
     expect(createWeddingBody.parse({ name: '  Noa\u0000 & Aiden \ud83c ' }).name).toBe('Noa & Aiden �')
     expect(updateWeddingBody.parse({ name: 'A\u0000' }).name).toBe('A')
-    const layout = createLayoutBody.parse({ name: 'Din\u0000ner', kind: 'reception', venueTemplateId: null, editedBy: 'Noa' })
+    const layout = createLayoutBody.parse({ name: 'Din\u0000ner', kind: 'reception', venueTemplateId: null })
     expect(layout.name).toBe('Dinner')
     expect(updateLayoutBody.parse({ name: '\udc00 Plan' }).name).toBe('� Plan')
-    expect(duplicateLayoutBody.parse({ name: 'Copy\u0000', editedBy: 'Aiden' }).name).toBe('Copy')
+    expect(duplicateLayoutBody.parse({ name: 'Copy\u0000' }).name).toBe('Copy')
   })
 
   it('a name of only NULs and spaces is empty, so it is refused', () => {

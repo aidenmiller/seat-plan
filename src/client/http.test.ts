@@ -9,7 +9,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { USER_HEADER } from '@/shared/user-header'
 import { CurrentUserProvider, currentUserId } from './current-user'
-import { appFetch } from './http'
+import { appFetch, appFetchAs, isStalePage } from './http'
 
 const USER = { id: '11111111-1111-4111-8111-111111111111', displayName: 'Pat', email: 'pat@example.com', isAdmin: false }
 
@@ -56,6 +56,22 @@ describe('appFetch', () => {
     await appFetch(new Request('https://seat.example/api/x', { method: 'DELETE', headers: { 'x-a': '1' } }))
     expect(headersOf(0).get(USER_HEADER)).toBe(USER.id)
     expect(headersOf(0).get('x-a')).toBe('1')
+  })
+
+  it('appFetchAs names its own user whoever the page was rendered for, and only on changes', async () => {
+    CurrentUserProvider({ user: { ...USER, id: '22222222-2222-4222-8222-222222222222' }, children: null })
+    const asPat = appFetchAs(USER.id)
+    await asPat('/api/x', { method: 'PUT', body: '{}' })
+    expect(headersOf(0).get(USER_HEADER)).toBe(USER.id)
+    await asPat('/api/x')
+    expect(sent.mock.calls[1]![1]).toEqual({})
+  })
+
+  it('tells a stale page refusal from a plain sign-out', () => {
+    expect(isStalePage(401, { error: 'stale_page' })).toBe(true)
+    expect(isStalePage(401, { error: 'unauthorized' })).toBe(false)
+    expect(isStalePage(401, null)).toBe(false)
+    expect(isStalePage(403, { error: 'stale_page' })).toBe(false)
   })
 
   it('follows the user the page was last rendered for', async () => {
@@ -164,9 +180,9 @@ describe('browser code sends changes only through appFetch', { timeout: SCAN_TIM
     }
   })
 
-  it('sends with appFetch by default in the save engines', () => {
-    for (const file of ['client/sync/layout-saver.ts', 'client/sync/row-save.ts', 'client/sync/remote-version.ts']) {
-      expect(read(file), file).toMatch(/options\.fetch \?\? appFetch/)
-    }
+  it('sends with appFetch by default in the save engines, bound to the user they were made for', () => {
+    expect(read('client/sync/layout-saver.ts')).toMatch(/options\.fetch \?\? appFetchAs\(userId\)/)
+    expect(read('client/sync/row-save.ts')).toMatch(/options\.fetch \?\? \(options\.userId \? appFetchAs\(options\.userId\) : appFetch\)/)
+    expect(read('client/sync/remote-version.ts')).toMatch(/options\.fetch \?\? appFetch/)
   })
 })

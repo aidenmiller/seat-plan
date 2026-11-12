@@ -30,7 +30,7 @@ import {
 import { readableTemplateSql, templateAccess, templateRights, type Viewer } from '../auth/venue-access'
 import { MAX_RECENT_SAVES, recentSavesOf } from '../canvas-write'
 import { layouts, users, venueImages, venueTemplateRevisions, venueTemplates, weddings, type RecentSave } from '../db/schema'
-import { editorName } from '../editor-name'
+import { editorName, type Editor } from '../editor-name'
 import type { Db, Tx } from '../locks'
 
 /**
@@ -427,7 +427,7 @@ async function retriedCreate(tx: Tx, id: string, viewer: Viewer): Promise<'exist
  * private (not in the library). A retry with the same id gives the viewer's
  * own template back; an id that belongs to anyone else's is 'id-taken'.
  */
-export async function createTemplate(db: Db, body: CreateVenueBody, viewer: Viewer): Promise<CreateTemplateResult> {
+export async function createTemplate(db: Db, body: CreateVenueBody, viewer: Viewer, editor: Editor): Promise<CreateTemplateResult> {
   const id = (body.id ?? randomUUID()).toLowerCase()
   const outcome = await db.transaction(async (tx): Promise<'created' | 'existed' | 'id-taken'> => {
     const inserted = await tx
@@ -437,8 +437,8 @@ export async function createTemplate(db: Db, body: CreateVenueBody, viewer: View
         name: body.name,
         fixedItems: [],
         importedBy: 'hand',
-        editedBy: body.editedBy ?? null,
-        editedByName: body.editedBy ?? null,
+        editedByName: editor.name,
+        editedByUserId: editor.userId,
         ownerUserId: viewer.userId,
         isLibrary: false,
       })
@@ -477,7 +477,13 @@ export type DuplicateTemplateResult = CreateTemplateResult | { status: 'not-foun
  * and revisions stay with the original. The caller checks the viewer may read
  * the source.
  */
-export async function duplicateTemplate(db: Db, sourceId: string, body: DuplicateVenueBody, viewer: Viewer): Promise<DuplicateTemplateResult> {
+export async function duplicateTemplate(
+  db: Db,
+  sourceId: string,
+  body: DuplicateVenueBody,
+  viewer: Viewer,
+  editor: Editor,
+): Promise<DuplicateTemplateResult> {
   const id = (body.id ?? randomUUID()).toLowerCase()
   const outcome = await db.transaction(async (tx): Promise<'created' | 'existed' | 'id-taken' | 'not-found'> => {
     const [source] = await tx
@@ -499,8 +505,8 @@ export async function duplicateTemplate(db: Db, sourceId: string, body: Duplicat
         fixedItems: source.fixedItems,
         reference: source.reference,
         importedBy: source.importedBy,
-        editedBy: body.editedBy ?? null,
-        editedByName: body.editedBy ?? null,
+        editedByName: editor.name,
+        editedByUserId: editor.userId,
         ownerUserId: viewer.userId,
         isLibrary: false,
       })
@@ -720,7 +726,8 @@ async function redrawLayoutThumbs(tx: Tx, templateId: string, items: readonly Fi
   }
 }
 
-type WriteArgs = { baseVersion: number; saveId: string; editedBy: 'Noa' | 'Aiden' }
+/** The request's version and save id, and the signed-in user who makes the write. */
+type WriteArgs = { baseVersion: number; saveId: string; editor: Editor }
 
 /**
  * The shared body of a save, an accepted import and a restore: lock, check
@@ -753,7 +760,10 @@ async function writeTemplate<Refusal extends { status: string }>(
       }
       const earlier = current.recentSaves.find((r) => r.saveId === args.saveId)
       // Only ids and versions are kept, so the time is the template's last save.
-      if (earlier && earlier.version !== current.version) return { status: 'already-saved', version: earlier.version, updatedAt: current.updatedAt, editedBy: args.editedBy, editedById: null }
+      if (earlier && earlier.version !== current.version) {
+        // That save was this same editor's (the tab that made it sends the retry).
+        return { status: 'already-saved', version: earlier.version, updatedAt: current.updatedAt, editedBy: args.editor.name, editedById: args.editor.userId }
+      }
       if (earlier || current.lastSaveId === args.saveId) return { status: 'already-saved', ...state }
       return { status: 'conflict', ...state, lastSaveId: current.lastSaveId }
     }
@@ -774,10 +784,10 @@ async function writeTemplate<Refusal extends { status: string }>(
         version: sql`${venueTemplates.version} + 1`,
         lastSaveId: args.saveId,
         recentSaves,
-        editedBy: args.editedBy,
-        editedByName: args.editedBy,
-        // This phase's writers only know the name, so clear an id a later writer left.
-        editedByUserId: null,
+        // The old Noa / Aiden column is no longer written; readers fall back to it only for older rows.
+        editedBy: null,
+        editedByName: args.editor.name,
+        editedByUserId: args.editor.userId,
         updatedAt: sql`now()`,
       })
       .where(eq(venueTemplates.id, id))
@@ -794,8 +804,8 @@ async function writeTemplate<Refusal extends { status: string }>(
 }
 
 /** The template editor's save: fixed items and reference meta. The reference image stays as it is. */
-export function saveTemplate(db: Db, id: string, body: SaveVenueBody): Promise<TemplateSaveResult> {
-  return writeTemplate<never>(db, id, body, 'save', async (_tx, current) => ({
+export function saveTemplate(db: Db, id: string, body: SaveVenueBody, editor: Editor): Promise<TemplateSaveResult> {
+  return writeTemplate<never>(db, id, { ...body, editor }, 'save', async (_tx, current) => ({
     fixedItems: body.fixedItems,
     reference: body.reference,
     referenceImageId: current.referenceImageId,
@@ -808,8 +818,8 @@ export function saveTemplate(db: Db, id: string, body: SaveVenueBody): Promise<T
  * this template), its placement and where the items came from, saved as one
  * revision with reason 'import'. The revision before it is the "Undo import" point.
  */
-export function acceptImport(db: Db, id: string, body: AcceptImportBody): Promise<TemplateSaveResult | { status: 'bad-image' }> {
-  return writeTemplate<{ status: 'bad-image' }>(db, id, body, 'import', async (tx) => {
+export function acceptImport(db: Db, id: string, body: AcceptImportBody, editor: Editor): Promise<TemplateSaveResult | { status: 'bad-image' }> {
+  return writeTemplate<{ status: 'bad-image' }>(db, id, { ...body, editor }, 'import', async (tx) => {
     const [image] = await tx
       .select({ id: venueImages.id })
       .from(venueImages)
@@ -832,8 +842,9 @@ export function restoreRevision(
   id: string,
   revisionId: string,
   body: RestoreRevisionBody,
+  editor: Editor,
 ): Promise<TemplateSaveResult | RestoreRefusal> {
-  return writeTemplate<RestoreRefusal>(db, id, body, 'save', async (tx, current) => {
+  return writeTemplate<RestoreRefusal>(db, id, { ...body, editor }, 'save', async (tx, current) => {
     const [revision] = await tx
       .select({
         fixedItems: venueTemplateRevisions.fixedItems,

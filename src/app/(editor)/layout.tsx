@@ -1,4 +1,5 @@
 import { requireUser } from '@/server/auth/pages'
+import { BrowserSession } from '@/client/BrowserSession'
 import { CurrentUserProvider } from '@/client/current-user'
 
 export const dynamic = 'force-dynamic'
@@ -9,6 +10,7 @@ export default async function EditorLayout({ children }: LayoutProps<'/'>) {
   return (
     <CurrentUserProvider user={{ id: user.id, displayName: user.displayName, email: user.email, isAdmin: user.isAdmin }}>
       <div className="flex h-dvh flex-col overflow-hidden bg-stone-100" data-surface="plain">{children}</div>
+      <BrowserSession />
     </CurrentUserProvider>
   )
 }

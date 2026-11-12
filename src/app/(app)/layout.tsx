@@ -1,10 +1,10 @@
 import Link from 'next/link'
 import { BRAND_NAME } from '@/brand/brand'
+import { BrowserSession } from '@/client/BrowserSession'
 import { Logo } from '@/client/ui/Logo'
+import { UserMenu } from '@/client/ui/UserMenu'
 import { requireUser } from '@/server/auth/pages'
 import { CurrentUserProvider } from '@/client/current-user'
-import { AuthorSwitch } from '@/client/ui/AuthorSwitch'
-import { LogoutButton } from '@/client/ui/LogoutButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,13 +18,11 @@ export default async function AppLayout({ children }: LayoutProps<'/'>) {
             <Logo variant="mark" width={48} decorative />
             <span className="sr-only sm:not-sr-only">{BRAND_NAME}</span>
           </Link>
-          <div className="flex items-center gap-1 sm:gap-2">
-            <AuthorSwitch />
-            <LogoutButton />
-          </div>
+          <UserMenu />
         </header>
         {children}
       </div>
+      <BrowserSession />
     </CurrentUserProvider>
   )
 }

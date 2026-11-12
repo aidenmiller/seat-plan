@@ -4,6 +4,7 @@ import { json, notFound, readBody, refuseUnstorableText, type IdContext } from '
 import { withVenueAccess } from '@/server/auth/guards'
 import { byTemplateId } from '@/server/auth/resolvers'
 import { getDb } from '@/server/db/client'
+import { editorOf } from '@/server/editor-name'
 import { getTemplate, renameTemplate, saveTemplate, softDeleteTemplate } from '@/server/repo/venues'
 import { saveReply } from '../_venue-route'
 
@@ -22,13 +23,13 @@ export const GET = withVenueAccess('read', byTemplateId, async (_req: NextReques
 })
 
 /**
- * The template editor's save: fixed items and reference meta (DECISIONS 28).
+ * The template editor's save: fixed items and reference meta (DECISIONS 28), as the signed-in user.
  * 200 SaveVenueOk, 409 SaveVenueConflict, 410 { error: 'gone' }, 422 { error: 'invalid', issues }.
  */
-export const PUT = withVenueAccess('write', byTemplateId, async (req: NextRequest, _ctx: IdContext, { templateId }) => {
+export const PUT = withVenueAccess('write', byTemplateId, async (req: NextRequest, _ctx: IdContext, { user, templateId }) => {
   const body = await readBody(req, saveVenueBody)
   if (!body.ok) return body.response
-  const write = await refuseUnstorableText(() => saveTemplate(getDb(), templateId, body.data))
+  const write = await refuseUnstorableText(() => saveTemplate(getDb(), templateId, body.data, editorOf(user)))
   return write.ok ? saveReply(write.value) : write.response
 })
 

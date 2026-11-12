@@ -13,7 +13,6 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { createVenue, duplicateVenue, errorMessage, renameVenue } from '@/client/api'
-import { useAuthor } from '@/client/author'
 import { randomId } from '@/client/sync/random-id'
 import { InlineName } from '@/client/ui/InlineName'
 import { EditedLine } from '@/client/ui/RelativeTime'
@@ -44,7 +43,6 @@ export function VenueList({ weddingId, venues }: { weddingId: string; venues: Ve
 
 function VenueCard({ weddingId, venue }: { weddingId: string; venue: VenueSummary }) {
   const router = useRouter()
-  const author = useAuthor()
   const [deleting, setDeleting] = useState(false)
   const [duplicating, setDuplicating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -54,7 +52,7 @@ function VenueCard({ weddingId, venue }: { weddingId: string; venue: VenueSummar
     setDuplicating(true)
     setError(null)
     try {
-      await duplicateVenue(venue.id, { id: randomId(), ...(author ? { editedBy: author } : {}) })
+      await duplicateVenue(venue.id, { id: randomId() })
       router.refresh()
     } catch (err) {
       setError(`Could not duplicate. ${errorMessage(err)}`)
@@ -115,7 +113,6 @@ function VenueCard({ weddingId, venue }: { weddingId: string; venue: VenueSummar
 /** "New venue": an empty template named New venue, opened in the template editor. */
 export function NewVenueButton({ weddingId }: { weddingId: string }) {
   const router = useRouter()
-  const author = useAuthor()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [id] = useState(randomId)
@@ -125,7 +122,7 @@ export function NewVenueButton({ weddingId }: { weddingId: string }) {
     setBusy(true)
     setError(null)
     try {
-      const venue = await createVenue({ id, name: 'New venue', ...(author ? { editedBy: author } : {}) })
+      const venue = await createVenue({ id, name: 'New venue' })
       router.push(venueHref(venue.id, weddingId))
     } catch (err) {
       setError(`Could not make the venue. ${errorMessage(err)}`)

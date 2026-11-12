@@ -8,12 +8,8 @@
  */
 import { expect, test } from '@playwright/test'
 import { isPhoneLayout, itemLocator, selectedIds, setMode, settledCamera, Touch } from './canvas'
-import { expectSaved, presetAuthor } from './helpers'
+import { expectSaved } from './helpers'
 import { detailLevel, drawn, openEditor, seatCircle, seatOnScreen, serverSeats, setupSeating } from './seating'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 test('the + on an empty seat lists unassigned guests, and picking one seats them there', async ({ page }, testInfo) => {
   const s = await setupSeating(page, testInfo, {

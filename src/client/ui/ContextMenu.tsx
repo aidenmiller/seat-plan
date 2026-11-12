@@ -9,8 +9,12 @@
  *
  * Keys pressed inside it stop here, so the canvas's shortcuts (Delete, the
  * arrows) do not act on the selection behind it.
+ *
+ * A menu opened from a button (the user menu) can show a few lines above its
+ * items (`header`), and gives focus back to that button on Esc
+ * (`returnFocus`).
  */
-import { useEffect, useLayoutEffect, useRef, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 
 export type ContextMenuItem = {
@@ -29,6 +33,10 @@ export type ContextMenuProps = {
   label: string
   onClose(): void
   testId?: string
+  /** Shown above the items; not an item, so the arrow keys skip it. */
+  header?: ReactNode
+  /** Gets focus back when Esc closes the menu (the button that opened it). */
+  returnFocus?: RefObject<HTMLElement | null>
 }
 
 const MARGIN_PX = 8
@@ -38,7 +46,7 @@ export function ContextMenu(props: ContextMenuProps) {
   return createPortal(<MenuPanel {...props} at={props.at} />, document.body)
 }
 
-function MenuPanel({ at, items, label, onClose, testId }: ContextMenuProps & { at: { x: number; y: number } }) {
+function MenuPanel({ at, items, label, onClose, testId, header, returnFocus }: ContextMenuProps & { at: { x: number; y: number } }) {
   const ref = useRef<HTMLDivElement>(null)
   const onCloseRef = useRef(onClose)
   useEffect(() => {
@@ -87,6 +95,10 @@ function MenuPanel({ at, items, label, onClose, testId }: ContextMenuProps & { a
     const i = buttons.indexOf(document.activeElement as HTMLButtonElement)
     switch (event.key) {
       case 'Escape':
+        event.preventDefault()
+        onCloseRef.current()
+        returnFocus?.current?.focus()
+        return
       case 'Tab':
         event.preventDefault()
         onCloseRef.current()
@@ -121,6 +133,11 @@ function MenuPanel({ at, items, label, onClose, testId }: ContextMenuProps & { a
       className="fixed z-50 min-w-52 max-w-[calc(100vw-16px)] rounded-xl border border-stone-200 bg-white p-1 shadow-xl"
       style={{ left: at.x, top: at.y, visibility: 'hidden' }}
     >
+      {header && (
+        <div role="none" className="border-b border-stone-200 px-3 pb-2 pt-1.5">
+          {header}
+        </div>
+      )}
       {items.map((item) => (
         <button
           key={item.id}

@@ -23,12 +23,11 @@ import { SHARE_RECHECK_MS } from '../src/domain/share-view'
 import type { ShareLink, ShareView } from '../src/shared/api'
 import { itemLocator, itemTransforms, LAPTOP, mouseDrag, PHONE, settledCamera, tableClientCenter, Touch, viewport, type Point } from './canvas'
 import { apiAddGuests, apiSeatGuests, expectHydrated } from './guest-list'
-import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, signIn, uniqueName } from './helpers'
 import { detailLevel, seatOnScreen } from './seating'
 
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
 
 const WRONG = 'That password is wrong, or the link was turned off.'
 
@@ -267,7 +266,7 @@ test('the share viewer shows the plan and names, finds a guest, and follows the 
   canvas = { ...canvas, items: [t1 as Item] }
   const t2 = roundTable(canvas, { x: 3000, y: 1800 }, [null, null, null, null, jane!.id, ann!.id])
   const noteText = `Keep Uncle Bob away from the bar ${tag}`
-  const note = { ...makeNote('sticky', { x: 1500, y: -400 }, 'Noa', 'yellow', Date.now(), randomUUID()), text: noteText }
+  const note = { ...makeNote('sticky', { x: 1500, y: -400 }, NOA, 'yellow', Date.now(), randomUUID()), text: noteText }
   canvas = { ...canvas, items: [t1 as Item, t2 as Item, note] }
   await apiPutCanvas(request, layout, canvas)
   const saved = await apiGetLayout(request, layout.id)

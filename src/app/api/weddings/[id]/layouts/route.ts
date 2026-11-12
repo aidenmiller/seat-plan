@@ -4,6 +4,7 @@ import { json, notFound, readBody, refuseUnstorableText, type IdContext } from '
 import { withWeddingRole } from '@/server/auth/guards'
 import { byWeddingId } from '@/server/auth/resolvers'
 import { getDb } from '@/server/db/client'
+import { editorOf } from '@/server/editor-name'
 import { createLayout, listLayouts } from '@/server/repo/layouts'
 
 /** LayoutSummary[]: the wedding's live layouts, last edited first. Any member. */
@@ -21,7 +22,7 @@ export const POST = withWeddingRole(byWeddingId, 'editor', async (req: NextReque
   const body = await readBody(req, createLayoutBody)
   if (!body.ok) return body.response
   const viewer = { userId: access.user.id, isAdmin: access.user.isAdmin }
-  const write = await refuseUnstorableText(() => createLayout(getDb(), access.weddingId, body.data, viewer))
+  const write = await refuseUnstorableText(() => createLayout(getDb(), access.weddingId, body.data, viewer, editorOf(access.user)))
   if (!write.ok) return write.response
   const result = write.value
   switch (result.status) {

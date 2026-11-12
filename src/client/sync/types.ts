@@ -3,7 +3,7 @@
  * The editor talks only to this interface; the engine owns IndexedDB, the
  * debounce, retries, the one-save-in-flight rule and conflict detection.
  */
-import type { Author, Canvas } from '@/domain/canvas-schema'
+import type { Canvas } from '@/domain/canvas-schema'
 import type { DroppedSeat, LayoutVersionInfo } from '@/shared/api'
 
 export type SaveStatus =
@@ -19,15 +19,20 @@ export type SaveStatus =
   | { kind: 'retrying'; attempt: number; nextTryAt: string; reason: string; storedLocally: boolean }
   /** The browser is offline. storedLocally tells whether the edit is safe in this device's storage. */
   | { kind: 'offline'; storedLocally: boolean }
-  /** The other person (or another tab) saved first. The editor shows the dialog. */
+  /** Someone else (or another tab) saved first. The editor shows the dialog. */
   | { kind: 'conflict'; server: LayoutVersionInfo }
   /**
    * Retrying stops. 'invalid': the server will not take this canvas (422).
    * 'gone': the layout or its wedding was deleted (410). 'signed-out': the
-   * site cookie expired (401); the draft stays on this device, and the next
-   * try after signing in (or the next load) sends it.
+   * session ended (401); the draft stays on this device, and the next try
+   * after the same person signs in again (or the next load) sends it.
+   * 'other-user': someone else signed in on this browser (401 stale_page).
+   * Final for this tab: nothing is sent again from it, and the draft stays
+   * in this user's storage until they sign in again and open the layout.
    */
-  | { kind: 'failed'; reason: 'invalid' | 'gone' | 'signed-out'; message: string }
+  | { kind: 'failed'; reason: FailedReason; message: string }
+
+export type FailedReason = 'invalid' | 'gone' | 'signed-out' | 'other-user'
 
 /**
  * T is the document the engine saves: a layout's canvas by default. The venue
@@ -41,11 +46,10 @@ export type DraftSnapshot<T = Canvas> = {
   baseVersion: number
   canvas: T
   /**
-   * Whoever the tab saved as. Any name is kept, not only Noa and Aiden, so a
-   * draft written under another name still opens. Save requests accept only the
-   * two names for now, so read it through asAuthor() before sending it back.
+   * The signed-in user whose edit this is. Each user's drafts live in their
+   * own database (outbox.ts), and a store refuses a draft of anyone else.
    */
-  editedBy: string
+  userId: string
   /** The snapshot and save id currently sent (or about to be resent), if any. */
   inFlight: { saveId: string; baseVersion: number; canvas: T } | null
   /** True while the canvas has edits the server has not confirmed. */
@@ -57,7 +61,6 @@ export type DraftSnapshot<T = Canvas> = {
 export type SaveRequest<T = Canvas> = {
   baseVersion: number
   saveId: string
-  editedBy: Author
   tabId: string
   doc: T
 }
@@ -67,6 +70,8 @@ export type SaverMessages = {
   gone: string
   invalid: string
   signedOut: string
+  /** Someone else signed in on this browser (401 stale_page). */
+  otherUser: string
   network: string
   timeout: string
   unreadable: string
@@ -77,16 +82,20 @@ export type LayoutSaverOptions<T = Canvas> = {
   tabId: string
   /** The server's version and last save id when the editor loaded the layout. */
   baseVersion: number
-  editedBy: () => Author
+  /**
+   * The signed-in user the page was opened for. Every request carries this id
+   * (never whoever is signed in later), and drafts are stamped with it.
+   */
+  userId: string
   onStatus: (status: SaveStatus) => void
   /** The server emptied seats (removed guests etc.); apply the same on screen, outside undo. */
   onDroppedSeats: (dropped: DroppedSeat[]) => void
-  /** Injected for tests. Defaults to window.fetch. */
+  /** Injected for tests. Defaults to appFetchAs(userId). */
   fetch?: typeof fetch
   /** Debounce after the last edit, default 1000 ms; a save goes out at least every maxWaitMs while editing. */
   debounceMs?: number
   maxWaitMs?: number
-  /** Where drafts live. Defaults to the IndexedDB outbox (outbox.ts). */
+  /** Where drafts live. Defaults to this user's IndexedDB outbox (outbox.ts). */
   drafts?: DraftStore<T>
   /** Jitter source for retry delays. Defaults to Math.random. */
   random?: () => number

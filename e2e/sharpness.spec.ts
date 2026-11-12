@@ -18,7 +18,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { emptyCanvas, type Canvas } from '../src/domain/canvas-schema'
 import { makeItem } from '../src/domain/presets'
 import { isPhoneLayout, settledCamera, Touch, viewport, zoomLevel, type Point } from './canvas'
-import { apiCreateLayout, apiCreateWedding, apiPutCanvas, editorPath, expectSaved, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiCreateLayout, apiCreateWedding, apiPutCanvas, editorPath, expectSaved, signIn, uniqueName } from './helpers'
 
 type Clip = { x: number; y: number; width: number; height: number }
 
@@ -76,7 +76,6 @@ async function comparePngs(page: Page, a: Buffer, b: Buffer) {
 }
 
 test('shapes and text stay sharp at 800%', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Sharp', testInfo))
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })

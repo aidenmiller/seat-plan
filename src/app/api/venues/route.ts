@@ -5,6 +5,7 @@ import { runAfterResponse } from '@/server/after-response'
 import { weddingAccess } from '@/server/auth/access'
 import { withVenueAccess } from '@/server/auth/guards'
 import { getDb } from '@/server/db/client'
+import { editorOf } from '@/server/editor-name'
 import { recordEvent } from '@/server/repo/activity'
 import { createTemplate, listVenues } from '@/server/repo/venues'
 
@@ -48,10 +49,10 @@ export const GET = withVenueAccess('list', null, async (req: NextRequest, _ctx: 
  * retry with the same id gives the same template back; an id someone else's
  * template holds is 409 { error: 'id_taken' }.
  */
-export const POST = withVenueAccess('create', null, async (req: NextRequest, _ctx: unknown, { viewer }) => {
+export const POST = withVenueAccess('create', null, async (req: NextRequest, _ctx: unknown, { user, viewer }) => {
   const body = await readBody(req, createVenueBody)
   if (!body.ok) return body.response
-  const write = await refuseUnstorableText(() => createTemplate(getDb(), body.data, viewer))
+  const write = await refuseUnstorableText(() => createTemplate(getDb(), body.data, viewer, editorOf(user)))
   if (!write.ok) return write.response
   const result = write.value
   if (result.status === 'id-taken') return json({ error: 'id_taken' }, 409)

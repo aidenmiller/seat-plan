@@ -12,12 +12,8 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import type { Group } from '../src/shared/api'
 import { isPhoneLayout, itemLocator, sheetAtRest } from './canvas'
 import { apiAddGuests, apiCreateGroup, apiListGroups, apiListGuests, expectRowsSaved, groupsPath, guestEntry, guestsPath, waitForGroupsPage, waitForGuestList } from './guest-list'
-import { apiCreateWedding, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiCreateWedding, signIn, uniqueName } from './helpers'
 import { openEditor, seatCircle, setupSeating } from './seating'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 async function serverGroups(page: Page, weddingId: string): Promise<Group[]> {
   return apiListGroups(page.request, weddingId)

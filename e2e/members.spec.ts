@@ -9,11 +9,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { newDevice } from './accounts'
 import { dbAddMember, dbCreateWedding } from './db'
-import { E2E_USERS, presetAuthor, signIn, uniqueName } from './helpers'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
+import { E2E_USERS, signIn, uniqueName } from './helpers'
 
 async function weddingOfBlakeAndCasey(name: string): Promise<string> {
   const weddingId = await dbCreateWedding(name)

@@ -8,10 +8,9 @@
 import { expect, test, type Page } from '@playwright/test'
 import { madeUpPassword, newAccount, newDevice, readOneTimeLink, signInWith, uniqueEmail } from './accounts'
 import { dbClearAttemptCounts } from './db'
-import { presetAuthor, signIn } from './helpers'
+import { signIn } from './helpers'
 
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
+test.beforeEach(async () => {
   await dbClearAttemptCounts()
 })
 

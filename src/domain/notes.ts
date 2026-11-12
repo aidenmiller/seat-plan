@@ -2,16 +2,19 @@
  * Notes on the plan (spec section 9; PLAN section 7, "Annotations"): sticky
  * notes, text, arrows, lines, boxes and circles in six preset colors, on
  * their own layer above the furniture. Each records who wrote it (the
- * device's Noa / Aiden choice) and when, and can be marked done.
+ * signed-in user's display name and account id) and when, and can be marked
+ * done.
  *
  * Sizes are in cm, like everything on the canvas. Arrows and lines are
  * worked out by arrows.ts.
  */
-import { noteColors, noteTypes, type Author, type Canvas, type Note } from './canvas-schema'
+import { noteColors, noteTypes, type Canvas, type Note } from './canvas-schema'
 import { arrowBox, isArrowNote, withEnds } from './arrows'
 import { itemBox, type Box, type Point } from './geometry'
 
 export type NoteType = Note['type']
+/** Who makes a new note: the signed-in user's display name and account id. */
+export type NoteAuthor = { name: string; id: string }
 export type NoteColor = Note['color']
 export const NOTE_TYPES: readonly NoteType[] = noteTypes
 export const NOTE_COLORS: readonly NoteColor[] = noteColors
@@ -86,8 +89,11 @@ function isoTime(now: Date | number): string {
  * A new note centered at `at`, unrotated, unlocked, not done, written by
  * `author` at `now`. Sticky 120 by 120 cm, text 200 by 50, box 200 by 150,
  * circle 150 across; arrows and lines run 200 cm from left to right.
+ *
+ * The note keeps the author's name as it is now, and their account id, so a
+ * note deleted, saved and brought back by Undo still names whoever made it.
  */
-export function makeNote(type: NoteType, at: Point, author: Author, color: NoteColor, now: Date | number, id: string): Note {
+export function makeNote(type: NoteType, at: Point, author: NoteAuthor, color: NoteColor, now: Date | number, id: string): Note {
   const size = NOTE_SIZES[type]
   const note: Note = {
     id,
@@ -101,7 +107,8 @@ export function makeNote(type: NoteType, at: Point, author: Author, color: NoteC
     height: Math.max(size.height, 1),
     text: defaultNoteText(type),
     color,
-    author,
+    author: author.name,
+    authorId: author.id,
     done: false,
     createdAt: isoTime(now),
     attachedTo: { start: null, end: null },

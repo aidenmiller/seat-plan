@@ -1,7 +1,7 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
 import { useState, type FormEvent } from 'react'
+import { postAuthMessage } from '@/client/auth-channel'
 import { TextField } from '@/client/ui/fields'
 import { errorClass, primaryButton } from '@/client/ui/styles'
 
@@ -12,8 +12,13 @@ function minutes(seconds: number): string {
   return m === 1 ? '1 minute' : `${m} minutes`
 }
 
+/**
+ * Signing in. After it works, the other tabs hear who signed in
+ * (src/client/auth-channel.ts): a tab of someone else stops and asks to
+ * reload, so it never saves under this session. The next page then loads in
+ * full, so nothing of a page from before (a save queue, its user) carries on.
+ */
 export function LoginForm({ next }: { next: string }) {
-  const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
@@ -31,9 +36,9 @@ export function LoginForm({ next }: { next: string }) {
         cache: 'no-store',
       })
       if (res.ok) {
-        const data = (await res.json()) as { redirect?: string }
-        router.replace(data.redirect ?? '/')
-        router.refresh()
+        const data = (await res.json()) as { redirect?: string; userId?: string }
+        if (data.userId) postAuthMessage({ type: 'signed-in', userId: data.userId })
+        window.location.replace(data.redirect ?? '/')
         return
       }
       if (res.status === 429) {

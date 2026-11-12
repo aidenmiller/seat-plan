@@ -21,7 +21,7 @@ import { randomUUID } from 'node:crypto'
 import { expect, test, type Page } from '@playwright/test'
 import { settledCamera, viewport, zoomButtonsTo, zoomLevel } from './canvas'
 import { dbAddGuests } from './db'
-import { apiCreateLayout, apiCreateWedding, apiPutCanvas, canvasTables, editorPath, expectSaved, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiCreateLayout, apiCreateWedding, apiPutCanvas, canvasTables, editorPath, expectSaved, signIn, uniqueName } from './helpers'
 import { perfCanvas, perfGuestNames, PERF_SHAPES, PERF_TABLES } from './perf-layout'
 
 test.describe.configure({ mode: 'serial' })
@@ -139,7 +139,6 @@ async function itemsKept(page: Page): Promise<{ same: boolean; count: number; mu
 test('40 tables, 400 seated guests and 100 shapes zoom from 10% to 800% and back, and pan, smoothly', async ({ context, page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The speed test runs once, in the laptop project; the 4x slower CPU stands in for a phone.')
   test.setTimeout(120_000)
-  await presetAuthor(context, 'Noa')
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Speed', testInfo))
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Big room' })

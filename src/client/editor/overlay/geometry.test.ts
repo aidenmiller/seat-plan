@@ -22,6 +22,9 @@ import {
   type ScreenInsets,
 } from './geometry'
 
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
+
 const rect = (overrides: Partial<Table> = {}) => ({ ...(makeItem('rect', { x: 0, y: 0 }, 'r', emptyCanvas()) as Table), ...overrides })
 const roundT = (overrides: Partial<Table> = {}) => ({ ...(makeItem('round', { x: 0, y: 0 }, 'o', emptyCanvas()) as Table), ...overrides })
 
@@ -262,9 +265,9 @@ describe('seating in the overlay', () => {
 
 describe('notes in the overlay', () => {
   const NOW = Date.UTC(2026, 10, 10)
-  const sticky = makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 's')
+  const sticky = makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 's')
   const arrow = (attachedTo: Note['attachedTo'] = { start: null, end: null }) =>
-    withEnds({ ...makeNote('arrow', { x: 0, y: 0 }, 'Noa', 'blue', NOW, 'a'), attachedTo }, { x: 0, y: 0 }, { x: 400, y: 300 })
+    withEnds({ ...makeNote('arrow', { x: 0, y: 0 }, NOA, 'blue', NOW, 'a'), attachedTo }, { x: 0, y: 0 }, { x: 400, y: 300 })
   const camera = { zoom: 0.5, x: 100, y: 50 }
 
   it('gives a selected arrow two end handles, and no resize or rotate handles', () => {

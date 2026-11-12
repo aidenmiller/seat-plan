@@ -20,14 +20,21 @@
  *   flush() is called, keeping the draft. Network errors and 5xx retry with
  *   backoff, and at once when the browser comes back online or the page is
  *   shown again.
+ * - 401 stale_page (someone else signed in on this browser since the page
+ *   opened) stops for good in this tab: nothing is sent from it again, not
+ *   even when the page is shown again, so one person's edits never go out
+ *   under another's session. The draft stays in this user's storage; once
+ *   they sign in again and open the layout, recovery sends it.
+ * - Every request is sent as the user the saver was made for (appFetchAs),
+ *   and every draft is stamped with that user's id.
  */
 import type { Canvas } from '@/domain/canvas-schema'
 import type { LayoutVersionInfo, SaveLayoutBody, SaveLayoutConflict, SaveLayoutOk } from '@/shared/api'
-import { appFetch } from '../http'
+import { appFetchAs, isStalePage } from '../http'
 import { backoffDelay } from './backoff'
-import { defaultDraftStore } from './outbox'
+import { draftStoreFor } from './outbox'
 import { randomId } from './random-id'
-import type { DraftSnapshot, DraftStore, FlushOptions, LayoutSaver, LayoutSaverOptions, SaveRequest, SaveStatus } from './types'
+import type { DraftSnapshot, DraftStore, FailedReason, FlushOptions, LayoutSaver, LayoutSaverOptions, SaveRequest, SaveStatus } from './types'
 
 /** Browsers refuse keepalive requests whose bodies add up to more than 64 KiB. */
 export const KEEPALIVE_LIMIT_BYTES = 60_000
@@ -36,6 +43,7 @@ export const MESSAGES = {
   gone: 'This layout was deleted, so changes cannot be saved.',
   invalid: 'The server could not save this layout.',
   signedOut: 'You were signed out. Sign in again to keep saving. Your changes are kept on this device.',
+  otherUser: 'Someone else signed in on this browser. Sign in again to save your changes. They are kept on this device.',
   network: 'No answer from the server.',
   timeout: 'The server took too long to answer.',
   unreadable: 'The server sent an answer the app could not read.',
@@ -45,7 +53,6 @@ type Flight<T> = {
   saveId: string
   baseVersion: number
   canvas: T
-  editedBy: SaveLayoutBody['editedBy']
   /** The edit counter this snapshot carries. */
   seq: number
 }
@@ -54,7 +61,7 @@ type Mode = 'active' | 'conflict' | 'failed' | 'disposed'
 
 /** The layout save body (PUT /api/layouts/:id). */
 function layoutBody(r: SaveRequest<Canvas>): SaveLayoutBody {
-  return { baseVersion: r.baseVersion, saveId: r.saveId, editedBy: r.editedBy, tabId: r.tabId, canvas: r.doc }
+  return { baseVersion: r.baseVersion, saveId: r.saveId, tabId: r.tabId, canvas: r.doc }
 }
 
 /**
@@ -63,7 +70,8 @@ function layoutBody(r: SaveRequest<Canvas>): SaveLayoutBody {
  * own `drafts` store.
  */
 export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): LayoutSaver<T> {
-  const { layoutId, tabId } = options
+  const { layoutId, tabId, userId } = options
+  if (!userId) throw new Error('A saver needs the signed-in user')
   const endpoint = options.endpoint ?? `/api/layouts/${encodeURIComponent(layoutId)}`
   const buildBody = options.body ?? (layoutBody as unknown as (r: SaveRequest<T>) => unknown)
   const messages = { ...MESSAGES, ...options.messages }
@@ -71,9 +79,9 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
   const maxWaitMs = Math.max(options.maxWaitMs ?? 5000, debounceMs)
   const requestTimeoutMs = options.requestTimeoutMs ?? 30_000
   const draftWaitMs = options.draftWaitMs ?? 2000
-  const drafts = options.drafts ?? (defaultDraftStore() as unknown as DraftStore<T>)
+  const drafts = options.drafts ?? (draftStoreFor(userId) as unknown as DraftStore<T>)
   const random = options.random ?? Math.random
-  const fetchFn: typeof fetch = options.fetch ?? appFetch
+  const fetchFn: typeof fetch = options.fetch ?? appFetchAs(userId)
   const isOnline =
     options.isOnline ??
     (() => typeof navigator === 'undefined' || (navigator as { onLine?: boolean }).onLine !== false)
@@ -87,7 +95,7 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
         : document
 
   let mode: Mode = 'active'
-  let failedReason: 'invalid' | 'gone' | 'signed-out' | null = null
+  let failedReason: FailedReason | null = null
   let baseVersion = options.baseVersion
   /** The newest canvas from noteEdit. */
   let latest: T | null = null
@@ -148,7 +156,7 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
       tabId,
       baseVersion,
       canvas: latest,
-      editedBy: options.editedBy(),
+      userId,
       inFlight: flight ? { saveId: flight.saveId, baseVersion: flight.baseVersion, canvas: flight.canvas } : null,
       dirty: dirty(),
       updatedAt: new Date().toISOString(),
@@ -228,7 +236,7 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
         setStatus({ kind: 'offline', storedLocally })
         return Promise.resolve()
       }
-      flight = { saveId: randomId(), baseVersion, canvas: latest, editedBy: options.editedBy(), seq: latestSeq }
+      flight = { saveId: randomId(), baseVersion, canvas: latest, seq: latestSeq }
       attempt = 0
       firstUnsentAt = null
       sendRequested = false
@@ -248,7 +256,7 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
   }
 
   async function attemptSend(f: Flight<T>, opts: FlushOptions, gen: number): Promise<void> {
-    const body = JSON.stringify(buildBody({ baseVersion: f.baseVersion, saveId: f.saveId, editedBy: f.editedBy, tabId, doc: f.canvas }))
+    const body = JSON.stringify(buildBody({ baseVersion: f.baseVersion, saveId: f.saveId, tabId, doc: f.canvas }))
     setStatus({ kind: 'saving' })
 
     // The draft names this snapshot and saveId before the request leaves, so a
@@ -313,6 +321,8 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
       return
     }
     if (httpStatus === 409) return onConflict(data)
+    // Checked before the plain 401: this one must never be retried from this tab.
+    if (isStalePage(httpStatus, data)) return stopWithFailure('other-user', messages.otherUser)
     if (httpStatus === 401 || httpStatus === 403) return stopWithFailure('signed-out', messages.signedOut)
     if (httpStatus === 410 || httpStatus === 404) return stopWithFailure('gone', messages.gone)
     if (httpStatus === 408 || httpStatus === 429 || httpStatus >= 500) {
@@ -374,7 +384,7 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
     setStatus({ kind: 'conflict', server })
   }
 
-  function stopWithFailure(reason: 'invalid' | 'gone' | 'signed-out', message: string) {
+  function stopWithFailure(reason: FailedReason, message: string) {
     mode = 'failed'
     failedReason = reason
     clearDebounce()
@@ -404,7 +414,11 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
       })
   }
 
-  /** Something suggests the server may be reachable now: skip the wait. */
+  /**
+   * Something suggests the server may be reachable now: skip the wait. A tab
+   * stopped for signing out tries again (the same person may have signed in
+   * again); one stopped because someone else signed in never does.
+   */
   function retryNow() {
     if (mode === 'failed' && failedReason === 'signed-out') {
       mode = 'active'
@@ -472,6 +486,8 @@ export function createLayoutSaver<T = Canvas>(options: LayoutSaverOptions<T>): L
     },
 
     async resetTo(version) {
+      // Someone else is signed in: keep this user's draft as it is, for when they sign in again.
+      if (mode === 'failed' && failedReason === 'other-user') return
       generation += 1
       activeAbort?.abort()
       activeAbort = null

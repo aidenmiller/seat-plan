@@ -11,11 +11,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import type { Guest } from '../src/shared/api'
 import { editorMode, isPhoneLayout, sheetAtRest } from './canvas'
 import { apiAddGuests, apiCreateGroup, apiSeatGuests } from './guest-list'
-import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, editorPath, presetAuthor, signIn, uniqueName } from './helpers'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
+import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, editorPath, signIn, uniqueName } from './helpers'
 
 /** Opens the Guests tab: the right panel's tab on a laptop, the bottom sheet's on a phone. */
 async function openGuestsTab(page: Page): Promise<Locator> {

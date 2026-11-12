@@ -531,7 +531,8 @@ export async function restoreLayout(db: Db, jobId: string, body: BackupLayout, v
       name: body.name,
       kind: body.kind,
       venueTemplateId,
-      editedBy: body.editedBy,
+      // The name the file gives, with no user: it may name someone without an account here.
+      editor: { userId: null, name: body.editedBy },
     })
   })
 

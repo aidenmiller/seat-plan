@@ -7,10 +7,8 @@
 import { expect, test } from '@playwright/test'
 import { madeUpPassword, newAccount, newDevice, signInWith } from './accounts'
 import { dbClearAttemptCounts } from './db'
-import { presetAuthor } from './helpers'
 
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
+test.beforeEach(async () => {
   await dbClearAttemptCounts()
 })
 

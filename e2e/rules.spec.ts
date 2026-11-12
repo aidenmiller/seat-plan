@@ -14,12 +14,8 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import type { CreateRuleBody, StoredRule } from '../src/shared/api'
 import { clickWith, isPhoneLayout, itemLocator, lowerSheet, mouseDrag, selectedIds, setMode, settledCamera, sheetAtRest, Touch, viewport, worldToClient, type Point } from './canvas'
 import { apiAddGuests, apiCreateGroup, apiLinkPartners, expectHydrated } from './guest-list'
-import { apiCreateWedding, expectSaved, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiCreateWedding, expectSaved, signIn, uniqueName } from './helpers'
 import { openEditor, seatCircle, seatOnScreen, serverSeats, setupSeating, tableOnScreen } from './seating'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 const rulesPath = (weddingId: string) => `/w/${weddingId}/rules`
 

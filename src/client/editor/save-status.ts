@@ -25,6 +25,7 @@ const FAILED_REASONS: Record<Extract<SaveStatus, { kind: 'failed' }>['reason'], 
   gone: 'this layout was deleted',
   invalid: 'the server would not take this layout',
   'signed-out': 'you were signed out',
+  'other-user': 'someone else signed in',
 }
 
 /** `null` while the editor is still opening the layout. */
@@ -69,14 +70,17 @@ export function notStoredAlert(status: SaveStatus | null, storedLocally: boolean
     case 'retrying':
       return status.storedLocally ? null : NOT_STORED_MESSAGE
     case 'failed':
-      return status.reason === 'signed-out' && !storedLocally ? NOT_STORED_MESSAGE : null
+      return (status.reason === 'signed-out' || status.reason === 'other-user') && !storedLocally ? NOT_STORED_MESSAGE : null
     default:
       return null
   }
 }
 
-/** The failed banner's sentence. A signed-out tab whose draft was not stored must not claim it was. */
+/** The failed banner's sentence. A tab whose draft was not stored must not claim it was. */
 export function failedMessage(status: Extract<SaveStatus, { kind: 'failed' }>, storedLocally: boolean): string {
   if (status.reason === 'signed-out' && !storedLocally) return 'You were signed out. Sign in again to keep saving.'
+  if (status.reason === 'other-user' && !storedLocally) {
+    return 'Someone else signed in on this browser, so your changes cannot be saved here, and this device could not keep a copy. Download a copy before you leave.'
+  }
   return status.message
 }

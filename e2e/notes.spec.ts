@@ -10,9 +10,9 @@
 import { randomUUID } from 'node:crypto'
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { resolveArrow } from '../src/domain/arrows'
-import { emptyCanvas, type Author, type Canvas, type Item, type Note } from '../src/domain/canvas-schema'
+import { emptyCanvas, type Canvas, type Item, type Note } from '../src/domain/canvas-schema'
 import { generateSeatingBlock } from '../src/domain/ceremony'
-import { makeNote } from '../src/domain/notes'
+import { makeNote, type NoteAuthor } from '../src/domain/notes'
 import { makeItem } from '../src/domain/presets'
 import { chairRowSeatCenters } from '../src/domain/seating'
 import {
@@ -32,7 +32,7 @@ import {
   zoomButtonsTo,
   type Point,
 } from './canvas'
-import { apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, expectSaved, presetAuthor, signIn, uniqueName, waitForEditor } from './helpers'
+import { E2E_USERS, apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, expectSaved, signIn, uniqueName, waitForEditor } from './helpers'
 
 const FOOT = 30.48
 
@@ -62,7 +62,13 @@ function roundTables(...at: Point[]): Item[] {
   return items
 }
 
-function note(type: Note['type'], at: Point, author: Author, text: string, createdAt: number): Note {
+/** Note authors for notes made through the API: any name, with an account id. */
+const NOA: NoteAuthor = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
+const AIDEN: NoteAuthor = { name: 'Aiden', id: '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b' }
+/** Who the page is signed in as (e2e/users.ts): notes placed with a tool carry their name. */
+const ME = E2E_USERS.a.displayName
+
+function note(type: Note['type'], at: Point, author: NoteAuthor, text: string, createdAt: number): Note {
   return { ...makeNote(type, at, author, 'yellow', createdAt, randomUUID()), text }
 }
 
@@ -132,8 +138,7 @@ async function openNotesTab(page: Page): Promise<Locator> {
   return panel.getByTestId('notes-panel')
 }
 
-test('a sticky note placed with its tool takes typing, shows on the plan and saves with its author', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('a sticky note placed with its tool takes typing, shows on the plan and saves with its author', async ({ page }, testInfo) => {
   // Two tables far apart, so the middle of the view is clear.
   const { layout } = await openWith(page, testInfo, 'Sticky', roundTables({ x: 0, y: 0 }, { x: 1200, y: 0 }))
   const camera = await settledCamera(page)
@@ -158,18 +163,18 @@ test('a sticky note placed with its tool takes typing, shows on the plan and sav
   await expect(editor).toHaveCount(0)
   await expect(sticky.locator('[data-note-text]')).toContainText('Call')
   await expect(sticky.locator('[data-note-text]')).toContainText('florist')
-  await expect(sticky.locator('[data-note-author]')).toHaveText('N')
+  await expect(sticky.locator('[data-note-author]')).toHaveText(ME[0]!)
 
   await expectSaved(page)
   const stored = (await storedItems(page, layout.id)).find((i) => i.id === id) as Note
-  expect(stored).toMatchObject({ kind: 'note', type: 'sticky', text: 'Call the florist', author: 'Noa', done: false })
+  expect(stored).toMatchObject({ kind: 'note', type: 'sticky', text: 'Call the florist', author: ME, done: false })
+  expect(stored.authorId).toMatch(/^[0-9a-f-]{36}$/)
   const want = await clientToWorld(page, spot, camera)
   expect(Math.abs(stored.x - want.x)).toBeLessThanOrEqual(FOOT / 2 + 0.01)
   expect(Math.abs(stored.y - want.y)).toBeLessThanOrEqual(FOOT / 2 + 0.01)
 })
 
-test('an arrow drawn from a table attaches to it and its end follows the table when it moves', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('an arrow drawn from a table attaches to it and its end follows the table when it moves', async ({ page }, testInfo) => {
   const [table, other] = roundTables({ x: 0, y: 0 }, { x: 700, y: 400 })
   const { layout } = await openWith(page, testInfo, 'Arrow', [table, other])
   const camera = await settledCamera(page)
@@ -223,12 +228,11 @@ test('an arrow drawn from a table attaches to it and its end follows the table w
   expect(startAfter.y - startBefore.y).toBeGreaterThan(moved.y / 2)
 })
 
-test('the notes switches: Show hides and shows every note; Lock lets a click through to the table under a note', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('the notes switches: Show hides and shows every note; Lock lets a click through to the table under a note', async ({ page }, testInfo) => {
   const [table] = roundTables({ x: 0, y: 0 })
   // A sticky note on the table, and one beside it.
-  const onTable = note('sticky', { x: 0, y: 0 }, 'Aiden', 'Bob sits here', Date.now() - 60_000)
-  const beside = note('text', { x: 600, y: 0 }, 'Noa', 'Bar opens at 6', Date.now() - 30_000)
+  const onTable = note('sticky', { x: 0, y: 0 }, AIDEN, 'Bob sits here', Date.now() - 60_000)
+  const beside = note('text', { x: 600, y: 0 }, NOA, 'Bar opens at 6', Date.now() - 30_000)
   const { layout, version } = await openWith(page, testInfo, 'Layer', [table, onTable, beside])
   const show = page.getByTestId('notes-show')
   const lock = page.getByTestId('notes-lock')
@@ -279,12 +283,11 @@ test('the notes switches: Show hides and shows every note; Lock lets a click thr
   expect((await apiGetLayout(page.request, layout.id)).version).toBe(version)
 })
 
-test('notes on a ceremony layout: the Sticky tool places one by the rows, and Lock lets a click through to a chair', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('notes on a ceremony layout: the Sticky tool places one by the rows, and Lock lets a click through to a chair', async ({ page }, testInfo) => {
   const rows = generateSeatingBlock({ rows: 2, chairsPerRow: 3, origin: { x: 0, y: 0 } }, () => randomUUID())
   const front = rows.find((r) => r.rowNumber === 1)!
   const chair = chairRowSeatCenters(front)[0]!
-  const onChair = note('sticky', chair, 'Aiden', 'Grandma sits here', Date.now() - 60_000)
+  const onChair = note('sticky', chair, AIDEN, 'Grandma sits here', Date.now() - 60_000)
   const { layout } = await openWith(page, testInfo, 'Ceremony notes', [...rows, onChair], 'ceremony')
   let camera = await settledCamera(page)
 
@@ -301,7 +304,7 @@ test('notes on a ceremony layout: the Sticky tool places one by the rows, and Lo
   else await page.keyboard.press('Escape')
   await expect(editor).toHaveCount(0)
   await expectSaved(page)
-  expect((await storedItems(page, layout.id)).find((i) => i.id === id)).toMatchObject({ kind: 'note', type: 'sticky', text: 'Ushers here', author: 'Noa' })
+  expect((await storedItems(page, layout.id)).find((i) => i.id === id)).toMatchObject({ kind: 'note', type: 'sticky', text: 'Ushers here', author: ME })
 
   // The note over the chair takes a click; locked, the click goes through to the chair and picks its row.
   camera = await settledCamera(page)
@@ -315,12 +318,11 @@ test('notes on a ceremony layout: the Sticky tool places one by the rows, and Lo
   expect(await selectedIds(page)).toEqual([front.id])
 })
 
-test('the Notes tab lists each note with its author, a click brings the note into view, and Done greys it out', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('the Notes tab lists each note with its author, a click brings the note into view, and Done greys it out', async ({ page }, testInfo) => {
   const [table] = roundTables({ x: 0, y: 0 })
   // The newer note far off to the right; the older one beside the table.
-  const far = note('sticky', { x: 3000, y: 0 }, 'Aiden', 'Ask about the cake', Date.now() - 60_000)
-  const near = note('box', { x: 0, y: 400 }, 'Noa', '', Date.now() - 3_600_000)
+  const far = note('sticky', { x: 3000, y: 0 }, AIDEN, 'Ask about the cake', Date.now() - 60_000)
+  const near = note('box', { x: 0, y: 400 }, NOA, '', Date.now() - 3_600_000)
   const { layout } = await openWith(page, testInfo, 'Notes tab', [table, far, near])
   const phone = await isPhoneLayout(page)
 

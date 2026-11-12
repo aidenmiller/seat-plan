@@ -15,7 +15,7 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { guestsExportUrl, listGuestSeats } from '@/client/api'
-import { defaultRowSaver } from '@/client/sync/row-save'
+import { pageRowSaver } from '@/client/sync/row-save'
 import { primaryButton, secondaryButton } from '@/client/ui/styles'
 import { SAMPLE_CSV_FILE_NAME, SAMPLE_CSV_URL } from '@/domain/csv/sample'
 import {
@@ -167,7 +167,7 @@ export function GuestsScreen({ weddingId, guests: serverGuests, groups: serverGr
       // An open cell saves on blur; then send what waits instead of after its pause.
       const active = document.activeElement
       if (active instanceof HTMLElement) active.blur()
-      const saver = defaultRowSaver()
+      const saver = pageRowSaver()
       if (saver.hasUnsavedChanges()) {
         setExporting('saving')
         await saver.flush()
