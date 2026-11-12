@@ -44,7 +44,7 @@ function view(phase: ViewProps['phase'], signedIn: ViewProps['signedIn'] = null)
   return renderToStaticMarkup(<InviteView phase={phase} token={TOKEN} signedIn={signedIn} onPhase={() => {}} />)
 }
 
-const PAT = { displayName: 'Pat', email: 'pat@example.com' }
+const PAT = { id: '66666666-6666-4666-8666-666666666666', displayName: 'Pat', email: 'pat@example.com' }
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -132,6 +132,21 @@ describe('the invite and reset pages never put the token in an address', () => {
       // A token never sits inside a template string or a path.
       expect(source, file).not.toMatch(/`[^`]*\$\{token\}[^`]*`/)
     }
+  })
+
+  it('sign in, sign up and sign out only the way the rest of the app does', () => {
+    const invite = read('invite/InviteScreen.tsx')
+    // Signing out goes through the shared flow (send first, ask, delete, tell the other tabs), never a bare request.
+    expect(invite).not.toMatch(/\/api\/auth\/logout/)
+    expect(invite).not.toMatch(/import\s*\{[^}]*\bsignOut\b[^}]*\}\s*from\s*'@\/client\/accounts-api'/)
+    expect(invite).toMatch(/signOutFromInvite\(/)
+    // Signing in and making an account tell the other tabs who signed in.
+    expect(invite).toMatch(/signInFromInvite\(/)
+    expect(invite).toMatch(/registerFromInvite\(/)
+    expect(invite).not.toMatch(/import\s*\{[^}]*\b(signIn|registerWithInvite)\b[^}]*\}\s*from\s*'@\/client\/accounts-api'/)
+    const session = read('invite/invite-session.ts')
+    expect(session).not.toMatch(/\bfetch\s*\(/)
+    expect(session).not.toMatch(/location\.(href|assign|replace|search)|window\.open\(/)
   })
 
   it('go only to fixed places: the wedding the server named (checked), home, the sign-in page', () => {

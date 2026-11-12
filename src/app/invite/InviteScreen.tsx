@@ -3,18 +3,20 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { acceptInvite, lookupInvite, registerWithInvite, signIn, signOut } from '@/client/accounts-api'
+import { acceptInvite, lookupInvite } from '@/client/accounts-api'
 import { refusalOf, useLinkToken } from '@/client/accounts/link-token'
 import { errorMessage } from '@/client/api'
 import { afterInvitePath } from '@/client/one-time-link'
+import { SIGN_OUT_FAILED } from '@/client/sign-out'
 import { TextField } from '@/client/ui/fields'
 import { errorClass, primaryButton, quietButton, secondaryButton } from '@/client/ui/styles'
 import { inviteProblemMessage, roleHint, tooManyTriesMessage } from '@/domain/account-wording'
 import { PASSWORD_MAX, PASSWORD_MIN, normalizeEmail } from '@/domain/accounts'
 import type { InviteLookup, InviteProblem } from '@/shared/accounts-api'
+import { registerFromInvite, signInFromInvite, signOutFromInvite } from './invite-session'
 
 export type OpenInvite = Extract<InviteLookup, { status: 'ok' }>
-export type SignedIn = { displayName: string; email: string } | null
+export type SignedIn = { id: string; displayName: string; email: string } | null
 
 type Phase =
   | { kind: 'loading' }
@@ -201,15 +203,20 @@ function useLeave() {
   }
 }
 
-/** Signed out, then this page again: it shows the invite to whoever is signed in now. */
-function useSignOutHere() {
+/**
+ * Signs out the way the user menu does (src/client/sign-out.ts): what waits
+ * is sent first, anything unsaved is asked about, and this person's storage
+ * is deleted. Then this page loads again, showing the invite to nobody. On
+ * no, or a failure, the page stays as it is; when someone else signed in
+ * meanwhile, it shows the invite to them.
+ */
+function useSignOutHere(userId: string, onDone: (error: string | null) => void) {
   const router = useRouter()
   return async () => {
-    try {
-      await signOut()
-    } finally {
-      router.refresh()
-    }
+    const result = await signOutFromInvite(userId)
+    if (result === 'signed-out') return
+    if (result === 'other-user') router.refresh()
+    onDone(result === 'failed' ? SIGN_OUT_FAILED : null)
   }
 }
 
@@ -225,9 +232,12 @@ export function SignedInAccept({
   onPhase: (phase: Phase) => void
 }) {
   const leave = useLeave()
-  const signOutHere = useSignOutHere()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const signOutHere = useSignOutHere(signedIn.id, (failed) => {
+    setError(failed)
+    setBusy(false)
+  })
   const wrongEmail = invite.email !== null && normalizeEmail(invite.email) !== normalizeEmail(signedIn.email)
 
   async function accept() {
@@ -251,11 +261,18 @@ export function SignedInAccept({
       disabled={busy}
       onClick={() => {
         setBusy(true)
+        setError(null)
         void signOutHere()
       }}
     >
       {label}
     </button>
+  )
+
+  const errorLine = error && (
+    <p role="alert" className={errorClass}>
+      {error}
+    </p>
   )
 
   return (
@@ -266,6 +283,7 @@ export function SignedInAccept({
       {invite.kind === 'planner' ? (
         <>
           <p className="text-sm text-stone-700">This invite makes a new account. Sign out first, then make the account.</p>
+          {errorLine}
           {signOutButton('Sign out', `${primaryButton} w-full`)}
         </>
       ) : wrongEmail ? (
@@ -273,15 +291,12 @@ export function SignedInAccept({
           <p role="alert" className={errorClass}>
             This invite is for {invite.email}. Sign out, then sign in with that email or make an account with it.
           </p>
+          {errorLine}
           {signOutButton('Sign out', `${primaryButton} w-full`)}
         </>
       ) : (
         <>
-          {error && (
-            <p role="alert" className={errorClass}>
-              {error}
-            </p>
-          )}
+          {errorLine}
           <button type="button" className={`${primaryButton} w-full`} disabled={busy} onClick={() => void accept()}>
             {busy ? 'Accepting…' : 'Accept invite'}
           </button>
@@ -332,7 +347,7 @@ export function RegisterForm({
     setBusy(true)
     setError(null)
     try {
-      const done = await registerWithInvite({ token, email, displayName: name, password })
+      const done = await registerFromInvite({ token, email, displayName: name, password })
       leave(done.redirect)
       return
     } catch (err) {
@@ -417,7 +432,7 @@ export function SignInForm({ lockedEmail, onRegister }: { lockedEmail: string | 
     setBusy(true)
     setError(null)
     try {
-      await signIn(email, password)
+      await signInFromInvite(email, password)
       // The page renders again for the signed-in account, which can then accept.
       router.refresh()
       return

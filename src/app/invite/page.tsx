@@ -18,11 +18,12 @@ export const dynamic = 'force-dynamic'
  */
 export default async function InvitePage() {
   const user = await getSessionUser()
-  const screen = <InviteScreen signedIn={user ? { displayName: user.displayName, email: user.email } : null} />
+  const screen = <InviteScreen signedIn={user ? { id: user.id, displayName: user.displayName, email: user.email } : null} />
   return (
     <SignedOutShell size="md">
       {user ? (
-        // Accepting and signing out are changes: they carry the user's id (src/client/http.ts).
+        // Accepting and signing out are changes: they carry the user's id (src/client/http.ts). Signing out
+        // deletes what this person keeps in the browser, as the user menu's does (src/client/sign-out.ts).
         <CurrentUserProvider user={{ id: user.id, displayName: user.displayName, email: user.email, isAdmin: user.isAdmin }}>
           {screen}
         </CurrentUserProvider>

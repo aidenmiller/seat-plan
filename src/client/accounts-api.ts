@@ -59,10 +59,14 @@ export const lookupReset = (token: string) => request<ResetLookup>('POST', '/api
 
 export const completeReset = (token: string, password: string) => request<{ ok: true }>('POST', '/api/auth/reset', { token, password })
 
-/** Signs in from the invite page, which then shows the invite to the signed-in account. */
-export const signIn = (email: string, password: string) => request<{ ok: true }>('POST', '/api/auth/login', { email, password })
-
-export const signOut = () => request<{ ok: true }>('POST', '/api/auth/logout')
+/**
+ * Signs in from the invite page, which then shows the invite to the signed-in
+ * account. The reply names the account, for the other tabs
+ * (src/app/invite/invite-session.ts). Signing out has no call here: it always
+ * goes through src/client/sign-out.ts, which sends and asks first.
+ */
+export const signIn = (email: string, password: string) =>
+  request<{ ok: true; userId?: string; redirect?: string }>('POST', '/api/auth/login', { email, password })
 
 // ---------- The account page ----------
 

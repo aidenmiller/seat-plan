@@ -183,6 +183,59 @@ export function flushOtherTabs(
   })
 }
 
+// ---------- A sign-in to tell the other tabs about from the next page ----------
+
+/**
+ * Making an account on the invite page signs it in, but the reply does not
+ * say the new account's id, which 'signed-in' carries. So the invite page
+ * leaves word in this tab's sessionStorage, and the first signed-in page
+ * after it (src/client/BrowserSession.tsx) tells the other tabs.
+ */
+export const ANNOUNCE_SIGN_IN_KEY = 'seat-plan:announce-sign-in'
+/** Word older than this is ignored: the page it was for never came. */
+const ANNOUNCE_WITHIN_MS = 5 * 60_000
+
+type SmallStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+function tabStorage(): SmallStorage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.sessionStorage
+  } catch {
+    return null
+  }
+}
+
+const sameEmail = (email: string) => email.trim().toLowerCase()
+
+/** Leaves word that this account signed in, for the next page in this tab. Never throws. */
+export function announceSignInOnNextPage(email: string, { storage = tabStorage(), now = Date.now } = {}): void {
+  try {
+    storage?.setItem(ANNOUNCE_SIGN_IN_KEY, JSON.stringify({ email: sameEmail(email), at: now() }))
+  } catch {
+    // Storage blocked: the server's user header check still keeps the other tabs' edits out of this session.
+  }
+}
+
+/** On a signed-in page: if the page before it signed this person in, tells the other tabs now. Word is used once. */
+export function announcePendingSignIn(
+  user: { id: string; email: string },
+  { storage = tabStorage(), channel = authChannel(), now = Date.now }: { storage?: SmallStorage | null; channel?: ChannelLike | null; now?: () => number } = {},
+): void {
+  let word: { email?: unknown; at?: unknown } | null = null
+  try {
+    const raw = storage?.getItem(ANNOUNCE_SIGN_IN_KEY) ?? null
+    if (raw === null) return
+    storage?.removeItem(ANNOUNCE_SIGN_IN_KEY)
+    word = JSON.parse(raw) as { email?: unknown; at?: unknown }
+  } catch {
+    return
+  }
+  if (!word || typeof word.email !== 'string' || typeof word.at !== 'number') return
+  const age = now() - word.at
+  if (word.email !== sameEmail(user.email) || age < 0 || age > ANNOUNCE_WITHIN_MS) return
+  postAuthMessage({ type: 'signed-in', userId: user.id }, channel)
+}
+
 // ---------- This page's state ----------
 
 export type PageAuthState = 'current' | 'other-user'

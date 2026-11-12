@@ -6,6 +6,8 @@
  *
  * - Moves unsaved edits from before accounts into this user's storage
  *   (src/client/sync/legacy-drafts.ts), and drops the old Noa / Aiden choice.
+ * - Right after the invite page made this account, tells the other tabs who
+ *   signed in (announcePendingSignIn), as the sign-in page does.
  * - Listens to the other tabs (src/client/auth-channel.ts). When someone else
  *   signs in, this page stops and asks to reload: its edits stay in this
  *   user's storage and are never sent under the other person's session. When
@@ -16,7 +18,15 @@
  *   When a tab signing this person out asks, this page sends what it holds.
  */
 import { useEffect, useSyncExternalStore } from 'react'
-import { clearOtherUser, listenForAuthChanges, markOtherUser, pageAuthState, subscribePageAuthState, type AuthListenerHandlers } from './auth-channel'
+import {
+  announcePendingSignIn,
+  clearOtherUser,
+  listenForAuthChanges,
+  markOtherUser,
+  pageAuthState,
+  subscribePageAuthState,
+  type AuthListenerHandlers,
+} from './auth-channel'
 import { useCurrentUser } from './current-user'
 import { goToSignIn } from './sign-out'
 import { ensureLegacyAdopted } from './sync/legacy-drafts'
@@ -54,6 +64,9 @@ export function BrowserSession() {
       // Storage blocked: nothing kept there either.
     }
   }, [user.id])
+
+  // The invite page just made this account: tell the other tabs who is signed in now.
+  useEffect(() => announcePendingSignIn({ id: user.id, email: user.email }), [user.id, user.email])
 
   useEffect(() => listenForAuthChanges(pageAuthHandlers(user.id)), [user.id])
 
