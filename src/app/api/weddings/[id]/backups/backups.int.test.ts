@@ -107,10 +107,11 @@ function fakeBackup(opts: { createdBy: string | null; createdAt: Date }): typeof
 }
 
 /** Lets the next Back up now of this wedding through the 5-minute rule. */
+/** Moves the wedding's backups 6 minutes into the past, each by the same amount, so their order (which is newest) stays. */
 async function age(weddingId: string) {
   await db
     .update(backups)
-    .set({ createdAt: new Date(Date.now() - 6 * 60_000) })
+    .set({ createdAt: sql`${backups.createdAt} - interval '6 minutes'` })
     .where(eq(backups.weddingId, weddingId))
 }
 
