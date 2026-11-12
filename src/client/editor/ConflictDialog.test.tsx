@@ -18,11 +18,13 @@ vi.mock('@/client/ui/Dialog', () => ({
   DialogActions: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
 
-const server = { version: 4, editedBy: 'Aiden' as const, updatedAt: '2026-11-09T15:42:00.000Z' }
+const NOA_ID = '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a'
+const AIDEN_ID = '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b'
+const server = { version: 4, editedBy: 'Aiden', editedById: AIDEN_ID, updatedAt: '2026-11-09T15:42:00.000Z' }
 
-function render(conflict: ConflictInfo) {
+function render(conflict: ConflictInfo, meId = NOA_ID) {
   return renderToStaticMarkup(
-    <ConflictDialog conflict={conflict} me="Noa" onLoadTheirs={async () => undefined} onKeepMine={async () => undefined} />,
+    <ConflictDialog conflict={conflict} meId={meId} onLoadTheirs={async () => undefined} onKeepMine={async () => undefined} />,
   )
 }
 
@@ -31,6 +33,15 @@ describe('ConflictDialog', () => {
     const markup = render({ source: 'save', partlySaved: false, server, draft: null })
     expect(markup).toMatch(/Aiden changed this layout (at|on|yesterday)/)
     expect(markup).toContain('data-dismissable="false"')
+  })
+
+  it('says "You" when the save was the reader’s own account, from another tab or device', () => {
+    const markup = render({ source: 'save', partlySaved: false, server, draft: null }, AIDEN_ID)
+    expect(markup).toMatch(/You changed this layout in another tab or on another device (at|on|yesterday)/)
+    // Same name, another account: the name shows.
+    expect(render({ source: 'save', partlySaved: false, server: { ...server, editedById: NOA_ID.replace('0a', '0c') }, draft: null }, AIDEN_ID)).toMatch(
+      /Aiden changed this layout/,
+    )
   })
 
   it('says that Load their version drops this tab’s changes', () => {

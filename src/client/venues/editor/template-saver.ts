@@ -34,7 +34,7 @@ export function createTemplateSaver({ templateId, ...rest }: TemplateSaverOption
     tabId: 'template-editor',
     onDroppedSeats: () => undefined,
     endpoint: `/api/venues/${encodeURIComponent(templateId)}`,
-    body: (r): SaveVenueBody => ({ baseVersion: r.baseVersion, saveId: r.saveId, editedBy: r.editedBy, fixedItems: r.doc.items, reference: r.doc.reference }),
+    body: (r): SaveVenueBody => ({ baseVersion: r.baseVersion, saveId: r.saveId, fixedItems: r.doc.items, reference: r.doc.reference }),
     drafts: NO_TEMPLATE_DRAFTS,
     messages: TEMPLATE_SAVER_MESSAGES,
   })

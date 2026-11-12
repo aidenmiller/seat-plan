@@ -43,7 +43,7 @@ describe('template autosave', () => {
     const saver = createTemplateSaver({
       templateId: ID,
       baseVersion: 4,
-      editedBy: () => 'Aiden',
+      userId: '11111111-1111-4111-8111-111111111111',
       onStatus: (s) => statuses.push(s),
       fetch: fetch.fn,
       windowTarget: null,
@@ -66,7 +66,8 @@ describe('template autosave', () => {
     expect(call.url).toBe(`/api/venues/${ID}`)
     expect(call.init.method).toBe('PUT')
     expect(saveVenueBody.safeParse(call.body).success).toBe(true)
-    expect(call.body).toMatchObject({ baseVersion: 4, editedBy: 'Aiden', reference: null })
+    expect(call.body).toMatchObject({ baseVersion: 4, reference: null })
+    expect(call.body).not.toHaveProperty('editedBy')
     expect(call.body).not.toHaveProperty('canvas')
     const reply: SaveVenueOk = { status: 'saved', version: 5, updatedAt: '2026-11-09T12:00:00.000Z', editedBy: 'Aiden', editedById: null }
     call.respond(200, reply)

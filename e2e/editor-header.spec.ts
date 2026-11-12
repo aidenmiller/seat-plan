@@ -16,7 +16,6 @@ import {
   editorPath,
   expectSaved,
   holdLayoutSaves,
-  presetAuthor,
   saveStatus,
   signIn,
   uniqueName,
@@ -64,9 +63,8 @@ async function expectNoSideScroll(page: Page): Promise<void> {
   expect(widths.page).toBeLessThanOrEqual(widths.screen)
 }
 
-test('the top bar keeps its height while the status goes from Saving to Saved', async ({ context, page }, testInfo) => {
+test('the top bar keeps its height while the status goes from Saving to Saved', async ({ page }, testInfo) => {
   if (testInfo.project.name === 'phone') expect(page.viewportSize()?.width).toBe(390)
-  await presetAuthor(context, 'Noa')
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Top bar', testInfo))
   // A long name, so the name, the status and the Noa / Aiden switch all compete for the row.

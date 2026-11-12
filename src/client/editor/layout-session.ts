@@ -5,10 +5,12 @@
  * 1. Take this tab's id and lock, and fetch the layout fresh (the page may
  *    have come from the router's cache).
  * 2. Pick up drafts left by closed tabs (src/client/sync/recovery.ts): apply
- *    one, drop the ones holding nothing, or report a conflict.
+ *    one, drop the ones holding nothing, or report a conflict. Drafts are the
+ *    signed-in user's own (their own database), after any from before
+ *    accounts have moved in (src/client/sync/legacy-drafts.ts).
  * 3. Create the save engine and hand it every finished edit.
  * 4. When the tab regains focus and the server has a newer version, load it
- *    quietly if this tab holds nothing unsaved ("Loaded Aiden's changes");
+ *    quietly if this tab holds nothing unsaved ("Loaded Dayna's changes");
  *    otherwise do nothing and let the next save meet the conflict.
  * 5. On a conflict, "Load their version" or "Keep mine as a new copy".
  * 6. After a 422 or 410, "Save as a copy" stores this tab's canvas as a new
@@ -28,14 +30,16 @@
  */
 import { duplicateLayout, getLayout } from '@/client/api'
 import { createLayoutSaver } from '@/client/sync/layout-saver'
-import { defaultDraftStore } from '@/client/sync/outbox'
+import { legacyAdoptedWithin } from '@/client/sync/legacy-drafts'
+import { draftStoreFor } from '@/client/sync/outbox'
 import { randomId } from '@/client/sync/random-id'
 import { findOrphanDrafts, pickRecovery } from '@/client/sync/recovery'
 import { watchRemoteVersion, type RemoteVersionWatch, type WatchRemoteVersionOptions } from '@/client/sync/remote-version'
+import { registerSaver, type LiveSaver } from '@/client/sync/saver-registry'
 import { claimTab, isTabAlive } from '@/client/sync/tab-lock'
 import type { DraftSnapshot, DraftStore, LayoutSaver, LayoutSaverOptions, SaveStatus } from '@/client/sync/types'
-import { asAuthor, type Author, type Canvas } from '@/domain/canvas-schema'
-import { loadedChangesMessage } from '@/domain/wording'
+import type { Canvas } from '@/domain/canvas-schema'
+import { editorRef, loadedChangesMessage, otherUserMessage } from '@/domain/wording'
 import type { DuplicateLayoutBody, LayoutDetail } from '@/shared/api'
 import { clearDroppedSeats, type DocStore } from './doc-store'
 
@@ -44,7 +48,7 @@ export type ConflictInfo = {
   source: 'save' | 'recovery'
   /** For 'recovery': the closed tab's last save landed, so only the edits after it are at stake. */
   partlySaved: boolean
-  server: { version: number; editedBy: string | null; updatedAt: string }
+  server: { version: number; editedBy: string | null; editedById: string | null; updatedAt: string }
   /** For 'recovery', the closed tab's draft, whose canvas is "mine". */
   draft: DraftSnapshot | null
 }
@@ -55,7 +59,7 @@ export type LayoutSessionEvents = {
   onStatus(status: SaveStatus): void
   /** A conflict to show, or null once it is settled. */
   onConflict(conflict: ConflictInfo | null): void
-  /** "Loaded Aiden's changes". */
+  /** "Loaded Dayna's changes". */
   onNotice(text: string): void
   /** The editor now shows this copy from the server (its name may have changed too). */
   onServerCopy?(layout: LayoutDetail): void
@@ -72,6 +76,10 @@ export type LayoutSessionDeps = {
   createSaver: (options: LayoutSaverOptions) => LayoutSaver
   watchRemoteVersion: (options: WatchRemoteVersionOptions) => RemoteVersionWatch
   newId: () => string
+  /** Resolves once drafts from before accounts have moved into this user's store, or after a few seconds. */
+  waitForLegacyDrafts: () => Promise<void>
+  /** Puts the saver where signing out can reach it (src/client/sync/saver-registry.ts). */
+  registerSaver: (saver: LiveSaver) => () => void
 }
 
 export type LayoutSession = {
@@ -85,35 +93,40 @@ export type LayoutSession = {
    * Conflict choice: store "mine" as a new layout and forget it here. Returns
    * the copy to open. From then on this session takes no edits.
    */
-  keepMineAsCopy(name: string, author: Author): Promise<LayoutDetail>
+  keepMineAsCopy(name: string): Promise<LayoutDetail>
   /**
    * After a 422 or 410: store this tab's canvas as a new layout and drop this
    * tab's draft of this one. Returns the copy to open. From then on this
    * session takes no edits.
    */
-  saveAsCopy(name: string, author: Author): Promise<LayoutDetail>
+  saveAsCopy(name: string): Promise<LayoutDetail>
   /** Leaving inside the app: send what is waiting, then stop and let the tab lock go. */
   close(): void
 }
 
+/** The signed-in user the page was opened for: their drafts, their saves, their copies. */
+export type SessionUser = { id: string; displayName: string }
+
 export type OpenLayoutSessionOptions = {
   layout: LayoutDetail
   store: DocStore
-  getAuthor: () => Author | null
+  user: SessionUser
   events: LayoutSessionEvents
   deps?: Partial<LayoutSessionDeps>
 }
 
-function withDefaults(deps: Partial<LayoutSessionDeps> = {}): LayoutSessionDeps {
+function withDefaults(user: SessionUser, deps: Partial<LayoutSessionDeps> = {}): LayoutSessionDeps {
   return {
     claimTab: deps.claimTab ?? (() => claimTab()),
     isTabAlive: deps.isTabAlive ?? ((tabId) => isTabAlive(tabId)),
-    drafts: deps.drafts ?? defaultDraftStore(),
+    drafts: deps.drafts ?? draftStoreFor(user.id),
     getLayout: deps.getLayout ?? getLayout,
     duplicateLayout: deps.duplicateLayout ?? duplicateLayout,
     createSaver: deps.createSaver ?? createLayoutSaver,
     watchRemoteVersion: deps.watchRemoteVersion ?? watchRemoteVersion,
     newId: deps.newId ?? randomId,
+    waitForLegacyDrafts: deps.waitForLegacyDrafts ?? (() => legacyAdoptedWithin(user.id)),
+    registerSaver: deps.registerSaver ?? registerSaver,
   }
 }
 
@@ -128,8 +141,8 @@ function isIdTaken(error: unknown): boolean {
   return e?.status === 409 && e.body?.error === 'id_taken'
 }
 
-export function openLayoutSession({ layout, store, getAuthor, events, deps }: OpenLayoutSessionOptions): LayoutSession {
-  const d = withDefaults(deps)
+export function openLayoutSession({ layout, store, user, events, deps }: OpenLayoutSessionOptions): LayoutSession {
+  const d = withDefaults(user, deps)
   const layoutId = layout.id
   let closed = false
   let tabId: string | null = null
@@ -143,9 +156,7 @@ export function openLayoutSession({ layout, store, getAuthor, events, deps }: Op
   let failedCopyId: string | null = null
   /** A copy was made and the page is about to open it: no edit may reach this layout any more. */
   let leaving = false
-  /** Whose name saves carry if nobody has picked on this device yet (a recovered draft's, or the last editor's). */
-  let fallbackAuthor: Author = asAuthor(layout.editedBy) ?? 'Noa'
-  const editedBy = () => getAuthor() ?? fallbackAuthor
+  let unregister: (() => void) | null = null
 
   function setConflict(next: ConflictInfo | null) {
     conflict = next
@@ -177,6 +188,9 @@ export function openLayoutSession({ layout, store, getAuthor, events, deps }: Op
       if (isGone(error)) events.onGone?.()
     }
 
+    // Drafts from before accounts move into this user's store first, so this open finds them too.
+    await d.waitForLegacyDrafts()
+    if (closed) return
     const orphans = await findOrphanDrafts(layoutId, { drafts: d.drafts, isTabAlive: d.isTabAlive, ownTabId: tabId })
     if (closed) return
     const plan = pickRecovery(
@@ -201,22 +215,26 @@ export function openLayoutSession({ layout, store, getAuthor, events, deps }: Op
     }
 
     const next = plan.next
-    // A draft saved under another name falls back to the one already in hand: the save request takes only Noa or Aiden.
-    if (next) fallbackAuthor = asAuthor(next.draft.editedBy) ?? fallbackAuthor
     const baseVersion = next?.decision.kind === 'apply' ? next.decision.baseVersion : server.version
     const ownTab = tabId
     saver = d.createSaver({
       layoutId,
       tabId: ownTab,
       baseVersion,
-      editedBy,
+      userId: user.id,
+      messages: { otherUser: `${otherUserMessage(user.displayName)} Your changes are kept on this device.` },
       onStatus(status) {
         events.onStatus(status)
         if (status.kind === 'conflict' && conflict?.source !== 'save') {
           setConflict({
             source: 'save',
             partlySaved: false,
-            server: { version: status.server.version, editedBy: status.server.editedBy, updatedAt: status.server.updatedAt },
+            server: {
+              version: status.server.version,
+              editedBy: status.server.editedBy,
+              editedById: status.server.editedById,
+              updatedAt: status.server.updatedAt,
+            },
             draft: null,
           })
         }
@@ -230,6 +248,14 @@ export function openLayoutSession({ layout, store, getAuthor, events, deps }: Op
     events.onStatus(saver.getStatus())
 
     const active = saver
+    unregister = d.registerSaver({
+      flush: () => active.flush(),
+      hasUnsavedChanges: () => active.hasUnsavedChanges(),
+      async stop() {
+        active.dispose()
+        await active.whenStored()
+      },
+    })
     if (next?.decision.kind === 'apply') {
       store.replace(next.decision.canvas)
       active.noteEdit(next.decision.canvas)
@@ -247,7 +273,7 @@ export function openLayoutSession({ layout, store, getAuthor, events, deps }: Op
       setConflict({
         source: 'recovery',
         partlySaved: next.decision.partlySaved,
-        server: { version: server.version, editedBy: server.editedBy, updatedAt: server.updatedAt },
+        server: { version: server.version, editedBy: server.editedBy, editedById: server.editedById, updatedAt: server.updatedAt },
         draft: next.draft,
       })
     }
@@ -283,7 +309,7 @@ export function openLayoutSession({ layout, store, getAuthor, events, deps }: Op
     await saver.resetTo(fresh.version)
     if (closed) return
     events.onServerCopy?.(fresh)
-    events.onNotice(loadedChangesMessage(fresh.editedBy, getAuthor()))
+    events.onNotice(loadedChangesMessage(editorRef(fresh), user.id))
   }
 
   async function forgetDraft(draft: DraftSnapshot | null): Promise<void> {
@@ -344,11 +370,11 @@ export function openLayoutSession({ layout, store, getAuthor, events, deps }: Op
       setConflict(null)
     },
 
-    async keepMineAsCopy(name, author) {
+    async keepMineAsCopy(name) {
       const settled = conflict
       const mine = settled?.source === 'recovery' && settled.draft ? settled.draft.canvas : store.getState().canvas
       copyId ??= d.newId()
-      const copy = await duplicateAs(copyId, { name, canvas: mine, editedBy: author })
+      const copy = await duplicateAs(copyId, { name, canvas: mine })
       leaving = true
       await showServerVersion(settled)
       await forgetDraft(settled?.draft ?? null)
@@ -356,13 +382,14 @@ export function openLayoutSession({ layout, store, getAuthor, events, deps }: Op
       return copy
     },
 
-    async saveAsCopy(name, author) {
+    async saveAsCopy(name) {
       failedCopyId ??= d.newId()
-      const copy = await duplicateAs(failedCopyId, { name, canvas: store.getState().canvas, editedBy: author })
+      const copy = await duplicateAs(failedCopyId, { name, canvas: store.getState().canvas })
       leaving = true
       // This layout can no longer take these edits; the copy holds them now.
       if (saver) {
         saver.dispose()
+        unregister?.()
         await saver.whenStored()
       }
       if (tabId) await d.drafts.deleteDraft(layoutId, tabId)
@@ -376,6 +403,7 @@ export function openLayoutSession({ layout, store, getAuthor, events, deps }: Op
       const active = saver
       const letGo = () => {
         active?.dispose()
+        unregister?.()
         release?.()
       }
       // Leaving inside the app: the page stays alive, so wait for the save in

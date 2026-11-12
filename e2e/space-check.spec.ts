@@ -10,12 +10,11 @@ import { emptyCanvas, type Canvas } from '../src/domain/canvas-schema'
 import { makeItem } from '../src/domain/presets'
 import { DEFAULT_MIN_GAP_CM, gapText, nearestTableGap } from '../src/domain/spacing'
 import { isPhoneLayout, readTable, settledCamera, tableClientCenter, Touch, type Point } from './canvas'
-import { apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, expectSaved, presetAuthor, signIn, uniqueName, waitForEditor } from './helpers'
+import { apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, expectSaved, signIn, uniqueName, waitForEditor } from './helpers'
 
 const FOOT = 30.48
 
-test('dragging a table within 5 ft of another shows the gap in feet and inches with a warning, and the move happens', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('dragging a table within 5 ft of another shows the gap in feet and inches with a warning, and the move happens', async ({ page }, testInfo) => {
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Space check', testInfo))
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })
@@ -82,8 +81,7 @@ test('dragging a table within 5 ft of another shows the gap in feet and inches w
   expect(shown).toBe(`${gapText(gap.gapCm, 'ft')} · too close`)
 })
 
-test('two 60 in round tables with their edges 5 ft apart read 5′ 0″ with no warning; 4 ft apart they warn', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('two 60 in round tables with their edges 5 ft apart read 5′ 0″ with no warning; 4 ft apart they warn', async ({ page }, testInfo) => {
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Five feet', testInfo))
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })

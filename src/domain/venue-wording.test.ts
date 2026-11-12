@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { acceptOverText, loadedChangesText, restoreReloadedText, revisionDetail, revisionTitle, venueDeleteMessage, venueItemCount, venueUsedBy } from './venue-wording'
+import {
+  acceptOverText,
+  loadedChangesText,
+  restoreReloadedText,
+  revisionDetail,
+  revisionTitle,
+  venueConflictText,
+  venueDeleteMessage,
+  venueItemCount,
+  venueUsedBy,
+} from './venue-wording'
 
 describe('venue wording', () => {
   it('says how many layouts use a venue', () => {
@@ -41,15 +51,20 @@ describe('venue wording', () => {
     expect(revisionDetail({ fixedItemCount: 0, referenceImageId: null })).toBe('No items')
   })
 
-  it('says whose save met an Accept or a restore', () => {
-    expect(loadedChangesText('Aiden')).toBe('Loaded Aiden’s changes.')
-    expect(loadedChangesText(null)).toBe('Loaded the latest version of this venue.')
-    expect(acceptOverText('Aiden')).toBe('Aiden changed this venue after you opened it. Accept your draft over it?')
-    expect(acceptOverText(null)).toBe('Someone changed this venue after you opened it. Accept your draft over it?')
-    expect(restoreReloadedText('Noa', true)).toBe('Loaded Noa’s changes. Try Undo import again.')
-    expect(restoreReloadedText(null, false)).toBe('Loaded the latest version of this venue. Try Put back again.')
-    expect(loadedChangesText('Dayna K.')).toBe('Loaded Dayna K.’s changes.')
-    expect(acceptOverText('Dayna K.')).toBe('Dayna K. changed this venue after you opened it. Accept your draft over it?')
-    expect(restoreReloadedText('Dayna K.', true)).toBe('Loaded Dayna K.’s changes. Try Undo import again.')
+  it('says whose save met an Accept or a restore, telling people apart by account', () => {
+    const ME = '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a'
+    const aiden = { id: '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b', name: 'Aiden' }
+    const me = { id: ME, name: 'Noa' }
+    expect(loadedChangesText(aiden, ME)).toBe('Loaded Aiden’s changes.')
+    expect(loadedChangesText(me, ME)).toBe('Loaded your changes from another tab or device.')
+    expect(loadedChangesText(null, ME)).toBe('Loaded the latest version of this venue.')
+    expect(acceptOverText(aiden, ME)).toBe('Aiden changed this venue after you opened it. Accept your draft over it?')
+    expect(acceptOverText(me, ME)).toBe('You changed this venue in another tab or on another device after you opened it. Accept your draft over it?')
+    expect(acceptOverText(null, ME)).toBe('Someone changed this venue after you opened it. Accept your draft over it?')
+    expect(restoreReloadedText({ id: null, name: 'Noa' }, ME, true)).toBe('Loaded Noa’s changes. Try Undo import again.')
+    expect(restoreReloadedText(null, ME, false)).toBe('Loaded the latest version of this venue. Try Put back again.')
+    expect(venueConflictText(aiden, ME)).toBe('Aiden saved this venue after you opened it.')
+    expect(venueConflictText(me, ME)).toBe('You saved this venue in another tab or on another device after you opened it.')
+    expect(venueConflictText(null, ME)).toBe('This venue was saved somewhere else after you opened it.')
   })
 })

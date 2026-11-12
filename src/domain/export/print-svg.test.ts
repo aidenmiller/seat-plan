@@ -10,6 +10,9 @@ import { makeItem } from '../presets'
 import { textWidthEm } from '../text-fit'
 import { escapeXml, MIN_PRINT_NAME_PT, PAPER, renderPrintPlan, type PrintPlanInput } from './print-svg'
 
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
+
 const measure: MeasureText = (text, size) => textWidthEm(text) * size
 
 function idMaker(prefix: number): () => string {
@@ -41,7 +44,7 @@ function seededTour(): { canvas: Canvas; names: Map<string, LabelName>; seated: 
       }
     }),
   }
-  canvas = addDemoNotes(canvas, idMaker(2), Date.UTC(2026, 10, 1))
+  canvas = addDemoNotes(canvas, idMaker(2), Date.UTC(2026, 10, 1), { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' })
   return { canvas, names, seated }
 }
 
@@ -140,7 +143,7 @@ describe('renderPrintPlan', () => {
   })
 
   it('draws the whole first character of a note author, even an emoji or an accent', () => {
-    const sticky = (author: string) => ({ ...makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', Date.UTC(2026, 10, 1), 'n1'), author })
+    const sticky = (author: string) => ({ ...makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', Date.UTC(2026, 10, 1), 'n1'), author })
     const initialOf = (author: string) => {
       const svg = renderPrintPlan(input({ canvas: { ...emptyCanvas(), items: [sticky(author)] }, names: new Map() })).svg
       return /font-weight="700"[^>]*text-anchor="end"[^>]*>([^<]*)</.exec(svg)?.[1]

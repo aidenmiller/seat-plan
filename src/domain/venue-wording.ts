@@ -2,7 +2,7 @@
  * Plain sentences for the Venues tab and the template editor. Pure.
  */
 import type { VenueDeleteSummary, VenueRevision } from '@/shared/api'
-import { plural } from './wording'
+import { isOwnEdit, plural, type EditorRef } from './wording'
 
 /** "Used by 3 layouts" or "Not used yet". */
 export function venueUsedBy(count: number): string {
@@ -47,19 +47,29 @@ export function revisionDetail(r: Pick<VenueRevision, 'fixedItemCount' | 'refere
   return r.referenceImageId ? `${items}, with the floor plan image` : items
 }
 
-type Who = string | null
+/** Who saved the venue (account id and name), or null when nobody is named. */
+type Who = EditorRef | null
 
-/** "Loaded Aiden's changes.", after this tab took a newer save of the venue. */
-export function loadedChangesText(who: Who): string {
-  return who ? `Loaded ${who}’s changes.` : 'Loaded the latest version of this venue.'
+/** "Loaded Dayna’s changes.", after this tab took a newer save of the venue; your own from another tab say so. */
+export function loadedChangesText(who: Who, meId: string | null): string {
+  if (!who) return 'Loaded the latest version of this venue.'
+  return isOwnEdit(who, meId) ? 'Loaded your changes from another tab or device.' : `Loaded ${who.name}’s changes.`
 }
 
 /** Shown over an import draft when someone saved the venue after this tab opened it. Accept then goes over their save. */
-export function acceptOverText(who: Who): string {
-  return `${who ?? 'Someone'} changed this venue after you opened it. Accept your draft over it?`
+export function acceptOverText(who: Who, meId: string | null): string {
+  if (isOwnEdit(who, meId)) return 'You changed this venue in another tab or on another device after you opened it. Accept your draft over it?'
+  return `${who?.name ?? 'Someone'} changed this venue after you opened it. Accept your draft over it?`
+}
+
+/** The template conflict banner's first sentence: who saved the venue after this tab opened it. */
+export function venueConflictText(who: Who, meId: string | null): string {
+  if (!who) return 'This venue was saved somewhere else after you opened it.'
+  if (isOwnEdit(who, meId)) return 'You saved this venue in another tab or on another device after you opened it.'
+  return `${who.name} saved this venue after you opened it.`
 }
 
 /** After Undo import (or Put back) met someone else's save: their version is loaded, and the person tries again. */
-export function restoreReloadedText(who: Who, undoImport: boolean): string {
-  return `${loadedChangesText(who)} Try ${undoImport ? 'Undo import' : 'Put back'} again.`
+export function restoreReloadedText(who: Who, meId: string | null, undoImport: boolean): string {
+  return `${loadedChangesText(who, meId)} Try ${undoImport ? 'Undo import' : 'Put back'} again.`
 }

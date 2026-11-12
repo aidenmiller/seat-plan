@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { VenueDetail, VenueSummary } from '@/shared/api'
+import { CurrentUserProvider } from '../current-user'
 import { TemplateEditorScreen } from './editor/TemplateEditorScreen'
 import { NewVenueButton, VenueList, venueHref } from './VenueList'
 
@@ -89,7 +90,12 @@ const venue: VenueDetail = {
 
 describe('TemplateEditorScreen', () => {
   it('renders the template editor: back link, name, save status, tools, canvas and tabs', () => {
-    const html = renderToStaticMarkup(<TemplateEditorScreen venue={venue} backHref={`/w/${WEDDING}/venues`} />)
+    const html = renderToStaticMarkup(
+      <CurrentUserProvider user={{ id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a', displayName: 'Noa', email: 'noa@example.com', isAdmin: false }}>
+        <TemplateEditorScreen venue={venue} backHref={`/w/${WEDDING}/venues`} />
+      </CurrentUserProvider>,
+    )
+    expect(html).toContain('data-testid="user-menu"')
     expect(html).toContain(`href="/w/${WEDDING}/venues"`)
     expect(html).toContain('Toronto Beach Club')
     expect(html).toContain('data-testid="save-status"')

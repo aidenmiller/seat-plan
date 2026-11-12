@@ -18,7 +18,7 @@ import { generateSeatingBlock } from '../src/domain/ceremony'
 import { makeItem } from '../src/domain/presets'
 import type { Guest } from '../src/shared/api'
 import { apiAddGuests, BOM, csvTextLines, expectHydrated } from './guest-list'
-import { apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, expectSaved, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, expectSaved, signIn, uniqueName } from './helpers'
 
 type PdfText = { str: string; size: number; fontName: string }
 
@@ -63,10 +63,6 @@ function roundTable(canvas: Canvas, at: { x: number; y: number }, number: number
   const t = makeItem('round', at, randomUUID(), canvas) as Table
   return { ...t, number, name: `Table ${number}`, seats: t.seats.map((s, i) => ({ ...s, guestId: guests[i] ?? null })) }
 }
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 test('exports the floor plan as PDF and SVG, and the table list and escort cards as CSV', async ({ page }, testInfo) => {
   test.setTimeout(90_000)

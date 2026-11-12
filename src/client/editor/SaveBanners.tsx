@@ -11,6 +11,8 @@
  *   storage, so closing the page would lose it.
  * - SaveFailedBanner: a 422 or 410 (or a deleted layout) stops saving. It
  *   offers Save as a copy, then Download a copy. A 401 offers Sign in again.
+ *   When someone else signed in on this browser, it offers Download a copy:
+ *   a copy saved now would go under the other person's account.
  */
 import type { SaveStatus } from '@/client/sync/types'
 import { primaryButton, secondaryButton } from '@/client/ui/styles'
@@ -81,6 +83,7 @@ export function SaveFailedBanner({
   const failed = status?.kind === 'failed' ? status : null
   if (!failed && !gone) return null
   const signedOut = failed?.reason === 'signed-out'
+  const otherUser = failed?.reason === 'other-user'
   return (
     <div
       role="alert"
@@ -92,6 +95,10 @@ export function SaveFailedBanner({
         <a href={loginHref} className={secondaryButton}>
           Sign in again
         </a>
+      ) : otherUser ? (
+        <button type="button" className={secondaryButton} onClick={onDownload}>
+          Download a copy
+        </button>
       ) : (
         <>
           <button type="button" className={primaryButton} onClick={onSaveCopy} disabled={copying}>

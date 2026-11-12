@@ -26,7 +26,7 @@
  * through a locked note to what is under it; the Notes tab still selects
  * one to read.
  */
-import type { Author, Canvas, Item, Note, Table } from '@/domain/canvas-schema'
+import type { Canvas, Item, Note, Table } from '@/domain/canvas-schema'
 import { attachTargetAt, detachOutside, isArrowNote, otherEnd, resolvedItems, type ArrowEnd, type AttachTarget } from '@/domain/arrows'
 import {
   boxCenter,
@@ -42,7 +42,7 @@ import {
   type Point,
 } from '@/domain/geometry'
 import { blockDepth, ROW_PITCH_CM, type SeatingBlockOptions } from '@/domain/ceremony'
-import { isTextNote, NOTE_TYPE_NAMES, noteBounds, type NoteColor, type NoteType } from '@/domain/notes'
+import { isTextNote, NOTE_TYPE_NAMES, noteBounds, type NoteAuthor, type NoteColor, type NoteType } from '@/domain/notes'
 import { getPreset, type PresetId } from '@/domain/presets'
 import { handlePoint, type Handle } from '@/domain/resize'
 import { gridStepCm, snapMove } from '@/domain/snapping'
@@ -114,10 +114,9 @@ export type GuestDragEvent = {
 
 /**
  * Why a change was refused when it was not View mode or the page's own gate:
- * the notes layer is hidden or locked, another layer is locked, or nobody
- * has picked Noa or Aiden (a note records its author).
+ * the notes layer is hidden or locked, or another layer is locked.
  */
-export type RefusalReason = 'notesHidden' | 'notesLocked' | 'layerLocked' | 'noAuthor'
+export type RefusalReason = 'notesHidden' | 'notesLocked' | 'layerLocked'
 
 /** What the rest of the editor hears from the controller. All optional. */
 export type EditorEvents = {
@@ -156,8 +155,8 @@ export type ControllerDeps = {
   venueItems?: () => readonly FixedItem[]
   /** Seating guests (../seating/controller.ts). */
   seating: SeatingController
-  /** Who is using this device (the Noa / Aiden switch). New notes record it; with nobody picked they are refused. */
-  author?: () => Author | null
+  /** The signed-in user (name and account id). New notes record it; without it (the share viewer) note tools are refused. */
+  author?: () => NoteAuthor
   /** The wall clock in ms (Date.now), for a new note's createdAt. */
   wallClock?: () => number
 }
@@ -322,7 +321,7 @@ type ActiveDrag =
       id: string
       type: NoteType
       color: NoteColor
-      author: Author
+      author: NoteAuthor
       createdAt: number
       startWorld: Point
       startOn: string | null
@@ -523,7 +522,7 @@ export function createEditorController(deps: ControllerDeps): EditorController {
         const tool = ui.getState().tool
         if (tool.kind !== 'note' || !guardNotes()) return
         const author = currentAuthor()
-        if (!author) return refused('noAuthor')
+        if (!author) return refused()
         const gesture = doc.begin(`Add ${NOTE_TYPE_NAMES[tool.noteType].toLowerCase()}`)
         if (!gesture) return refused()
         const id = deps.newId()
@@ -1030,7 +1029,7 @@ export function createEditorController(deps: ControllerDeps): EditorController {
       if (!guardNotes()) return null
       const author = currentAuthor()
       if (!author) {
-        refused('noAuthor')
+        refused()
         return null
       }
       const base = at ?? viewportCenterWorld()
@@ -1053,7 +1052,7 @@ export function createEditorController(deps: ControllerDeps): EditorController {
       }
       if (!guardNotes()) return false
       if (!currentAuthor()) {
-        refused('noAuthor')
+        refused()
         return false
       }
       if (ui.getState().noteEdit) actions.finishNoteEdit()

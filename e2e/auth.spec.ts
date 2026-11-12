@@ -6,7 +6,7 @@
  */
 import { expect, test } from '@playwright/test'
 import { SESSION_COOKIE, SITE_COOKIE } from '../src/server/auth/tokens'
-import { E2E_USERS, presetAuthor, signIn, signInRequest, sitePassword, userPassword } from './helpers'
+import { E2E_USERS, logOut, signIn, signInRequest, sitePassword, userPassword } from './helpers'
 
 const WRONG = 'That email or password is wrong. Try again.'
 
@@ -131,8 +131,7 @@ test('the session survives a browser restart', async ({ page, context, browser }
 test('log out ends the session, even for a copy of its cookie', async ({ page, context, browser }) => {
   await signIn(page)
   const state = await context.storageState()
-  await page.getByRole('button', { name: 'Log out' }).click()
-  await expect(page).toHaveURL(/\/login/)
+  await logOut(page)
   await page.goto('/')
   await expect(page).toHaveURL(/\/login$/)
   expect((await context.cookies()).some((c) => c.name === SESSION_COOKIE && c.value !== '')).toBe(false)
@@ -170,7 +169,6 @@ test('first-run setup is closed once accounts exist', async ({ page, request }) 
 })
 
 test('a tab left open from before someone else signed in on this browser cannot save under their account', async ({ page, context }, testInfo) => {
-  await presetAuthor(context)
   await signIn(page, 'b')
   await expect(page.getByRole('heading', { name: 'Weddings' })).toBeVisible()
   // Someone else signs in on this browser (this ends B's session); the tab still shows B's page.

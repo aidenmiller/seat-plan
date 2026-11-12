@@ -22,7 +22,6 @@ import {
   canvasTables,
   editorPath,
   expectSaved,
-  presetAuthor,
   signIn,
   tableIds,
   uniqueName,
@@ -68,9 +67,8 @@ async function expectTallItems(page: Page): Promise<void> {
   }
 }
 
-test('right click on a table opens its menu: Fit seats, Lock, Copy, Duplicate, Delete, and each works', async ({ context, page }, testInfo) => {
+test('right click on a table opens its menu: Fit seats, Lock, Copy, Duplicate, Delete, and each works', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'phone', 'Right click; phones use a long press and the More button (below).')
-  await presetAuthor(context, 'Noa')
   const { layout, ids } = await openWithTables(page, testInfo, 'Menu', [{ x: 0, y: 0 }])
   const [id] = ids
   const camera = await settledCamera(page)
@@ -148,8 +146,7 @@ test('right click on a table opens its menu: Fit seats, Lock, Copy, Duplicate, D
   expect(stored).toEqual([copy, pasted].sort())
 })
 
-test('the More button beside a selected table opens the same menu as right click or a long press', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('the More button beside a selected table opens the same menu as right click or a long press', async ({ page }, testInfo) => {
   const { layout, ids } = await openWithTables(page, testInfo, 'More', [{ x: 0, y: 0 }])
   const [id] = ids
   const phone = await isPhoneLayout(page)

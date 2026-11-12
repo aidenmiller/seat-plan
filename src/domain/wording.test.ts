@@ -6,11 +6,14 @@ import {
   copyLayoutName,
   defaultLayoutName,
   editedLine,
+  editorRef,
   formatWeddingDate,
+  isOwnEdit,
   joinAnd,
   layoutDeleteMessage,
   layoutKindLabel,
   loadedChangesMessage,
+  otherUserMessage,
   plural,
   relativeTime,
   weddingCounts,
@@ -141,26 +144,32 @@ describe('delete messages', () => {
 describe('conflict wording', () => {
   const now = at(2026, 11, 9, 18)
   const updatedAt = at(2026, 11, 9, 15, 42).toISOString()
+  const ME = '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a'
+  const DAYNA = '0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d'
 
   it('names the other person', () => {
-    expect(conflictMessage('Aiden', updatedAt, 'Noa', now)).toBe('Aiden changed this layout at 3:42 pm.')
+    expect(conflictMessage({ id: DAYNA, name: 'Dayna' }, updatedAt, ME, now)).toBe('Dayna changed this layout at 3:42 pm.')
   })
 
-  it('says another tab or device when the name is this device’s own', () => {
-    expect(conflictMessage('Noa', updatedAt, 'Noa', now)).toBe(
-      'Noa changed this layout from another tab or device at 3:42 pm.',
+  it('says "You" when the save was the reader’s own account, from another tab or device', () => {
+    expect(conflictMessage({ id: ME, name: 'Noa' }, updatedAt, ME, now)).toBe(
+      'You changed this layout in another tab or on another device at 3:42 pm.',
     )
+  })
+
+  it('tells people apart by account, not by name', () => {
+    // Another account with the reader's own name is someone else.
+    expect(conflictMessage({ id: DAYNA, name: 'Noa' }, updatedAt, ME, now)).toBe('Noa changed this layout at 3:42 pm.')
+    // A save from before accounts has a name and no id: the name shows.
+    expect(conflictMessage({ id: null, name: 'Noa' }, updatedAt, ME, now)).toBe('Noa changed this layout at 3:42 pm.')
+    expect(isOwnEdit({ id: null, name: 'Noa' }, ME)).toBe(false)
+    expect(isOwnEdit({ id: ME, name: 'Noa' }, null)).toBe(false)
   })
 
   it('copes with an unknown author', () => {
-    expect(conflictMessage(null, updatedAt, 'Noa', now)).toBe('Someone changed this layout at 3:42 pm.')
-  })
-
-  it('names anyone, not only Noa and Aiden', () => {
-    expect(conflictMessage('Dayna K.', updatedAt, 'Noa', now)).toBe('Dayna K. changed this layout at 3:42 pm.')
-    expect(conflictMessage('Dayna K.', updatedAt, 'Dayna K.', now)).toBe(
-      'Dayna K. changed this layout from another tab or device at 3:42 pm.',
-    )
+    expect(conflictMessage(null, updatedAt, ME, now)).toBe('Someone changed this layout at 3:42 pm.')
+    expect(editorRef({ editedBy: null, editedById: null })).toBeNull()
+    expect(editorRef({ editedBy: 'Dayna', editedById: DAYNA })).toEqual({ id: DAYNA, name: 'Dayna' })
   })
 
   it('says plainly that Load their version drops the changes here', () => {
@@ -193,10 +202,14 @@ describe('conflict wording', () => {
   })
 
   it('loaded changes notice', () => {
-    expect(loadedChangesMessage('Aiden', 'Noa')).toBe("Loaded Aiden's changes")
-    expect(loadedChangesMessage('Noa', 'Noa')).toBe('Loaded changes from another tab or device')
-    expect(loadedChangesMessage(null, 'Noa')).toBe('Loaded the latest changes')
-    expect(loadedChangesMessage('Dayna K.', 'Noa')).toBe("Loaded Dayna K.'s changes")
+    expect(loadedChangesMessage({ id: DAYNA, name: 'Dayna K.' }, ME)).toBe("Loaded Dayna K.'s changes")
+    expect(loadedChangesMessage({ id: ME, name: 'Noa' }, ME)).toBe('Loaded your changes from another tab or device')
+    expect(loadedChangesMessage({ id: null, name: 'Noa' }, ME)).toBe("Loaded Noa's changes")
+    expect(loadedChangesMessage(null, ME)).toBe('Loaded the latest changes')
     expect(copyLayoutName('Reception', 'Dayna K.')).toBe("Reception (Dayna K.'s copy)")
+  })
+
+  it('names who to sign in as when someone else signed in on this browser', () => {
+    expect(otherUserMessage('Dayna')).toBe('Someone else signed in on this browser. Sign in again as Dayna to save your changes.')
   })
 })

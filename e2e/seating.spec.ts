@@ -21,12 +21,8 @@
  */
 import { expect, test, type Page } from '@playwright/test'
 import { isPhoneLayout, itemLocator, mouseDrag, openProperties, setMode, sheetAtRest, Touch, type Point } from './canvas'
-import { expectSaved, presetAuthor } from './helpers'
+import { expectSaved } from './helpers'
 import { guestRow, openEditor, openGuestsTab, rowCenter, seatCircle, seatOnScreen, serverSeats, setupSeating, tableOnScreen, type SeatingSetup } from './seating'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 const FILLERS = Array.from({ length: 8 }, (_, i) => ({ firstName: `Full${i + 1}`, lastName: 'Guest' }))
 

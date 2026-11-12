@@ -20,12 +20,8 @@ import { generateSeatingBlock } from '../src/domain/ceremony'
 import { chairRowLength } from '../src/domain/geometry'
 import { isPhoneLayout, itemLocator, mouseDrag, openProperties, selectedIds, setMode, settledCamera, sheetAtRest, Touch, commitField, press, type Point } from './canvas'
 import { apiAddGuests } from './guest-list'
-import { apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, expectSaved, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, expectSaved, signIn, uniqueName } from './helpers'
 import { guestRow, openGuestsTab, rowCenter, seatCircle, seatOnScreen } from './seating'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 

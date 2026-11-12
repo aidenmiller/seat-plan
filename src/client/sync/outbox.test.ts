@@ -1,11 +1,13 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Canvas } from '@/domain/canvas-schema'
-import { createDraftStore, draftKey, isDraftSnapshot, onStorageError } from './outbox'
+import { createDraftStore, draftDbName, draftKey, draftStoreFor, isDraftSnapshot, onStorageError } from './outbox'
 import type { DraftSnapshot } from './types'
 
 const L1 = '6f1c2b9e-3d4a-4c5b-8e7f-0a1b2c3d4e5f'
 const L2 = '7a2d3c0f-4e5b-4d6c-9f80-1b2c3d4e5f60'
+const USER = '11111111-1111-4111-8111-111111111111'
+const OTHER = '22222222-2222-4222-8222-222222222222'
 
 function canvasN(n: number): Canvas {
   return {
@@ -20,7 +22,7 @@ function draft(layoutId: string, tabId: string, over: Partial<DraftSnapshot> = {
     tabId,
     baseVersion: 2,
     canvas: canvasN(1),
-    editedBy: 'Aiden',
+    userId: USER,
     inFlight: null,
     dirty: true,
     updatedAt: '2026-11-09T12:00:00.000Z',
@@ -29,8 +31,8 @@ function draft(layoutId: string, tabId: string, over: Partial<DraftSnapshot> = {
 }
 
 let n = 0
-const freshStore = (onError?: (e: unknown, op: string) => void) =>
-  createDraftStore({ dbName: `outbox-test-${++n}`, onError })
+const freshStore = (onError?: (e: unknown, op: string) => void, userId = USER) =>
+  createDraftStore({ userId, dbName: `outbox-test-${++n}`, onError })
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -79,11 +81,45 @@ describe('outbox', () => {
   it('checks the shape of a draft', () => {
     expect(isDraftSnapshot(draft(L1, 'a'))).toBe(true)
     expect(isDraftSnapshot(null)).toBe(false)
-    // Any name is kept, so a draft from someone besides Noa and Aiden still opens.
-    expect(isDraftSnapshot({ ...draft(L1, 'a'), editedBy: 'Dayna K.' })).toBe(true)
-    expect(isDraftSnapshot({ ...draft(L1, 'a'), editedBy: 7 })).toBe(false)
-    expect(isDraftSnapshot({ ...draft(L1, 'a'), editedBy: null })).toBe(false)
+    // Every draft names its user; one from before accounts (an editedBy name, no user) is not a draft until it is moved.
+    const fromBefore: Record<string, unknown> = { ...draft(L1, 'a'), editedBy: 'Noa' }
+    delete fromBefore.userId
+    expect(isDraftSnapshot(fromBefore)).toBe(false)
+    expect(isDraftSnapshot({ ...draft(L1, 'a'), userId: '' })).toBe(false)
+    expect(isDraftSnapshot({ ...draft(L1, 'a'), userId: 7 })).toBe(false)
     expect(isDraftSnapshot({ ...draft(L1, 'a'), inFlight: { saveId: 'x', baseVersion: 1 } })).toBe(false)
+  })
+
+  it('keeps each user’s drafts in their own database', () => {
+    expect(draftDbName(USER)).toBe(`seat-plan-u-${USER}`)
+    expect(draftStoreFor(USER)).toBe(draftStoreFor(USER))
+    expect(draftStoreFor(USER)).not.toBe(draftStoreFor(OTHER))
+    expect(() => createDraftStore({ userId: '' })).toThrow()
+  })
+
+  it('refuses to store a draft of another user, and never hands one out', async () => {
+    const errors: string[] = []
+    const name = `outbox-test-${++n}`
+    const mine = createDraftStore({ userId: USER, dbName: name, onError: (_e, op) => errors.push(op) })
+    expect(await mine.putDraft(draft(L1, 'theirs', { userId: OTHER }))).toBe(false)
+    expect(errors).toEqual(['put'])
+    expect(await mine.listDrafts(L1)).toEqual([])
+    // Even if one got into the database somehow (the same database opened for someone else), it is skipped.
+    const theirs = createDraftStore({ userId: OTHER, dbName: name })
+    expect(await theirs.putDraft(draft(L1, 'theirs', { userId: OTHER }))).toBe(true)
+    expect(await mine.putDraft(draft(L1, 'mine'))).toBe(true)
+    expect((await mine.listDrafts(L1)).map((d) => d.tabId)).toEqual(['mine'])
+    expect(await mine.getDraft(L1, 'theirs')).toBeNull()
+    expect((await theirs.listDrafts(L1)).map((d) => d.tabId)).toEqual(['theirs'])
+  })
+
+  it('opens the user’s own database by default', async () => {
+    const userId = '33333333-3333-4333-8333-33333333333' + String(++n % 10)
+    const store = createDraftStore({ userId })
+    expect(await store.putDraft(draft(L1, 'a', { userId }))).toBe(true)
+    const names = (await indexedDB.databases()).map((d) => d.name)
+    expect(names).toContain(`seat-plan-u-${userId}`)
+    expect(names).not.toContain('seat-plan')
   })
 
   it('swallows and reports errors when IndexedDB is missing', async () => {

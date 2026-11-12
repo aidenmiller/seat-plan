@@ -8,6 +8,9 @@ import { seatLayout } from '@/domain/seats'
 import { defaultLayers } from '../state/device-view'
 import { hitTest, isTableTarget, itemsInBox, selectableIds, unlockedLayers } from './hit-test'
 
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
+
 const G1 = '00000000-0000-4000-8000-000000000001'
 
 function canvasOf(items: Item[]) {
@@ -84,7 +87,7 @@ describe('hit testing', () => {
 
   describe('notes', () => {
     const NOW = Date.UTC(2026, 10, 10)
-    const sticky = makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'n')
+    const sticky = makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 'n')
 
     it('finds notes above the furniture, but not on a hidden notes layer', () => {
       const c = canvasOf([t, sticky])
@@ -97,7 +100,7 @@ describe('hit testing', () => {
     })
 
     it('lets a finger reach further to an arrow or line than to anything else', () => {
-      const line = makeNote('line', { x: 0, y: 1000 }, 'Noa', 'grey', NOW, 'l')
+      const line = makeNote('line', { x: 0, y: 1000 }, NOA, 'grey', NOW, 'l')
       const box = makeItem('box', { x: 0, y: 2000 }, 'b', emptyCanvas())
       const c = canvasOf([line, box])
       const options = { tolerance: 4, lineTolerance: 20 }
@@ -146,8 +149,8 @@ describe('hit testing', () => {
       const chair = chairRowSeatCenters(row)[1]
       const seat = seatLayout(seated)[0]
       // Notes added first: the notes layer still draws, and is hit, above both.
-      const onChair = makeNote('sticky', chair, 'Noa', 'yellow', NOW, 'nc')
-      const onSeat = makeNote('sticky', seat, 'Noa', 'yellow', NOW, 'ns')
+      const onChair = makeNote('sticky', chair, NOA, 'yellow', NOW, 'nc')
+      const onSeat = makeNote('sticky', seat, NOA, 'yellow', NOW, 'ns')
       const c = canvasOf([onChair, onSeat, seated, row])
       const open = defaultLayers()
       expect(hitTest(c, chair, { layers: open })).toMatchObject({ kind: 'item', itemId: 'nc', itemKind: 'note' })
@@ -157,13 +160,13 @@ describe('hit testing', () => {
       expect(hitTest(c, chair, { layers: locked })).toEqual({ kind: 'seat', itemId: 'r', seatIndex: 1, guestId: G1, locked: false, itemKind: 'chairRow' })
       expect(hitTest(c, seat, { layers: locked })).toEqual({ kind: 'seat', itemId: 't', seatIndex: 0, guestId: G1, locked: false })
       // A locked arrow over the row lets the press through too.
-      const arrow = withEnds(makeNote('arrow', { x: 0, y: 0 }, 'Noa', 'blue', NOW, 'a'), { x: -300, y: chair.y }, { x: 300, y: chair.y })
+      const arrow = withEnds(makeNote('arrow', { x: 0, y: 0 }, NOA, 'blue', NOW, 'a'), { x: -300, y: chair.y }, { x: 300, y: chair.y })
       expect(hitTest(canvasOf([row, arrow]), chair, { layers: open })).toMatchObject({ itemId: 'a' })
       expect(hitTest(canvasOf([row, arrow]), chair, { layers: locked })).toMatchObject({ kind: 'seat', itemId: 'r', seatIndex: 1 })
     })
 
     it('hits an attached arrow where it is drawn, not where it was stored', () => {
-      const base = makeNote('arrow', { x: 0, y: 0 }, 'Noa', 'blue', NOW, 'a')
+      const base = makeNote('arrow', { x: 0, y: 0 }, NOA, 'blue', NOW, 'a')
       // Stored running along y = 500; its start holds table t, so it is drawn from t's chairs to (600, 500).
       const arrow = withEnds({ ...base, attachedTo: { start: 't', end: null } }, { x: -600, y: 500 }, { x: 600, y: 500 })
       const c = canvasOf([t, arrow])

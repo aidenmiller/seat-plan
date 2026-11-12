@@ -18,6 +18,10 @@ import {
 import { makeItem } from './presets'
 import { CHAIR_DEPTH_CM } from './seats'
 
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
+const AIDEN = { name: 'Aiden', id: '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b' }
+
 const NOW = new Date(Date.UTC(2026, 10, 10, 9, 30, 0))
 
 /** WCAG relative luminance of #rrggbb. */
@@ -34,7 +38,7 @@ function contrast(a: string, b: string): number {
 describe('makeNote', () => {
   it('makes each type at its default size, centered, by its author, valid for saving', () => {
     for (const type of NOTE_TYPES) {
-      const note = makeNote(type, { x: 300, y: -40 }, 'Aiden', 'pink', NOW, `n-${type}`)
+      const note = makeNote(type, { x: 300, y: -40 }, AIDEN, 'pink', NOW, `n-${type}`)
       expect(noteSchema.safeParse(note).success).toBe(true)
       expect(note).toMatchObject({
         id: `n-${type}`,
@@ -45,21 +49,23 @@ describe('makeNote', () => {
         rotation: 0,
         locked: false,
         color: 'pink',
+        // The signed-in user's display name, and their account id.
         author: 'Aiden',
+        authorId: AIDEN.id,
         done: false,
         createdAt: '2026-11-10T09:30:00.000Z',
         attachedTo: { start: null, end: null },
       })
     }
-    expect(makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'a')).toMatchObject({ width: 120, height: 120, text: '' })
-    expect(makeNote('text', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'a')).toMatchObject({ width: 200, height: 50, text: 'Text' })
-    expect(makeNote('box', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'a')).toMatchObject({ width: 200, height: 150 })
-    expect(makeNote('circle', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'a')).toMatchObject({ width: 150, height: 150 })
+    expect(makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 'a')).toMatchObject({ width: 120, height: 120, text: '' })
+    expect(makeNote('text', { x: 0, y: 0 }, NOA, 'yellow', NOW, 'a')).toMatchObject({ width: 200, height: 50, text: 'Text' })
+    expect(makeNote('box', { x: 0, y: 0 }, NOA, 'yellow', NOW, 'a')).toMatchObject({ width: 200, height: 150 })
+    expect(makeNote('circle', { x: 0, y: 0 }, NOA, 'yellow', NOW, 'a')).toMatchObject({ width: 150, height: 150 })
   })
 
   it('runs arrows and lines 200 cm from left to right through the point', () => {
     for (const type of ['arrow', 'line'] as const) {
-      const note = makeNote(type, { x: 50, y: 20 }, 'Noa', 'grey', NOW.getTime(), 'a')
+      const note = makeNote(type, { x: 50, y: 20 }, NOA, 'grey', NOW.getTime(), 'a')
       expect(storedEnds(note)).toEqual({ start: { x: -50, y: 20 }, end: { x: 150, y: 20 } })
       expect(note.width).toBe(NOTE_SIZES[type].width)
       expect(note.height).toBeGreaterThan(0)
@@ -67,8 +73,8 @@ describe('makeNote', () => {
   })
 
   it('takes a time as a number too, and survives a bad one', () => {
-    expect(makeNote('box', { x: 0, y: 0 }, 'Noa', 'grey', 0, 'a').createdAt).toBe('1970-01-01T00:00:00.000Z')
-    expect(makeNote('box', { x: 0, y: 0 }, 'Noa', 'grey', Number.NaN, 'a').createdAt).toBe('1970-01-01T00:00:00.000Z')
+    expect(makeNote('box', { x: 0, y: 0 }, NOA, 'grey', 0, 'a').createdAt).toBe('1970-01-01T00:00:00.000Z')
+    expect(makeNote('box', { x: 0, y: 0 }, NOA, 'grey', Number.NaN, 'a').createdAt).toBe('1970-01-01T00:00:00.000Z')
   })
 
   it('knows which notes hold text on the plan', () => {
@@ -120,9 +126,9 @@ describe('textPreview', () => {
 
 describe('listNotes', () => {
   const table = makeItem('round', { x: 0, y: 0 }, 't', emptyCanvas())
-  const sticky = { ...makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 's'), text: 'Uncle Bob\nnot near the bar' }
-  const arrow = makeNote('arrow', { x: 0, y: 0 }, 'Aiden', 'blue', NOW, 'a')
-  const done = { ...makeNote('box', { x: 0, y: 0 }, 'Aiden', 'green', NOW, 'b'), done: true, locked: true }
+  const sticky = { ...makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 's'), text: 'Uncle Bob\nnot near the bar' }
+  const arrow = makeNote('arrow', { x: 0, y: 0 }, AIDEN, 'blue', NOW, 'a')
+  const done = { ...makeNote('box', { x: 0, y: 0 }, AIDEN, 'green', NOW, 'b'), done: true, locked: true }
 
   it('lists notes in drawing order, with a preview and a title', () => {
     const list = listNotes({ items: [sticky, table, arrow, done] })
@@ -144,7 +150,7 @@ describe('listNotes', () => {
 
 describe('noteBounds', () => {
   it('boxes a turned note by its body', () => {
-    const sticky: Note = { ...makeNote('sticky', { x: 100, y: 100 }, 'Noa', 'yellow', NOW, 's'), rotation: 45 }
+    const sticky: Note = { ...makeNote('sticky', { x: 100, y: 100 }, NOA, 'yellow', NOW, 's'), rotation: 45 }
     expect(noteBounds(sticky, { items: [sticky] })).toEqual(itemBox(sticky))
     const half = 60 * Math.SQRT2
     expect(noteBounds(sticky, { items: [sticky] }).maxX).toBeCloseTo(100 + half, 6)
@@ -152,7 +158,7 @@ describe('noteBounds', () => {
 
   it('boxes an attached arrow by its drawn ends', () => {
     const table = makeItem('round', { x: 0, y: 0 }, 't', emptyCanvas()) as Table
-    const base = makeNote('arrow', { x: 0, y: 0 }, 'Noa', 'blue', NOW, 'a')
+    const base = makeNote('arrow', { x: 0, y: 0 }, NOA, 'blue', NOW, 'a')
     const arrow = withEnds({ ...base, attachedTo: { start: 't', end: null } }, { x: 0, y: 0 }, { x: 600, y: 0 })
     const items: Item[] = [table, arrow]
     const box = noteBounds(arrow, { items })

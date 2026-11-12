@@ -9,11 +9,11 @@
  */
 import { expect, test, type Route } from '@playwright/test'
 import {
+  E2E_USERS,
   addRoundTable,
   apiCreateWedding,
   canvasTables,
   expectSaved,
-  presetAuthor,
   saveStatus,
   signIn,
   uniqueName,
@@ -22,10 +22,6 @@ import {
 import type { WeddingSummary } from '../src/shared/api'
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 test('create a wedding, rename it in place, open it and change its settings', async ({ page }, testInfo) => {
   await signIn(page)
@@ -202,7 +198,7 @@ test('layouts: blank and Toronto Beach Club, rename, duplicate, open, add a tabl
   const beach = page.locator(`[data-layout-id="${beachId}"]`)
   await expect(blank.getByTestId('layout-name')).toHaveText('Blank plan')
   await expect(blank).toContainText('Reception · Blank canvas')
-  await expect(blank.getByTestId('layout-edited')).toHaveText('Edited just now by Noa')
+  await expect(blank.getByTestId('layout-edited')).toHaveText(`Edited just now by ${E2E_USERS.a.displayName}`)
   await expect(blank.getByTestId('layout-thumbnail')).toBeVisible()
   await expect(beach.getByTestId('layout-name')).toHaveText('Beach plan')
   await expect(beach).toContainText('Reception · Toronto Beach Club')
@@ -237,7 +233,7 @@ test('layouts: blank and Toronto Beach Club, rename, duplicate, open, add a tabl
   const copy = cards.filter({ has: page.getByTestId('layout-name').getByText('Beach plan copy', { exact: true }) })
   await expect(copy).toHaveCount(1)
   await expect(copy).toContainText('Reception · Toronto Beach Club')
-  await expect(copy.getByTestId('layout-edited')).toHaveText('Edited just now by Noa')
+  await expect(copy.getByTestId('layout-edited')).toHaveText(`Edited just now by ${E2E_USERS.a.displayName}`)
 
   // Open the editor, add a table, see it saved, reload and see it again.
   await blank.getByRole('link', { name: 'Open Plan A' }).click()
@@ -258,6 +254,6 @@ test('layouts: blank and Toronto Beach Club, rename, duplicate, open, add a tabl
   // The list shows the save, and the other layouts are as they were.
   await page.getByRole('link', { name: 'Back to layouts' }).click()
   await expect(cards).toHaveCount(3)
-  await expect(blank.getByTestId('layout-edited')).toHaveText('Edited just now by Noa')
+  await expect(blank.getByTestId('layout-edited')).toHaveText(`Edited just now by ${E2E_USERS.a.displayName}`)
   await expect(beach.getByTestId('layout-name')).toHaveText('Beach plan')
 })

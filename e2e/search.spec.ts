@@ -12,12 +12,8 @@
  */
 import { expect, test, type Page } from '@playwright/test'
 import { editorMode, isPhoneLayout, itemLocator, setMode, settledCamera, Touch, viewport } from './canvas'
-import { presetAuthor } from './helpers'
+import {  } from './helpers'
 import { detailLevel, drawn, guestRow, openEditor, openGuestsTab, seatOnScreen, setupSeating } from './seating'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 /** The seat's center lies in the part of the canvas nothing covers, near its middle. */
 async function expectSeatInView(page: Page, tableId: string, seatIndex: number): Promise<void> {

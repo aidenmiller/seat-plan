@@ -4,6 +4,7 @@ import { json, notFound, readBody, refuseUnstorableText, type IdContext } from '
 import { withVenueAccess } from '@/server/auth/guards'
 import { byTemplateId } from '@/server/auth/resolvers'
 import { getDb } from '@/server/db/client'
+import { editorOf } from '@/server/editor-name'
 import { duplicateTemplate } from '@/server/repo/venues'
 
 /**
@@ -11,10 +12,10 @@ import { duplicateTemplate } from '@/server/repo/venues'
  * image. Anyone who may read the template may copy it; the copy is the
  * caller's own and private, whatever the original was.
  */
-export const POST = withVenueAccess('read', byTemplateId, async (req: NextRequest, _ctx: IdContext, { templateId, viewer }) => {
+export const POST = withVenueAccess('read', byTemplateId, async (req: NextRequest, _ctx: IdContext, { user, templateId, viewer }) => {
   const body = await readBody(req, duplicateVenueBody)
   if (!body.ok) return body.response
-  const write = await refuseUnstorableText(() => duplicateTemplate(getDb(), templateId, body.data, viewer))
+  const write = await refuseUnstorableText(() => duplicateTemplate(getDb(), templateId, body.data, viewer, editorOf(user)))
   if (!write.ok) return write.response
   const result = write.value
   switch (result.status) {

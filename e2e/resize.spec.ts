@@ -40,7 +40,6 @@ import {
   canvasTables,
   editorPath,
   expectSaved,
-  presetAuthor,
   signIn,
   tableIds,
   uniqueName,
@@ -65,8 +64,7 @@ async function storedTable(page: Page, layoutId: string, id: string) {
   return item
 }
 
-test('a rectangle stretched by its end handle to 24 ft fits 12 seats on each long side, and 12 in all on one side', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('a rectangle stretched by its end handle to 24 ft fits 12 seats on each long side, and 12 in all on one side', async ({ page }, testInfo) => {
   const { layout } = await openBlankLayout(page, testInfo, 'Stretch')
   await addPreset(page, 'Add rectangle table')
   await expect(canvasTables(page)).toHaveCount(1)
@@ -119,8 +117,7 @@ test('a rectangle stretched by its end handle to 24 ft fits 12 seats on each lon
   expect(stored).toMatchObject({ seatCount: 12, seatSides: 'oneSide' })
 })
 
-test('a round table shrunk to 36 in by a corner handle, with 2 seats, is a sweetheart table', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('a round table shrunk to 36 in by a corner handle, with 2 seats, is a sweetheart table', async ({ page }, testInfo) => {
   const { layout } = await openBlankLayout(page, testInfo, 'Sweetheart')
   await addRoundTable(page)
   const [id] = await tableIds(page)
@@ -170,9 +167,8 @@ test('a round table shrunk to 36 in by a corner handle, with 2 seats, is a sweet
   expect(stored).toMatchObject({ shape: 'round', seatCount: 2 })
 })
 
-test('Shift+drag on a round table resizes it about its center; Shift+click still changes the selection', async ({ context, page }, testInfo) => {
+test('Shift+drag on a round table resizes it about its center; Shift+click still changes the selection', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'phone', 'Phones have no Shift key; the Select switch test covers taps.')
-  await presetAuthor(context, 'Noa')
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Shift drag', testInfo))
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })
@@ -227,9 +223,8 @@ test('Shift+drag on a round table resizes it about its center; Shift+click still
   expect(stored.width).toBeCloseTo(shrunk.width, 6)
 })
 
-test('on a phone, the Select switch makes taps add to and take from the selection', async ({ context, page }, testInfo) => {
+test('on a phone, the Select switch makes taps add to and take from the selection', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'phone', 'Phone toolbar.')
-  await presetAuthor(context, 'Noa')
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Select taps', testInfo))
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })

@@ -20,13 +20,9 @@
 import { expect, test } from '@playwright/test'
 import { makeCcittScanPdf, makeRoomPdf, PAGE_PT, PT_PER_M, ROOM } from '../src/domain/floorplan/__fixtures__/plans'
 import type { FixedItem } from '../src/domain/venue-schema'
-import { presetAuthor, signIn, uniqueName } from './helpers'
+import { signIn, uniqueName } from './helpers'
 import { standInCallsFor, type SeenSegment } from './stand-in-anthropic'
 import { apiCreateVenue, apiGetVenue, expectTemplateSaved, fixedOnCanvas, openTemplateEditor, startImport, templateStatus } from './venues'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 type Wall = Extract<FixedItem, { type: 'wall' }>
 

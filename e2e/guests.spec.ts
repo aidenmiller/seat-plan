@@ -32,13 +32,9 @@ import {
   shownNames,
   waitForGuestList,
 } from './guest-list'
-import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, signIn, uniqueName } from './helpers'
 
 type TextField = 'firstName' | 'lastName' | 'nickname' | 'meal'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 /** Opens a guest's text field for editing and returns its input. */
 async function openField(page: Page, guestId: string, field: TextField): Promise<Locator> {

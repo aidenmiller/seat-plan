@@ -129,17 +129,18 @@ describe('/api/venues', () => {
     const body = { baseVersion: 1, saveId, editedBy: 'Aiden', fixedItems: items, reference }
     const saved = await call(r.one, 'PUT', { id }, { body })
     expect(saved.status).toBe(200)
-    expect(saved.body as SaveVenueOk).toEqual({ status: 'saved', version: 2, updatedAt: expect.any(String), editedBy: 'Aiden', editedById: null })
+    // The body's editedBy (a tab open from before accounts) is ignored: the editor is the signed-in user.
+    expect(saved.body as SaveVenueOk).toEqual({ status: 'saved', version: 2, updatedAt: expect.any(String), editedBy: 'Pat', editedById: me })
     expect((await call(r.one, 'PUT', { id }, { body })).body).toMatchObject({ status: 'already-saved', version: 2 })
     const stale = await call(r.one, 'PUT', { id }, { body: { ...body, saveId: randomUUID(), editedBy: 'Noa' } })
     expect(stale.status).toBe(409)
     expect(stale.body as SaveVenueConflict).toEqual({
       error: 'conflict',
-      message: 'Aiden saved this venue after you opened it. Load their version to go on.',
+      message: 'Pat saved this venue after you opened it. Load their version to go on.',
       version: 2,
       updatedAt: (saved.body as SaveVenueOk).updatedAt,
-      editedBy: 'Aiden',
-      editedById: null,
+      editedBy: 'Pat',
+      editedById: me,
       lastSaveId: saveId,
     })
     // Fixed items are checked with the fixed item schema.
@@ -292,7 +293,7 @@ describe('/api/venues', () => {
     expect(list.undoImportRevisionId).toBe(list.revisions[1]!.id)
 
     const undo = await call(r.restore, 'POST', { id, revisionId: list.undoImportRevisionId! }, { body: { baseVersion: 2, saveId: randomUUID(), editedBy: 'Aiden' } })
-    expect(undo).toMatchObject({ status: 200, body: { status: 'saved', version: 3, editedBy: 'Aiden' } })
+    expect(undo).toMatchObject({ status: 200, body: { status: 'saved', version: 3, editedBy: 'Pat', editedById: me } })
     expect((await call(r.one, 'GET', { id })).body).toMatchObject({ version: 3, fixedItems: [], reference: null, referenceImage: null, importedBy: 'hand' })
     // The image is still served, so the import can be redone.
     expect((await send(r.image, 'GET', { id, imageId: image.id })).status).toBe(200)

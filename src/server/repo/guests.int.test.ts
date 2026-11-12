@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto'
 import { and, eq, inArray } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
+import { makeUser } from '../../../test/auth'
 import { makeTestDb } from '../../../test/db'
 import { guests, layoutSeats, layouts, weddings } from '../db/schema'
 import { commitImport } from './guest-import'
@@ -25,6 +26,9 @@ import {
 } from './test-fixtures'
 
 const { pool, db } = makeTestDb()
+/** The signed-in user the saves in this file are made by, made on first use. */
+let aiden: ReturnType<typeof makeUser> | null = null
+const editor = () => (aiden ??= makeUser(db, { displayName: 'Aiden' }))
 afterAll(async () => {
   await pool.end()
 })
@@ -42,7 +46,7 @@ async function link(a: string, b: string) {
 async function save(layoutId: string, baseVersion: number, canvas: ReturnType<typeof canvasOf>) {
   // The wedding a route's guard resolves from the layout.
   const { weddingId } = await layoutRow(db, layoutId)
-  return saveLayout(db, weddingId, layoutId, { baseVersion, saveId: randomUUID(), editedBy: 'Aiden', tabId: 'tab', canvas })
+  return saveLayout(db, weddingId, layoutId, { baseVersion, saveId: randomUUID(), tabId: 'tab', canvas }, { userId: (await editor()).id, name: 'Aiden' })
 }
 
 describe('removeGuests', () => {

@@ -50,7 +50,9 @@ function tooManyAttempts(retryAfterSeconds: number): Response {
  * second: 401 { error: 'wrong_credentials' }.
  *
  * On success the session this browser held before, if any, ends (whoever's it
- * was), and a new one starts with a new cookie.
+ * was), and a new one starts with a new cookie. The reply names the user's
+ * id, which the sign-in form tells this browser's other tabs, so a tab of
+ * someone else stops saving (src/client/auth-channel.ts).
  */
 export const POST = publicRoute('Signing in: open to anyone signed out', async (req: NextRequest) => {
   const body = await readBody(req, loginBody)
@@ -80,7 +82,7 @@ export const POST = publicRoute('Signing in: open to anyone signed out', async (
   if (previous) await endSession(db, previous.sessionId, previous.id)
 
   const session = await createSession(db, candidate.id, { userAgent: req.headers.get('user-agent') })
-  const res = json({ ok: true, redirect: safeNextPath(body.data.next) })
+  const res = json({ ok: true, redirect: safeNextPath(body.data.next), userId: candidate.id })
   setSessionCookie(res, req, session.cookieValue, session.expiresAt)
   clearLegacySiteCookie(res, req)
   await recordEvent(db, { kind: 'login', userId: candidate.id })

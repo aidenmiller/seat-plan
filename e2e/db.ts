@@ -66,6 +66,36 @@ export async function dbCreateUser(
   }
 }
 
+/** Runs one statement against the end-to-end database. */
+async function dbRun(text: string, values: unknown[]): Promise<number> {
+  const url = process.env.E2E_DATABASE_URL
+  if (!url) throw new Error('E2E_DATABASE_URL is not set; run through playwright.config.ts')
+  assertLocalDatabase(url)
+  const client = new pg.Client({ connectionString: url })
+  await client.connect()
+  try {
+    return (await client.query(text, values)).rowCount ?? 0
+  } finally {
+    await client.end()
+  }
+}
+
+/** Makes the account with this email a member of the wedding (an editor unless told otherwise). */
+export async function dbAddMember(weddingId: string, email: string, role: 'owner' | 'editor' = 'editor'): Promise<void> {
+  const added = await dbRun(
+    `insert into wedding_members (wedding_id, user_id, role)
+     select $1, id, $3 from users where email = $2
+     on conflict (wedding_id, user_id) do update set role = excluded.role`,
+    [weddingId, normalizeEmail(email), role],
+  )
+  if (added !== 1) throw new Error(`dbAddMember: no account ${email}`)
+}
+
+/** Ends every session of the account with this email, as when its sessions run out: its cookies stop working. */
+export async function dbEndSessions(email: string): Promise<void> {
+  await dbRun('delete from sessions where user_id = (select id from users where email = $1)', [normalizeEmail(email)])
+}
+
 /**
  * Marks a venue template deleted while layouts still use it, as restoring a
  * wedding from the database can leave things (DECISIONS 29). The app itself

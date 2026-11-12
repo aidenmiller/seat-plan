@@ -10,13 +10,9 @@ import { expect, test } from '@playwright/test'
 import Papa from 'papaparse'
 import { isPhoneLayout, press, setMode } from './canvas'
 import { apiListGuests, csvTextLines, download, expectHydrated, guestEntry, guestsPath, narrowScreen, waitForGuestList } from './guest-list'
-import { apiCreateLayout, editorPath, expectSaved, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiCreateLayout, editorPath, expectSaved, signIn, uniqueName } from './helpers'
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 test("a wedding for Sam and Alex shows its own names on every side, in the import, the export and the ceremony", async ({ page }, testInfo) => {
   test.setTimeout(90_000)

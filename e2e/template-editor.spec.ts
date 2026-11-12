@@ -16,7 +16,7 @@ import { randomUUID } from 'node:crypto'
 import { addRoundTable } from '../src/domain/round-table'
 import type { Table } from '../src/domain/canvas-schema'
 import { mouseDrag, Touch, type Point } from './canvas'
-import { apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, canvasTables, editorPath, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, canvasTables, editorPath, signIn, uniqueName } from './helpers'
 import {
   apiCreateVenue,
   apiGetVenue,
@@ -36,10 +36,6 @@ import {
 } from './venues'
 
 const FOOT = 30.48
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 const dist = (a: Point, b: Point) => Math.hypot(b.x - a.x, b.y - a.y)
 

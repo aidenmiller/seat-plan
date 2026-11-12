@@ -21,6 +21,7 @@ import { agreeingLabelsButton, measuredCm, scaleProblemText, takeAgreeingLabels,
 import { fixedItemLabel, type TemplateDoc } from '@/domain/template-commands'
 import { formatLength, parseLength, type LengthUnit } from '@/domain/units'
 import { acceptOverText } from '@/domain/venue-wording'
+import type { EditorRef } from '@/domain/wording'
 import type { VenueImageInfo } from '@/shared/api'
 import { errorClass, inputClass, labelClass, primaryButton, secondaryButton } from '@/client/ui/styles'
 import { Section, smallButton } from '@/client/editor/panels/controls'
@@ -49,7 +50,7 @@ export type DraftState = {
   /** The same id for every try of one Accept. */
   saveId: string
   /** Someone saved the venue after this tab opened it: Accept asks, then goes over their save. */
-  over: { who: string | null } | null
+  over: { who: EditorRef | null } | null
 }
 
 export type DraftPanelProps = {
@@ -57,6 +58,8 @@ export type DraftPanelProps = {
   unit: LengthUnit
   busy: boolean
   error: string | null
+  /** The signed-in user's id: a save of theirs from another tab reads "You changed this venue…". */
+  meId: string | null
   onChange(next: DraftState): void
   /**
    * Draws the draft again at this scale (cm per image pixel) and then applies
@@ -74,7 +77,7 @@ function sourceText(plan: ImportPlan): string {
   return plan.kind === 'vector' ? `From PDF page ${plan.page}, using its own lines.` : `From PDF page ${plan.page}, a scanned page.`
 }
 
-export function DraftPanel({ draft, unit, busy, error, onChange, onRescale, onAccept, onRerun, onDiscard }: DraftPanelProps) {
+export function DraftPanel({ draft, unit, busy, error, meId, onChange, onRescale, onAccept, onRerun, onDiscard }: DraftPanelProps) {
   const editor = useTemplateEditor()
   const measure = useTemplateUi((s) => s.measure)
   const cmPerPx = useTemplateDoc((d) => d.reference?.scaleCmPerPx ?? draft.scale.cmPerPx)
@@ -265,7 +268,7 @@ export function DraftPanel({ draft, unit, busy, error, onChange, onRescale, onAc
         )}
         {draft.over && (
           <p role="alert" className="text-sm font-medium text-amber-900" data-testid="draft-over">
-            {acceptOverText(draft.over.who)}
+            {acceptOverText(draft.over.who, meId)}
           </p>
         )}
         {!draft.scaleSet && <p className="text-sm text-stone-600">Set the scale to accept the draft.</p>}

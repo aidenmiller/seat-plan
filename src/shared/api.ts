@@ -4,9 +4,14 @@
  * this file, so a change here shows up as a type error on both.
  *
  * Dates travel as ISO strings. Lengths are centimeters.
+ *
+ * No body names who made a change: the server takes the editor from the
+ * session (the signed-in user). Bodies are z.object, which drops keys it does
+ * not know, so a tab left open from before still sends `editedBy` and is
+ * read as if it had not.
  */
 import { z } from 'zod'
-import { authors, canvasSchema, wellFormedText, type Canvas } from '@/domain/canvas-schema'
+import { canvasSchema, wellFormedText, type Canvas } from '@/domain/canvas-schema'
 import { cleanNotes, cleanOneLine } from '@/domain/csv/columns'
 import type { ImportPlan } from '@/domain/csv/import-diff'
 import { HEX_COLOR_RE } from '@/domain/group-colors'
@@ -17,7 +22,6 @@ import { fixedItemsSchema, importedByValues, referenceMetaSchema, type FixedItem
 export const uuid = z.uuid()
 /** Cleaned like the canvas text (no NUL, no lone surrogates), then trimmed. */
 const name = z.string().overwrite(wellFormedText).trim().min(1, 'Names cannot be empty').max(200)
-const author = z.enum(authors)
 
 // ---------- Weddings ----------
 
@@ -126,7 +130,6 @@ export const createLayoutBody = z.object({
   name,
   kind: z.enum(['reception', 'ceremony']),
   venueTemplateId: uuid.nullable(),
-  editedBy: author,
 })
 export type CreateLayoutBody = z.infer<typeof createLayoutBody>
 
@@ -140,7 +143,6 @@ export const saveLayoutBody = z.object({
   baseVersion: z.int().min(1),
   /** The same id on every retry of the same snapshot. */
   saveId: uuid,
-  editedBy: author,
   tabId: z.string().min(1).max(64),
   canvas: canvasSchema,
 })
@@ -195,7 +197,6 @@ export const duplicateLayoutBody = z.object({
   id: uuid.optional(),
   name: name.optional(),
   canvas: canvasSchema.optional(),
-  editedBy: author,
 })
 export type DuplicateLayoutBody = z.infer<typeof duplicateLayoutBody>
 
@@ -288,7 +289,7 @@ export type VenueDetail = {
 }
 
 /** POST /api/venues. 201 VenueDetail. A retry with the same id gives the same template back. */
-export const createVenueBody = z.object({ id: uuid.optional(), name, editedBy: author.optional() })
+export const createVenueBody = z.object({ id: uuid.optional(), name })
 export type CreateVenueBody = z.infer<typeof createVenueBody>
 
 /** PATCH /api/venues/:id: rename only. The version stays as it is. */
@@ -296,14 +297,13 @@ export const renameVenueBody = z.object({ name })
 export type RenameVenueBody = z.infer<typeof renameVenueBody>
 
 /** POST /api/venues/:id/duplicate. 201 VenueDetail. The default name is "<name> copy". */
-export const duplicateVenueBody = z.object({ id: uuid.optional(), name: name.optional(), editedBy: author.optional() })
+export const duplicateVenueBody = z.object({ id: uuid.optional(), name: name.optional() })
 export type DuplicateVenueBody = z.infer<typeof duplicateVenueBody>
 
 const venueSaveFields = {
   baseVersion: z.int().min(1),
   /** The same id on every retry of the same save. */
   saveId: uuid,
-  editedBy: author,
 }
 
 /** PUT /api/venues/:id: the template editor's save. */

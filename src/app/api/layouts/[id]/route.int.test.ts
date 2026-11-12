@@ -131,7 +131,8 @@ describe('/api/layouts/[id]', () => {
     const saved = await call(one, 'PUT', id, body)
     expect(saved.status).toBe(200)
     const ok = saved.body as SaveLayoutOk
-    expect(ok).toMatchObject({ status: 'saved', version: 2, editedBy: 'Aiden' })
+    // The body's editedBy (a tab open from before accounts) is ignored: the editor is the signed-in user.
+    expect(ok).toMatchObject({ status: 'saved', version: 2, editedBy: 'Pat', editedById: me })
     expect(ok.droppedSeats).toEqual([{ itemId: 't1', seatIndex: 1, guestId: ben, reason: 'removed-guest' }])
     expect(Object.keys(ok).sort()).toEqual(['droppedSeats', 'editedBy', 'editedById', 'status', 'updatedAt', 'version'])
 
@@ -147,8 +148,8 @@ describe('/api/layouts/[id]', () => {
       error: 'conflict',
       version: 2,
       updatedAt: ok.updatedAt,
-      editedBy: 'Aiden',
-      editedById: null,
+      editedBy: 'Pat',
+      editedById: me,
       lastSaveId: saveId,
       recentSaveIds: [saveId],
     })
@@ -167,8 +168,8 @@ describe('/api/layouts/[id]', () => {
     expect((await call(version, 'GET', id)).body).toEqual({
       version: 2,
       updatedAt: ok.updatedAt,
-      editedBy: 'Aiden',
-      editedById: null,
+      editedBy: 'Pat',
+      editedById: me,
       lastSaveId: saveId,
       recentSaveIds: [saveId],
     })
@@ -181,7 +182,7 @@ describe('/api/layouts/[id]', () => {
     // Duplicate keeps the seats.
     const copy = await call(duplicate, 'POST', id, { editedBy: 'Noa' })
     expect(copy.status).toBe(201)
-    expect(copy.body).toMatchObject({ name: 'Plan B copy', version: 1, editedBy: 'Noa' })
+    expect(copy.body).toMatchObject({ name: 'Plan B copy', version: 1, editedBy: 'Pat', editedById: me })
     expect(copy.body.canvas.items[0].seats.map((s: { guestId: string | null }) => s.guestId)).toEqual([ann, null])
 
     expect((await call(summary, 'GET', id)).body).toEqual({
@@ -336,14 +337,14 @@ describe('recent save ids', () => {
 
     // The first save's reply was lost; its retry must not claim version 3.
     const retry = await call(one, 'PUT', id, first)
-    expect(retry).toMatchObject({ status: 200, body: { status: 'already-saved', version: 2, editedBy: 'Noa' } })
+    expect(retry).toMatchObject({ status: 200, body: { status: 'already-saved', version: 2, editedBy: 'Pat', editedById: me } })
     // So the tab's next save starts from 2 and meets Aiden's save as a conflict.
     const next = await call(one, 'PUT', id, saveBody(2, [table('t3', 3, [null])]))
     expect(next.status).toBe(409)
     expect((next.body as SaveLayoutConflict).recentSaveIds).toEqual([second.saveId, first.saveId])
 
     const info = (await call(version, 'GET', id)).body as LayoutVersionInfo
-    expect(info).toMatchObject({ version: 3, editedBy: 'Aiden', lastSaveId: second.saveId })
+    expect(info).toMatchObject({ version: 3, editedBy: 'Pat', editedById: me, lastSaveId: second.saveId })
     expect(info.recentSaveIds).toEqual([second.saveId, first.saveId])
     const detail = (await call(one, 'GET', id)).body as LayoutDetail
     expect(detail.recentSaveIds).toEqual([second.saveId, first.saveId])

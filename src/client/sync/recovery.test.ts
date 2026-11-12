@@ -17,13 +17,15 @@ function canvasN(n: number): Canvas {
   }
 }
 
+const USER = '11111111-1111-4111-8111-111111111111'
+
 function draft(over: Partial<DraftSnapshot> = {}): DraftSnapshot {
   return {
     layoutId: LAYOUT,
     tabId: 'tab-1',
     baseVersion: 5,
     canvas: canvasN(1),
-    editedBy: 'Noa',
+    userId: USER,
     inFlight: null,
     dirty: true,
     updatedAt: '2026-11-09T12:00:00.000Z',
@@ -179,7 +181,7 @@ describe('pickRecovery', () => {
 
 describe('findOrphanDrafts', () => {
   it('returns drafts whose tab lock is free, plus this tab’s own from before a reload', async () => {
-    const store = createDraftStore({ dbName: 'recovery-orphans' })
+    const store = createDraftStore({ userId: USER, dbName: 'recovery-orphans' })
     await store.putDraft(draft({ tabId: 'open', updatedAt: '2026-11-09T12:00:01.000Z' }))
     await store.putDraft(draft({ tabId: 'closed', updatedAt: '2026-11-09T12:00:02.000Z' }))
     await store.putDraft(draft({ tabId: 'me', updatedAt: '2026-11-09T12:00:03.000Z' }))
@@ -191,7 +193,7 @@ describe('findOrphanDrafts', () => {
   })
 
   it('recovers a stored in-flight save that landed', async () => {
-    const store = createDraftStore({ dbName: 'recovery-roundtrip' })
+    const store = createDraftStore({ userId: USER, dbName: 'recovery-roundtrip' })
     const c = canvasN(4)
     await store.putDraft(draft({ tabId: 'gone', canvas: c, inFlight: { saveId: SAVE_A, baseVersion: 5, canvas: c } }))
     const [stored] = await findOrphanDrafts(LAYOUT, { drafts: store, isTabAlive: async () => false })

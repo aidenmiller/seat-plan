@@ -151,12 +151,12 @@ async function makeWorld(): Promise<World> {
   }
 
   const templateName = `Secret hall ${tag}`
-  const made = await createTemplate(db, { name: templateName }, { userId: userA.id, isAdmin: false })
+  const made = await createTemplate(db, { name: templateName }, { userId: userA.id, isAdmin: false }, { userId: userA.id, name: 'Ada' })
   if (made.status !== 'created') throw new Error(made.status)
   const template = made.venue.id
   const image = await addTemplateImage(db, template, PNG)
   if (image.status !== 'created') throw new Error(image.status)
-  const bMade = await createTemplate(db, { name: `Bo hall ${tag}` }, { userId: userB.id, isAdmin: false })
+  const bMade = await createTemplate(db, { name: `Bo hall ${tag}` }, { userId: userB.id, isAdmin: false }, { userId: userB.id, name: 'Bo' })
   if (bMade.status !== 'created') throw new Error(bMade.status)
 
   const layoutName = `Secret layout ${tag}`

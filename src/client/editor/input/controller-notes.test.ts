@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { emptyCanvas, type Author, type Canvas, type ChairRow, type Item, type Note, type Table } from '@/domain/canvas-schema'
+import { emptyCanvas, type Canvas, type ChairRow, type Item, type Note, type Table } from '@/domain/canvas-schema'
 import { resolveArrow, storedEnds, withEnds } from '@/domain/arrows'
 import { distance } from '@/domain/geometry'
-import { makeNote } from '@/domain/notes'
+import { makeNote, type NoteAuthor } from '@/domain/notes'
 import { makeItem } from '@/domain/presets'
 import { chairRowSeatCenters } from '@/domain/seating'
 import { seatLayout } from '@/domain/seats'
@@ -14,6 +14,10 @@ import type { StorageLike } from '../state/device-view'
 import type { Target } from './hit-test'
 import type { KeyLike } from './keyboard'
 import type { PointerKind } from './pointer-machine'
+
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
+const AIDEN = { name: 'Aiden', id: '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b' }
 
 const FT = 30.48
 const NOW = Date.UTC(2026, 10, 10, 20, 15, 0)
@@ -42,7 +46,8 @@ function fakeTargets(): CameraTargets {
 type Options = {
   items?: Item[]
   mode?: 'edit' | 'view'
-  author?: Author | null
+  /** The signed-in user; null: none given (as in the share viewer). Default AIDEN. */
+  author?: NoteAuthor | null
   events?: EditorEvents
 }
 
@@ -63,7 +68,7 @@ function harness(options: Options = {}) {
     scheduler: manualScheduler(),
     traits: () => ({ width: 1440, touchOnly: false, phone: false }),
     clipboard: createClipboard({ memory, now: () => time }),
-    author: () => (options.author === undefined ? 'Aiden' : options.author),
+    author: options.author === null ? undefined : () => options.author ?? AIDEN,
     wallClock: () => NOW,
     now: () => time,
     setTimer: () => undefined,
@@ -117,9 +122,9 @@ function harness(options: Options = {}) {
 }
 
 const round = (id: string, x = 0, y = 0): Table => makeItem('round', { x, y }, id, emptyCanvas()) as Table
-const sticky = (id: string, x = 0, y = 0, text = 'Bob'): Note => ({ ...makeNote('sticky', { x, y }, 'Noa', 'yellow', 0, id), text })
+const sticky = (id: string, x = 0, y = 0, text = 'Bob'): Note => ({ ...makeNote('sticky', { x, y }, NOA, 'yellow', 0, id), text })
 const arrowNote = (id: string, start: { x: number; y: number }, end: { x: number; y: number }, attachedTo: Note['attachedTo'] = { start: null, end: null }): Note =>
-  withEnds({ ...makeNote('arrow', { x: 0, y: 0 }, 'Noa', 'blue', 0, id), attachedTo }, start, end)
+  withEnds({ ...makeNote('arrow', { x: 0, y: 0 }, NOA, 'blue', 0, id), attachedTo }, start, end)
 
 function expectAt(p: { x: number; y: number }, x: number, y: number) {
   expect(p.x).toBeCloseTo(x, 6)
@@ -135,7 +140,15 @@ describe('placing notes', () => {
     h.click(100, 50)
     const id = 'new1'
     // Snapped to the 1 ft grid.
-    expect(h.note(id)).toMatchObject({ type: 'sticky', x: 3 * FT, y: 2 * FT, author: 'Aiden', color: 'pink', createdAt: '2026-11-10T20:15:00.000Z' })
+    expect(h.note(id)).toMatchObject({
+      type: 'sticky',
+      x: 3 * FT,
+      y: 2 * FT,
+      author: 'Aiden',
+      authorId: AIDEN.id,
+      color: 'pink',
+      createdAt: '2026-11-10T20:15:00.000Z',
+    })
     expect(h.ui().selection).toEqual([id])
     expect(h.ui().tool.kind).toBe('select')
     expect(h.ui().noteEdit).toEqual({ id, text: '', original: '' })
@@ -260,24 +273,29 @@ describe('placing notes', () => {
     expect(h.ui().tool.kind).toBe('select')
   })
 
-  it('refuses a note when nobody has picked Noa or Aiden', () => {
-    const options: Options = { author: null }
-    const h = harness(options)
-    expect(h.editor.actions.addNote('sticky')).toBeNull()
-    expect(h.editor.actions.setNoteTool('arrow')).toBe(false)
-    expect(h.ui().tool.kind).toBe('select')
-    // Armed while someone was picked, then the choice was cleared on this device.
-    options.author = 'Noa'
-    expect(h.editor.actions.setNoteTool('arrow')).toBe(true)
-    options.author = null
+  it('records the signed-in user on a drawn note, and keeps it through delete and undo', () => {
+    const h = harness({ author: NOA })
+    h.editor.actions.setNoteTool('arrow')
     h.drag([
       [0, 0],
       [300, 0],
     ])
-    h.click(500, 500)
+    const id = h.ui().selection[0]!
+    expect(h.note(id)).toMatchObject({ type: 'arrow', author: 'Noa', authorId: NOA.id })
+    h.editor.actions.deleteSelection()
+    expect(h.canvas().items).toHaveLength(0)
+    h.editor.actions.undo()
+    expect(h.note(id)).toMatchObject({ author: 'Noa', authorId: NOA.id })
+  })
+
+  it('refuses note tools, with no reason given, where no signed-in user is known (the share viewer)', () => {
+    const h = harness({ author: null })
+    expect(h.editor.actions.addNote('sticky')).toBeNull()
+    expect(h.editor.actions.setNoteTool('arrow')).toBe(false)
+    expect(h.ui().tool.kind).toBe('select')
     expect(h.canvas().items).toHaveLength(0)
     expect(h.commits).toHaveLength(0)
-    expect(h.refusals).toEqual(['noAuthor', 'noAuthor', 'noAuthor', 'noAuthor'])
+    expect(h.refusals).toEqual([undefined, undefined])
   })
 
   it('gives a drag that snaps back to its start the default 200 cm arrow', () => {
@@ -420,7 +438,7 @@ describe('typing into a note', () => {
   })
 
   it('leaves Enter alone on other notes, on a focused button, and with no single text note selected', () => {
-    const h = harness({ items: [sticky('s'), makeNote('box', { x: 500, y: 0 }, 'Noa', 'grey', 0, 'b'), round('t', 0, 500)] })
+    const h = harness({ items: [sticky('s'), makeNote('box', { x: 500, y: 0 }, NOA, 'grey', 0, 'b'), round('t', 0, 500)] })
     h.editor.ui.select(['b'])
     expect(h.key('Enter')).toBe(false)
     h.editor.ui.select(['t'])

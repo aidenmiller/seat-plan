@@ -36,11 +36,7 @@ import {
   selectGuest,
   waitForGuestList,
 } from './guest-list'
-import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, editorPath, presetAuthor, signIn, uniqueName } from './helpers'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
+import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, editorPath, signIn, uniqueName } from './helpers'
 
 /** Opens the editor's Guests tab: the right panel's on a laptop, the bottom sheet's on a phone. */
 async function openGuestsTab(page: Page): Promise<Locator> {

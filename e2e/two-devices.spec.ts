@@ -10,6 +10,7 @@
 import { expect, test } from '@playwright/test'
 import { editorMode, LAPTOP, PHONE } from './canvas'
 import {
+  E2E_USERS,
   addRoundTable,
   apiCreateLayout,
   apiCreateWedding,
@@ -17,27 +18,24 @@ import {
   canvasTables,
   editorPath,
   expectSaved,
-  presetAuthor,
   signIn,
   tableIds,
   uniqueName,
   waitForEditor,
 } from './helpers'
 
-test('Noa adds a table on her laptop; Aiden reloads on his phone and sees it', async ({ browser, context, page }, testInfo) => {
+test('Noa adds a table on her laptop; Aiden reloads on his phone and sees it', async ({ browser, page }, testInfo) => {
   const onPhone = testInfo.project.name === 'phone'
   const otherContext = await browser.newContext(onPhone ? LAPTOP : PHONE)
   try {
     const otherPage = await otherContext.newPage()
     const laptop = onPhone ? otherPage : page
     const phone = onPhone ? page : otherPage
-    await presetAuthor(onPhone ? otherContext : context, 'Noa')
-    await presetAuthor(onPhone ? context : otherContext, 'Aiden')
     await signIn(laptop)
     await signIn(phone)
 
     const wedding = await apiCreateWedding(laptop.request, uniqueName('Two devices', testInfo))
-    const layout = await apiCreateLayout(laptop.request, wedding.id, { name: 'Plan', editedBy: 'Noa' })
+    const layout = await apiCreateLayout(laptop.request, wedding.id, { name: 'Plan' })
 
     // Aiden has the empty layout open on his phone.
     await phone.goto(editorPath(wedding.id, layout.id))
@@ -57,7 +55,8 @@ test('Noa adds a table on her laptop; Aiden reloads on his phone and sees it', a
 
     const stored = await apiGetLayout(laptop.request, layout.id)
     expect(stored.version).toBe(layout.version + 1)
-    expect(stored.editedBy).toBe('Noa')
+    // Both devices are signed in as the same planner, who is the editor.
+    expect(stored.editedBy).toBe(E2E_USERS.a.displayName)
     expect(stored.canvas.items.map((item) => item.id)).toEqual(ids)
 
     // Aiden reloads: the table is there, on screen, and his phone is still in View.

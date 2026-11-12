@@ -34,15 +34,10 @@ import {
   apiGetLayout,
   canvasTables,
   editorPath,
-  presetAuthor,
   signIn,
   uniqueName,
 } from './helpers'
 import { apiCreateVenue, apiGetVenue, apiSaveVenue, wallItem } from './venues'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 /** The guest ids seated in a layout, in drawing order. */
 function seatedIds(canvas: { items: readonly { kind: string; seats?: readonly { guestId: string | null }[] }[] }): string[] {

@@ -5,6 +5,7 @@ import { makeItem, type PresetId } from '../src/domain/presets'
 import { addDemoNotes } from './demo-notes'
 
 const START = Date.UTC(2026, 10, 1, 15)
+const AUTHOR = { name: 'Dayna', id: '0b9f6a3e-6c1d-4c8e-9f57-2a1d6f1e7a10' }
 
 function tour(): Canvas {
   const placed: [PresetId, number, number][] = [
@@ -26,13 +27,14 @@ function tour(): Canvas {
 
 describe('the demo notes', () => {
   let n = 0
-  const canvas = addDemoNotes(tour(), () => `note-${n++}`, START)
+  const canvas = addDemoNotes(tour(), () => `note-${n++}`, START, AUTHOR)
   const notes = canvas.items.filter((i) => i.kind === 'note')
 
-  it('adds sticky notes, text, a box and an arrow by Noa and Aiden, one done, valid for saving', () => {
+  it('adds sticky notes, text, a box and an arrow by the given author, one done, valid for saving', () => {
     expect(canvasSchema.safeParse(canvas).success).toBe(true)
     expect(new Set(notes.map((note) => note.type))).toEqual(new Set(['sticky', 'text', 'box', 'arrow']))
-    expect(new Set(notes.map((note) => note.author))).toEqual(new Set(['Noa', 'Aiden']))
+    expect(new Set(notes.map((note) => note.author))).toEqual(new Set(['Dayna']))
+    expect(new Set(notes.map((note) => note.authorId))).toEqual(new Set([AUTHOR.id]))
     expect(notes.filter((note) => note.done)).toHaveLength(1)
     expect(new Set(notes.map((note) => note.color)).size).toBeGreaterThanOrEqual(4)
   })

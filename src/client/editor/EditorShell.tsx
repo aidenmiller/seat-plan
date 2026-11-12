@@ -9,8 +9,8 @@
  *
  * The top bar: back to the layouts tab, the layout's name, the save status
  * (a fixed slot, so the bar never wraps and the canvas never moves), the
- * Edit / View switch and the Noa / Aiden switch. Zoom controls sit in the
- * canvas's bottom right corner on every screen size.
+ * Edit / View switch and the signed-in person's menu (their initial). Zoom
+ * controls sit in the canvas's bottom right corner on every screen size.
  *
  * The document lives in a store made for this layout (doc-store.ts); the
  * editor state (state/index.ts) wraps it and refuses changes in View mode
@@ -30,8 +30,8 @@
  *
  * Notes (spec section 9): the shape panel's Notes tools, the toolbar's notes
  * layer switches, the Notes tab and a note's Properties all work through the
- * editor state. A refused change says why under the canvas (View mode, no
- * author picked, notes hidden or locked). On phones, picking a note in the
+ * editor state. A refused change says why under the canvas (View mode,
+ * notes hidden or locked). New notes record the signed-in user. On phones, picking a note in the
  * Notes tab or starting to type into one lowers the sheet so the plan shows.
  */
 import Link from 'next/link'
@@ -40,19 +40,19 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import { createRule, errorMessage, updateLayout } from '@/client/api'
 import { AddToGroupDialog } from '@/client/guests/AddToGroupDialog'
 import { PartnerNamesProvider } from '@/client/guests/partners-context'
+import { useCurrentUser } from '@/client/current-user'
 import { randomId } from '@/client/sync/random-id'
-import { getAuthor, useAuthor } from '@/client/author'
 import type { LayoutSaver, SaveStatus } from '@/client/sync/types'
 import { useUnloadGuard } from '@/client/sync/unload'
 import { ExportButton } from '@/client/export/ExportButton'
 import { ExportDialog, type ExportSource } from '@/client/export/ExportDialog'
 import { ShareButton } from '@/client/share/ShareButton'
-import { AuthorSwitch } from '@/client/ui/AuthorSwitch'
 import { BottomSheet, type SheetSnap } from '@/client/ui/BottomSheet'
 import { ContextMenu } from '@/client/ui/ContextMenu'
 import { InlineName } from '@/client/ui/InlineName'
 import { secondaryButton } from '@/client/ui/styles'
-import { asAuthor, type Item } from '@/domain/canvas-schema'
+import { UserMenu } from '@/client/ui/UserMenu'
+import type { Item } from '@/domain/canvas-schema'
 import type { FixedItem } from '@/domain/venue-schema'
 import { DEFAULT_MIN_GAP_CM } from '@/domain/spacing'
 import type { LengthUnit } from '@/domain/units'
@@ -152,12 +152,11 @@ export function canvasInsets(phone: boolean): ScreenInsets {
 
 /**
  * What the notice under the canvas says when the editor refuses a change, or
- * null to say nothing: View mode first, then no author picked, then the
- * notes layer (hidden or locked) or another locked layer.
+ * null to say nothing: View mode first, then the notes layer (hidden or
+ * locked) or another locked layer.
  */
-export function refusalNotice(reason: RefusalReason | undefined, mode: 'edit' | 'view', hasAuthor: boolean): string | null {
+export function refusalNotice(reason: RefusalReason | undefined, mode: 'edit' | 'view'): string | null {
   if (mode === 'view') return 'Switch to Edit to change the plan.'
-  if (reason === 'noAuthor' || !hasAuthor) return 'Pick Noa or Aiden at the top first.'
   if (reason === 'notesHidden') return 'Notes are hidden. Show them to change notes.'
   if (reason === 'notesLocked') return 'Notes are locked. Unlock them to change notes.'
   if (reason === 'layerLocked') return 'That part of the plan is locked.'
@@ -196,7 +195,7 @@ export type EditorShellProps = {
 export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUESTS, groups = NO_GROUPS, rules = NO_RULES }: EditorShellProps) {
   const router = useRouter()
   const pathname = usePathname()
-  const author = useAuthor()
+  const user = useCurrentUser()
   const canManage = useCanManageWedding()
   // The page keys this component by layout id, so these live as long as this layout is open.
   const [initial] = useState(layout)
@@ -227,7 +226,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   const [addToGroup, setAddToGroup] = useState<readonly string[] | null>(null)
   const [exporting, setExporting] = useState(false)
 
-  const canEdit = saver !== null && author !== null && conflict === null && !leaving
+  const canEdit = saver !== null && conflict === null && !leaving
   const venue = useMemo(() => venueItemsOf(venueInfo), [venueInfo])
   const [bridge] = useState(() => createBridge(wedding, venue))
   useEffect(() => {
@@ -246,6 +245,8 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
       },
       venueItems: () => bridge.get().venue,
       layoutKind: initial.kind,
+      // New notes carry the signed-in user's name and id, kept with the note through undo and saves.
+      author: () => ({ name: user.displayName, id: user.id }),
       events: {
         onContextMenu: (request) => bridge.get().events.onContextMenu?.(request),
         onTap: (tap) => bridge.get().events.onTap?.(tap),
@@ -336,11 +337,13 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
     [editor],
   )
 
+  const userId = user.id
+  const displayName = user.displayName
   useEffect(() => {
     const session = openLayoutSession({
       layout: initial,
       store,
-      getAuthor,
+      user: { id: userId, displayName },
       events: {
         onSaver: setSaver,
         onStatus: setStatus,
@@ -357,7 +360,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
       sessionRef.current = null
       bridge.set({ session: null })
     }
-  }, [initial, store, bridge])
+  }, [initial, store, bridge, userId, displayName])
 
   useUnloadGuard(saver)
 
@@ -489,7 +492,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
           if (editor.ui.getState().mode === 'view' && (isTableTarget(target) || note)) showDetails()
         },
         onRefused(reason) {
-          const message = refusalNotice(reason, editor.ui.getState().mode, getAuthor() !== null)
+          const message = refusalNotice(reason, editor.ui.getState().mode)
           if (message) setNotice(message)
         },
         onNotice(text: string) {
@@ -506,11 +509,10 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   async function keepMine() {
     const session = sessionRef.current
     if (!session || !conflict) return
-    const who = author ?? asAuthor(conflict.draft?.editedBy) ?? asAuthor(initial.editedBy) ?? 'Noa'
     // Editing stays off from the moment the copy exists until the page has left.
     setLeaving(true)
     try {
-      const copy = await session.keepMineAsCopy(copyLayoutName(name, who), who)
+      const copy = await session.keepMineAsCopy(copyLayoutName(name, user.displayName))
       router.push(`/w/${initial.weddingId}/layouts/${copy.id}`)
     } catch (err) {
       setLeaving(false)
@@ -522,12 +524,11 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   async function saveCopy() {
     const session = sessionRef.current
     if (!session || copying) return
-    const who = author ?? asAuthor(initial.editedBy) ?? 'Noa'
     setCopying(true)
     setCopyError(null)
     setLeaving(true)
     try {
-      const copy = await session.saveAsCopy(copyLayoutName(name, who), who)
+      const copy = await session.saveAsCopy(copyLayoutName(name, user.displayName))
       router.push(`/w/${initial.weddingId}/layouts/${copy.id}`)
     } catch (err) {
       setLeaving(false)
@@ -588,7 +589,6 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
   )
   const venueGone = !blank && (venueInfo.venueDeleted || venueInfo.template?.deleted === true)
   const dropTarget = useCallback(() => canvasAreaRef.current?.querySelector<HTMLElement>('[data-editor-viewport]') ?? null, [])
-  const hint = saver !== null && author === null ? 'Pick Noa or Aiden to start editing.' : null
   const panelIds = usePanelIds()
 
   return (
@@ -629,7 +629,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
               {/* Making a link is for owners; editors still see and open the existing ones in the Links tab. */}
               {canManage && <ShareButton layoutId={initial.id} compact={phone} />}
               <ModeSwitch compact={phone} />
-              <AuthorSwitch compact />
+              <UserMenu compact />
             </header>
 
             <SaveFailedBanner
@@ -667,7 +667,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
 
               <div ref={canvasAreaRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
                 <CanvasViewport venue={venue} onConfirmUnseat={onConfirmUnseat} insets={phone ? PHONE_CANVAS_INSETS : DESKTOP_CANVAS_INSETS} />
-                <CanvasToolbar phone={phone} canEdit={canEdit} onOpenShapes={() => setShapesOpen(true)} hint={hint} />
+                <CanvasToolbar phone={phone} canEdit={canEdit} onOpenShapes={() => setShapesOpen(true)} hint={null} />
                 <PickStrip top={PHONE_TOOLBAR_BOTTOM_PX + 8} />
                 <div className="absolute right-2 z-10" style={{ bottom: zoomControlsBottom(phone) }}>
                   <ZoomControls />
@@ -721,7 +721,7 @@ export function EditorShell({ layout, wedding = DEFAULT_WEDDING, guests = NO_GUE
               )}
             </div>
 
-            <ConflictDialog conflict={conflict} me={author} onLoadTheirs={loadTheirs} onKeepMine={keepMine} />
+            <ConflictDialog conflict={conflict} meId={user.id} onLoadTheirs={loadTheirs} onKeepMine={keepMine} />
             <VenuePickerDialog
               open={pickingVenue}
               weddingId={initial.weddingId}

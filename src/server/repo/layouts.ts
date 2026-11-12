@@ -17,7 +17,7 @@ import type {
 import { canUseTemplateInWedding, type Viewer } from '../auth/venue-access'
 import { recentSavesOf, writeCanvas, type WriteCanvasResult } from '../canvas-write'
 import { layouts, venueTemplates, weddings } from '../db/schema'
-import { editorName } from '../editor-name'
+import { editorName, type Editor } from '../editor-name'
 import type { Db, Tx } from '../locks'
 
 /**
@@ -27,6 +27,9 @@ import type { Db, Tx } from '../locks'
  * Every function that takes a layout id also takes the wedding id the route's
  * guard resolved, and only touches the layout when it belongs to that
  * wedding: a layout of any other wedding reads as missing.
+ *
+ * Writes record the editor the route gives: the signed-in user, never a name
+ * from the request body.
  */
 
 const MAX_NAME = 200
@@ -176,7 +179,13 @@ async function templateUsable(tx: Tx, viewer: Viewer, templateId: string, weddin
 }
 
 /** A new layout with an empty canvas. A chosen template must be live and one the viewer may use in this wedding. */
-export async function createLayout(db: Db, weddingId: string, body: CreateLayoutBody, viewer: Viewer): Promise<CreateLayoutResult> {
+export async function createLayout(
+  db: Db,
+  weddingId: string,
+  body: CreateLayoutBody,
+  viewer: Viewer,
+  editor: Editor,
+): Promise<CreateLayoutResult> {
   const layoutId = body.id ?? randomUUID()
   const result = await db.transaction(async (tx): Promise<WriteCanvasResult | { status: 'bad-template' }> => {
     const [wedding] = await tx
@@ -193,7 +202,7 @@ export async function createLayout(db: Db, weddingId: string, body: CreateLayout
       name: body.name,
       kind: body.kind,
       venueTemplateId: body.venueTemplateId,
-      editedBy: body.editedBy,
+      editor,
     })
   })
   return afterInsert(db, weddingId, layoutId, result)
@@ -229,7 +238,13 @@ export type SaveLayoutResult = Extract<
  * The editor's save (PUT /api/layouts/:id). See writeCanvas() for the answers;
  * a layout of another wedding is 'gone', as a missing one is.
  */
-export async function saveLayout(db: Db, weddingId: string, layoutId: string, body: SaveLayoutBody): Promise<SaveLayoutResult> {
+export async function saveLayout(
+  db: Db,
+  weddingId: string,
+  layoutId: string,
+  body: SaveLayoutBody,
+  editor: Editor,
+): Promise<SaveLayoutResult> {
   const result = await db.transaction((tx) =>
     writeCanvas(tx, {
       mode: 'save',
@@ -238,7 +253,7 @@ export async function saveLayout(db: Db, weddingId: string, layoutId: string, bo
       canvas: body.canvas,
       baseVersion: body.baseVersion,
       saveId: body.saveId,
-      editedBy: body.editedBy,
+      editor,
     }),
   )
   switch (result.status) {
@@ -320,7 +335,13 @@ export async function updateLayout(
  * that is "Save as a copy" after a save answered 410. Without one, a deleted
  * source is not found.
  */
-export async function duplicateLayout(db: Db, weddingId: string, layoutId: string, body: DuplicateLayoutBody): Promise<CreateLayoutResult> {
+export async function duplicateLayout(
+  db: Db,
+  weddingId: string,
+  layoutId: string,
+  body: DuplicateLayoutBody,
+  editor: Editor,
+): Promise<CreateLayoutResult> {
   const newId = body.id ?? randomUUID()
   const result = await db.transaction(async (tx): Promise<WriteCanvasResult | { status: 'not-found' }> => {
     const [source] = await tx
@@ -348,7 +369,7 @@ export async function duplicateLayout(db: Db, weddingId: string, layoutId: strin
       name: body.name ?? copyName(source.name),
       kind: source.kind,
       venueTemplateId: source.venueTemplateId,
-      editedBy: body.editedBy,
+      editor,
     })
   })
   return afterInsert(db, weddingId, newId, result)

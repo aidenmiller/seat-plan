@@ -4,8 +4,12 @@
  * listener is attached only while there are unsaved changes, since a page
  * with one attached can be kept out of the browser's back-forward cache.
  * iPhone Safari never shows the warning; the draft in IndexedDB covers it.
+ *
+ * After the person signed out (and was asked about unsaved changes then),
+ * the page leaves without asking again.
  */
 import { useEffect } from 'react'
+import { isLeavingForSignOut } from './saver-registry'
 import type { LayoutSaver } from './types'
 
 export type UnloadGuardSaver = Pick<LayoutSaver, 'hasUnsavedChanges' | 'flush' | 'subscribe'>
@@ -25,7 +29,7 @@ export function installUnloadGuard(saver: UnloadGuardSaver, deps: UnloadGuardDep
   let guarding = false
 
   const onBeforeUnload = (event: Event) => {
-    if (!saver.hasUnsavedChanges()) return
+    if (isLeavingForSignOut() || !saver.hasUnsavedChanges()) return
     event.preventDefault()
     // Older browsers show the warning only when returnValue is set.
     ;(event as Event & { returnValue: unknown }).returnValue = true
@@ -43,7 +47,7 @@ export function installUnloadGuard(saver: UnloadGuardSaver, deps: UnloadGuardDep
   }
 
   const lastSave = () => {
-    if (saver.hasUnsavedChanges()) void saver.flush({ keepalive: true })
+    if (!isLeavingForSignOut() && saver.hasUnsavedChanges()) void saver.flush({ keepalive: true })
   }
   const onVisibility = () => {
     if (doc?.visibilityState === 'hidden') lastSave()

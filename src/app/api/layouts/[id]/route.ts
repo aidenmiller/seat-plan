@@ -11,6 +11,7 @@ import { idParam, json, notFound, readBody, refuseUnstorableText, type IdContext
 import { withWeddingRole } from '@/server/auth/guards'
 import { byLayoutId } from '@/server/auth/resolvers'
 import { toDroppedSeats } from '@/server/canvas-write'
+import { editorOf } from '@/server/editor-name'
 import { getDb } from '@/server/db/client'
 import { getLayoutDetail, saveLayout, softDeleteLayout, updateLayout } from '@/server/repo/layouts'
 
@@ -29,7 +30,7 @@ export const GET = withWeddingRole(byLayoutId, 'editor', async (_req: NextReques
 })
 
 /**
- * Saves the canvas (PLAN section 5, "Saving layouts").
+ * Saves the canvas (PLAN section 5, "Saving layouts"), as the signed-in user.
  * 200 SaveLayoutOk, 409 SaveLayoutConflict, 410 { error: 'gone' }, 422 { error: 'invalid', issues }.
  * Text Postgres refuses is a 422 too, never a 500 the browser would retry forever.
  */
@@ -38,7 +39,7 @@ export const PUT = withWeddingRole(byLayoutId, 'editor', async (req: NextRequest
   if (!id) return notFound()
   const body = await readBody(req, saveLayoutBody)
   if (!body.ok) return body.response
-  const write = await refuseUnstorableText(() => saveLayout(getDb(), access.weddingId, id, body.data))
+  const write = await refuseUnstorableText(() => saveLayout(getDb(), access.weddingId, id, body.data, editorOf(access.user)))
   if (!write.ok) return write.response
   const result = write.value
   switch (result.status) {

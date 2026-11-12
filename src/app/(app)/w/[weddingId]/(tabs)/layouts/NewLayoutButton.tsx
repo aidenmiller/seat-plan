@@ -3,7 +3,6 @@
 import { useRouter } from 'next/navigation'
 import { useState, type FormEvent } from 'react'
 import { createLayout, errorMessage } from '@/client/api'
-import { useAuthor } from '@/client/author'
 import { randomId } from '@/client/sync/random-id'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { ChoiceGroup, TextField, type Choice } from '@/client/ui/fields'
@@ -43,7 +42,6 @@ function NewLayoutForm({
   onCancel: () => void
 }) {
   const router = useRouter()
-  const author = useAuthor()
   const [kind, setKind] = useState<LayoutKind>('reception')
   const [venue, setVenue] = useState<string>(BLANK)
   const [name, setName] = useState(defaultLayoutName('reception'))
@@ -67,10 +65,6 @@ function NewLayoutForm({
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
     if (busy) return
-    if (!author) {
-      setError('Pick Noa or Aiden first, so the layout carries your name.')
-      return
-    }
     const trimmed = name.trim()
     if (trimmed === '') {
       setNameError('Names cannot be empty.')
@@ -84,7 +78,6 @@ function NewLayoutForm({
         name: trimmed,
         kind,
         venueTemplateId: venue === BLANK ? null : venue,
-        editedBy: author,
       })
       router.push(`/w/${weddingId}/layouts/${layout.id}`)
     } catch (err) {

@@ -13,7 +13,9 @@
  * keepalive save landing on its own.
  */
 import { expect, test, type BrowserContext, type Page, type TestInfo } from '@playwright/test'
+import { dbAddMember } from './db'
 import {
+  E2E_USERS,
   addRoundTable,
   apiAddTables,
   apiCreateLayout,
@@ -22,16 +24,15 @@ import {
   canvasTables,
   editorPath,
   expectSaved,
-  presetAuthor,
   saveStatus,
   signIn,
+  signInRequest,
   tableIds,
   uniqueName,
   waitForEditor,
 } from './helpers'
 
 async function openNewLayout(context: BrowserContext, page: Page, testInfo: TestInfo, label: string) {
-  await presetAuthor(context, 'Noa')
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName(label, testInfo))
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })
@@ -79,7 +80,7 @@ test('an edit made just before the tab closes comes back when the layout opens a
 
   const after = await apiGetLayout(request, layout.id)
   expect(after.version).toBe(2)
-  expect(after.editedBy).toBe('Noa')
+  expect(after.editedBy).toBe(E2E_USERS.a.displayName)
   expect(after.canvas.items.map((item) => item.id)).toEqual(ids)
 
   // Nothing is left to replay: a reload shows the saved table and stays saved.
@@ -106,7 +107,7 @@ test('closing the tab right after an edit still sends the last-chance save', asy
   const request = context.request
   await expect.poll(async () => (await apiGetLayout(request, layout.id)).version, { timeout: 5000 }).toBe(2)
   const stored = await apiGetLayout(request, layout.id)
-  expect(stored.editedBy).toBe('Noa')
+  expect(stored.editedBy).toBe(E2E_USERS.a.displayName)
   expect(stored.canvas.items.map((item) => item.id)).toEqual(ids)
 
   // Opening it again finds that the draft's save landed: nothing to replay, no question.
@@ -119,15 +120,19 @@ test('closing the tab right after an edit still sends the last-chance save', asy
   expect((await apiGetLayout(request, layout.id)).version).toBe(2)
 })
 
-test('an edit left by a closed tab meets a newer save: the dialog says loading theirs drops it', async ({ context, page }, testInfo) => {
+test('an edit left by a closed tab meets a newer save: the dialog says loading theirs drops it', async ({ browser, context, page }, testInfo) => {
   const { wedding, layout } = await openNewLayout(context, page, testInfo, 'Close tab conflict')
   const mine = await editOfflineAndClose(context, page)
 
-  // Meanwhile Aiden saves a table from his own device.
+  // Meanwhile Blake, who plans this wedding too, saves a table from their own device.
   const request = context.request
   const before = await apiGetLayout(request, layout.id)
   expect(before.version).toBe(1)
-  await apiAddTables(request, before, 1, 'Aiden')
+  await dbAddMember(wedding.id, E2E_USERS.b.email)
+  const otherDevice = await browser.newContext()
+  await signInRequest(otherDevice.request, 'b')
+  await apiAddTables(otherDevice.request, before, 1)
+  await otherDevice.close()
   const theirs = await apiGetLayout(request, layout.id)
   expect(theirs.version).toBe(2)
   const theirIds = theirs.canvas.items.map((item) => item.id)
@@ -139,7 +144,9 @@ test('an edit left by a closed tab meets a newer save: the dialog says loading t
   await again.goto(editorPath(wedding.id, layout.id))
   const dialog = again.getByRole('dialog', { name: 'This layout changed' })
   await expect(dialog).toBeVisible()
-  await expect(dialog.getByTestId('conflict-message')).toHaveText(/^Aiden changed this layout at \d{1,2}:\d{2} (am|pm)\.$/)
+  await expect(dialog.getByTestId('conflict-message')).toHaveText(
+    new RegExp(`^${E2E_USERS.b.displayName} changed this layout at \\d{1,2}:\\d{2} (am|pm)\\.$`),
+  )
   await expect(dialog.getByTestId('conflict-choice')).toHaveText(
     'Changes made on this device earlier were not saved before that. ' +
       'Load their version to drop the changes made on this device earlier, or keep them as a new copy.',

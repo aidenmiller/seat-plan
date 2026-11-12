@@ -4,7 +4,6 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { deleteLayout, duplicateLayout, errorMessage, layoutDeleteSummary, updateLayout } from '@/client/api'
-import { useAuthor } from '@/client/author'
 import { LayoutExportButton } from '@/client/export/ExportButton'
 import { randomId } from '@/client/sync/random-id'
 import { InlineName } from '@/client/ui/InlineName'
@@ -35,7 +34,6 @@ function thumbnailSrc(svg: string): string {
 
 function LayoutCard({ weddingId, layout }: { weddingId: string; layout: LayoutSummary }) {
   const router = useRouter()
-  const author = useAuthor()
   const [deleting, setDeleting] = useState(false)
   const [duplicating, setDuplicating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -43,14 +41,10 @@ function LayoutCard({ weddingId, layout }: { weddingId: string; layout: LayoutSu
 
   async function duplicate() {
     if (duplicating) return
-    if (!author) {
-      setError('Pick Noa or Aiden first, so the copy carries your name.')
-      return
-    }
     setDuplicating(true)
     setError(null)
     try {
-      await duplicateLayout(layout.id, { id: randomId(), editedBy: author })
+      await duplicateLayout(layout.id, { id: randomId() })
       router.refresh()
     } catch (err) {
       setError(`Could not duplicate. ${errorMessage(err)}`)
