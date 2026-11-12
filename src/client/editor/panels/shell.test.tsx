@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { emptyCanvas } from '@/domain/canvas-schema'
 import { makeItem } from '@/domain/presets'
 import type { LayoutDetail } from '@/shared/api'
+import { CurrentUserProvider } from '../../current-user'
+import { WeddingAccessProvider } from '../../wedding-access'
 import { EditorShell } from '../EditorShell'
 
 vi.mock('next/navigation', () => ({
@@ -28,6 +30,7 @@ const layout: LayoutDetail = {
   venueDeleted: false,
   version: 3,
   editedBy: 'Noa',
+  editedById: null,
   updatedAt: '2026-11-09T15:42:00.000Z',
   thumbSvg: '<svg/>',
   canvas: { ...emptyCanvas(), items: [makeItem('round', { x: 0, y: 0 }, 't1', emptyCanvas())] },
@@ -38,7 +41,13 @@ const layout: LayoutDetail = {
 
 describe('EditorShell layout', () => {
   // The server render: the desktop layout, in View mode until the device is known.
-  const html = renderToStaticMarkup(<EditorShell layout={layout} wedding={{ unit: 'm', minGapCm: 152.4 }} />)
+  const html = renderToStaticMarkup(
+    <CurrentUserProvider user={{ id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a', displayName: 'Noa', email: 'noa@example.com', isAdmin: false }}>
+      <WeddingAccessProvider access={{ role: 'owner', viaAdmin: false }}>
+        <EditorShell layout={layout} wedding={{ unit: 'm', minGapCm: 152.4 }} />
+      </WeddingAccessProvider>
+    </CurrentUserProvider>,
+  )
 
   it('draws the canvas with its tables inside a viewport that turns off browser gestures', () => {
     expect(html).toContain('data-testid="canvas"')
@@ -46,12 +55,13 @@ describe('EditorShell layout', () => {
     expect(html).toMatch(/data-editor-viewport=""[^>]*class="[^"]*editor-grid[^"]*editor-canvas/)
   })
 
-  it('has the top bar pieces: back link, name, save status, mode switch, author switch', () => {
+  it('has the top bar pieces: back link, name, save status, mode switch, the user menu', () => {
     expect(html).toContain('aria-label="Back to layouts"')
     expect(html).toContain('data-testid="layout-title"')
     expect(html).toContain('data-testid="save-status"')
     expect(html).toContain('data-testid="mode-switch"')
-    expect(html).toContain('data-testid="author-switch"')
+    expect(html).toContain('data-testid="user-menu"')
+    expect(html).not.toContain('author-switch')
   })
 
   it('puts the zoom controls and the right panel tabs on the page', () => {

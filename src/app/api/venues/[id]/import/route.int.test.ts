@@ -12,9 +12,9 @@ import type { AddressInfo } from 'node:net'
 import { NextRequest } from 'next/server'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../../test/db'
+import { makeUser, sessionCookie } from '../../../../../../test/auth'
 import { makeGridPng } from '@/domain/floorplan/__fixtures__/plans'
 import { emptyDraft, floorplanJsonSchema, type FloorplanDraft } from '@/domain/floorplan/draft-schema'
-import { SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
 import type { FloorplanImportLine, VenueDetail, VenueImageInfo } from '@/shared/api'
 
 // ---------------------------------------------------------------- the stand-in Messages API
@@ -46,14 +46,22 @@ afterAll(async () => {
 
 const DUMMY_KEY = 'sk-test-not-a-real-key'
 
-beforeEach(() => {
+/** The cookie of the user every test acts as, made once: the owner of each venue it makes. */
+let signedIn = ''
+let me = ''
+
+beforeEach(async () => {
   seen.length = 0
   vi.stubEnv('AUTH_SECRET', 'import-route-test-secret-32-chars-plus')
-  vi.stubEnv('SITE_PASSWORD', 'import-route-made-up-password')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
   vi.stubEnv('ANTHROPIC_BASE_URL', baseUrl)
   vi.stubEnv('ANTHROPIC_API_KEY', DUMMY_KEY)
   vi.stubEnv('FLOORPLAN_MODEL', '')
+  if (!signedIn) {
+    const { getDb } = await import('@/server/db/client')
+    me = (await makeUser(getDb())).id
+    signedIn = await sessionCookie(getDb(), me)
+  }
 })
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -113,7 +121,7 @@ async function postImport(id: string, body: unknown) {
   const route = (await import('./route')) as Record<string, unknown>
   const req = new NextRequest(`https://seat.example/api/venues/${id}/import`, {
     method: 'POST',
-    headers: { cookie: `${SITE_COOKIE}=${createSiteToken()}`, 'content-type': 'application/json' },
+    headers: { cookie: signedIn, 'content-type': 'application/json' },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   })
   const res = await (route.POST as Handler)(req, { params: Promise.resolve({ id }) })
@@ -134,7 +142,7 @@ const PNG = makeGridPng(400, 300)
 async function setup(): Promise<{ id: string; image: VenueImageInfo }> {
   const venues = (await import('../../route')) as Record<string, unknown>
   const images = (await import('../images/route')) as Record<string, unknown>
-  const cookie = `${SITE_COOKIE}=${createSiteToken()}`
+  const cookie = signedIn
   const createReq = new NextRequest('https://seat.example/api/venues', {
     method: 'POST',
     headers: { cookie, 'content-type': 'application/json' },
@@ -149,7 +157,7 @@ async function setup(): Promise<{ id: string; image: VenueImageInfo }> {
 async function templateVersion(id: string): Promise<number> {
   const { getTemplate } = await import('@/server/repo/venues')
   const { getDb } = await import('@/server/db/client')
-  return (await getTemplate(getDb(), id))!.version
+  return (await getTemplate(getDb(), id, { userId: me, isAdmin: false }))!.version
 }
 
 const flags = { unsure: false, unsure_note: '' }

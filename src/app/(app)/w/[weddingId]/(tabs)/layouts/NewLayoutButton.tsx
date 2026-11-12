@@ -3,11 +3,11 @@
 import { useRouter } from 'next/navigation'
 import { useState, type FormEvent } from 'react'
 import { createLayout, errorMessage } from '@/client/api'
-import { useAuthor } from '@/client/author'
 import { randomId } from '@/client/sync/random-id'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { ChoiceGroup, TextField, type Choice } from '@/client/ui/fields'
 import { errorClass, primaryButton, secondaryButton } from '@/client/ui/styles'
+import { venueGroups } from '@/domain/venue-wording'
 import { defaultLayoutName } from '@/domain/wording'
 import type { LayoutKind, VenueSummary } from '@/shared/api'
 
@@ -18,7 +18,7 @@ const KIND_CHOICES: readonly Choice<LayoutKind>[] = [
 
 const BLANK = 'blank'
 
-/** "New layout": pick the kind, then a venue or a blank canvas, then a name. Opens the new layout. */
+/** "New layout": pick the kind, then a venue (grouped: Library, Your venues, Used in this wedding) or a blank canvas, then a name. Opens the new layout. */
 export function NewLayoutButton({ weddingId, venues }: { weddingId: string; venues: VenueSummary[] }) {
   const [open, setOpen] = useState(false)
   return (
@@ -33,7 +33,7 @@ export function NewLayoutButton({ weddingId, venues }: { weddingId: string; venu
   )
 }
 
-function NewLayoutForm({
+export function NewLayoutForm({
   weddingId,
   venues,
   onCancel,
@@ -43,7 +43,6 @@ function NewLayoutForm({
   onCancel: () => void
 }) {
   const router = useRouter()
-  const author = useAuthor()
   const [kind, setKind] = useState<LayoutKind>('reception')
   const [venue, setVenue] = useState<string>(BLANK)
   const [name, setName] = useState(defaultLayoutName('reception'))
@@ -54,10 +53,8 @@ function NewLayoutForm({
   const [busy, setBusy] = useState(false)
   const [id] = useState(randomId)
 
-  const venueChoices: Choice<string>[] = [
-    { value: BLANK, label: 'Blank canvas', hint: 'Draw the room yourself' },
-    ...venues.map((v) => ({ value: v.id, label: v.name })),
-  ]
+  const blankChoice: Choice<string>[] = [{ value: BLANK, label: 'Blank canvas', hint: 'Draw the room yourself' }]
+  const groups = venueGroups(venues)
 
   function changeKind(next: LayoutKind) {
     setKind(next)
@@ -67,10 +64,6 @@ function NewLayoutForm({
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
     if (busy) return
-    if (!author) {
-      setError('Pick Noa or Aiden first, so the layout carries your name.')
-      return
-    }
     const trimmed = name.trim()
     if (trimmed === '') {
       setNameError('Names cannot be empty.')
@@ -84,7 +77,6 @@ function NewLayoutForm({
         name: trimmed,
         kind,
         venueTemplateId: venue === BLANK ? null : venue,
-        editedBy: author,
       })
       router.push(`/w/${weddingId}/layouts/${layout.id}`)
     } catch (err) {
@@ -96,7 +88,20 @@ function NewLayoutForm({
   return (
     <form onSubmit={onSubmit} noValidate className="space-y-4">
       <ChoiceGroup legend="1. Kind" name="kind" value={kind} onChange={changeKind} choices={KIND_CHOICES} />
-      <ChoiceGroup legend="2. Venue" name="venue" value={venue} onChange={setVenue} choices={venueChoices} columns={1} />
+      <div className="space-y-3" data-testid="venue-choices">
+        <ChoiceGroup legend="2. Venue" name="venue" value={venue} onChange={setVenue} choices={blankChoice} columns={1} />
+        {groups.map((g) => (
+          <ChoiceGroup
+            key={g.key}
+            legend={g.title}
+            name="venue"
+            value={venue}
+            onChange={setVenue}
+            choices={g.venues.map((v) => ({ value: v.id, label: v.name }))}
+            columns={1}
+          />
+        ))}
+      </div>
       <TextField
         label="3. Name"
         value={name}

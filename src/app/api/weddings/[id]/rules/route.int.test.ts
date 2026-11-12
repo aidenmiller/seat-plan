@@ -7,13 +7,23 @@ import { randomUUID } from 'node:crypto'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../../test/db'
-import { SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
+import { makeUser, makeWeddingFor, sessionCookie } from '../../../../../../test/auth'
+import type { Db } from '@/server/locks'
 import type { StoredRule } from '@/shared/api'
 
-beforeAll(() => {
+/** The cookie of the user every test acts as: the owner of each wedding it makes. */
+let signedIn = ''
+let me = ''
+
+/** A wedding the signed-in user owns (routes answer 404 to anyone who is not a member). */
+const makeWedding = (database: Db, name?: string) => makeWeddingFor(database, me, name)
+
+beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'rules-route-test-secret-32-chars-plus')
-  vi.stubEnv('SITE_PASSWORD', 'rules-route-made-up-password')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
+  const database = await db()
+  me = (await makeUser(database)).id
+  signedIn = await sessionCookie(database, me)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -22,7 +32,7 @@ afterAll(() => {
 type Handler = (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>
 
 async function call(mod: Record<string, unknown>, method: string, params: Record<string, string>, body?: unknown, cookie = true) {
-  const headers: Record<string, string> = cookie ? { cookie: `${SITE_COOKIE}=${createSiteToken()}` } : {}
+  const headers: Record<string, string> = cookie ? { cookie: signedIn } : {}
   if (body !== undefined) headers['content-type'] = 'application/json'
   const req = new NextRequest('https://seat.example/api/x', { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
   const res = await (mod[method] as Handler)(req, { params: Promise.resolve(params) })
@@ -44,7 +54,7 @@ const routes = async () => ({
 
 describe('/api/weddings/[id]/rules and /api/rules', () => {
   it('creates, lists, edits and deletes rules', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const { list, one } = await routes()
     const w = await makeWedding(await db())
     const ann = await makeGuest(await db(), w, 'Ann', 'Lee')
@@ -93,7 +103,7 @@ describe('/api/weddings/[id]/rules and /api/rules', () => {
   })
 
   it('keeps a rule whose guest was removed, as needing guests', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const { list, guest } = await routes()
     const w = await makeWedding(await db())
     const ann = await makeGuest(await db(), w, 'Ann', 'Lee')
@@ -105,7 +115,7 @@ describe('/api/weddings/[id]/rules and /api/rules', () => {
   })
 
   it('switches a couple rule on both partners, and refuses a pair that is not linked', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const { couple, guest } = await routes()
     const w = await makeWedding(await db())
     const ann = await makeGuest(await db(), w, 'Ann', 'Lee')

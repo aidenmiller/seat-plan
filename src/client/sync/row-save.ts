@@ -20,11 +20,26 @@
  * Edits stored by a queue whose lock is free (its tab closed) are taken
  * over and sent. The stored queue lives in its own IndexedDB database:
  * idb-keyval opens a database with one object store, so a second store in
- * the layout drafts' "seat-plan" database would never be created.
+ * the layout drafts' database would never be created.
+ *
+ * People: each signed-in user has their own queue (rowSaverFor) and their
+ * own database, `seat-plan-rows-u-<userId>`, and every request goes out as
+ * that user (appFetchAs). A plain 401 (the session ran out) is retried, so
+ * the edits go out once the same person signs in again. A 401 stale_page
+ * (someone else signed in on this browser since the page opened) stops the
+ * queue in this page: the edits stay in this user's database, and are never
+ * sent under the other person's session. When the same person signs in
+ * again on this browser, the page calls resume() and they go.
  */
-import { createStore, del, entries, set, type UseStore } from 'idb-keyval'
+import { del, entries, set, type UseStore } from 'idb-keyval'
+import { currentUserId } from '../current-user'
+import { appFetch, appFetchAs, isStalePage } from '../http'
 import { backoffDelay } from './backoff'
+import { openKeyvalStore } from './idb'
+import { ensureLegacyAdopted } from './legacy-drafts'
 import { randomId } from './random-id'
+import { registerSaver } from './saver-registry'
+import { ROW_STORE_NAME, rowDbName } from './storage-names'
 import type { LockManagerLike } from './tab-lock'
 
 export type RowKind = 'guest' | 'group'
@@ -38,13 +53,20 @@ export type RowSaveStatus =
   | { kind: 'saving' }
   /** The last try failed for a reason that may pass; trying again with backoff. */
   | { kind: 'retrying'; attempt: number; nextTryAt: string; reason: string }
+  /** Someone else signed in on this browser: nothing more is sent from this page. The edits stay on this device. */
+  | { kind: 'other-user'; reason: string }
 
 /** The page header's words for each status. */
 export const ROW_STATUS_TEXT: Record<RowSaveStatus['kind'], string> = {
   saved: 'Saved',
   saving: 'Saving…',
   retrying: 'Not saved, retrying',
+  'other-user': 'Not saved: someone else signed in',
 }
+
+/** The longer words for 'other-user'. */
+export const OTHER_USER_REASON =
+  'Someone else signed in on this browser. Sign in again to save your changes. They are kept on this device.'
 
 /** A saved edit: the server's reply (UpdateGuestReply for a guest, Group for a group). */
 export type RowSaved = { type: 'saved'; kind: RowKind; id: string; patch: RowPatch; reply: unknown }
@@ -61,8 +83,11 @@ export type RowRejected = {
 }
 export type RowSaveEvent = RowSaved | RowRejected
 
-/** One row's waiting edits as stored in IndexedDB. */
-export type StoredRow = { queueId: string; kind: RowKind; id: string; patch: RowPatch; queuedAt: string }
+/**
+ * One row's waiting edits as stored in IndexedDB. A user's store stamps each
+ * row with their id (userId) and hands back only rows that carry it.
+ */
+export type StoredRow = { queueId: string; kind: RowKind; id: string; patch: RowPatch; queuedAt: string; userId?: string }
 
 /** Where the queue is kept between page loads. Errors are swallowed: saving to the server carries on. */
 export interface RowStore {
@@ -71,14 +96,13 @@ export interface RowStore {
   list(): Promise<StoredRow[]>
 }
 
-export const ROW_DB_NAME = 'seat-plan-rows'
-export const ROW_STORE_NAME = 'rows'
+export { ROW_STORE_NAME, rowDbName }
 export const ROW_LOCK_PREFIX = 'seat-plan-rows:'
 export const ROW_QUEUE_ID_KEY = 'seat-plan:rows-queue-id'
 
 const storedKey = (queueId: string, kind: RowKind, id: string) => `${queueId}|${kind}|${id}`
 
-function isStoredRow(value: unknown): value is StoredRow {
+export function isStoredRow(value: unknown): value is StoredRow {
   if (!value || typeof value !== 'object') return false
   const v = value as Record<string, unknown>
   return (
@@ -92,18 +116,35 @@ function isStoredRow(value: unknown): value is StoredRow {
   )
 }
 
-/** The IndexedDB store. Any failure answers as if nothing was stored, and the next call opens the database again. */
-export function createRowStore(dbName = ROW_DB_NAME, storeName = ROW_STORE_NAME): RowStore {
+export type RowStoreOptions = {
+  /** Whose queue this is: every row is stamped with it, and rows without it are never handed back. */
+  userId: string
+  /** Defaults to rowDbName(userId). */
+  dbName?: string
+  storeName?: string
+}
+
+/**
+ * A user's IndexedDB store. Any failure answers as if nothing was stored, and
+ * the next call opens the database again.
+ */
+export function createRowStore(options: RowStoreOptions): RowStore {
+  const { userId } = options
+  if (!userId) throw new Error('A row store needs a user id')
+  const dbName = options.dbName ?? rowDbName(userId)
+  const storeName = options.storeName ?? ROW_STORE_NAME
   let store: UseStore | null = null
   const open = (): UseStore => {
     if (typeof indexedDB === 'undefined') throw new Error('IndexedDB is not available')
-    store ??= createStore(dbName, storeName)
+    store ??= openKeyvalStore(dbName, storeName)
     return store
   }
   return {
     async put(row) {
+      // Never mix two people's edits in one store.
+      if (row.userId !== undefined && row.userId !== userId) return false
       try {
-        await set(storedKey(row.queueId, row.kind, row.id), row, open())
+        await set(storedKey(row.queueId, row.kind, row.id), { ...row, userId }, open())
         return true
       } catch {
         store = null
@@ -122,7 +163,7 @@ export function createRowStore(dbName = ROW_DB_NAME, storeName = ROW_STORE_NAME)
     async list() {
       try {
         const all = await entries<IDBValidKey, unknown>(open())
-        return all.map(([, value]) => value).filter(isStoredRow)
+        return all.map(([, value]) => value).filter((value): value is StoredRow => isStoredRow(value) && value.userId === userId)
       } catch {
         store = null
         return []
@@ -149,7 +190,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
-/** Replies worth trying again: no answer, a timeout, too many requests, a server error, or signed out. */
+/**
+ * Replies worth trying again: no answer, a timeout, too many requests, a
+ * server error, or signed out. A 401 stale_page is never tried again (see
+ * isStalePage); the queue checks for it first.
+ */
 export function isRetryableStatus(status: number): boolean {
   return status === 0 || status === 401 || status === 408 || status === 429 || status >= 500
 }
@@ -176,12 +221,19 @@ function rejectionMessage(kind: RowKind, status: number, body: unknown): string 
 }
 
 export type RowSaverOptions = {
+  /**
+   * The signed-in user the queue is for. Requests carry this user's id
+   * (appFetchAs), and the queue is kept in their own database.
+   */
+  userId?: string
   /** Each new status, for the page header ("Saving…", "Saved", "Not saved, retrying"). */
   onStatus?: (status: RowSaveStatus) => void
-  /** Defaults to window.fetch. */
+  /** Defaults to appFetchAs(userId) (appFetch without a user). */
   fetch?: typeof fetch
-  /** Where the queue is kept. Defaults to IndexedDB; null keeps it in memory only. */
+  /** Where the queue is kept. Defaults to this user's IndexedDB store (none without a user); null keeps it in memory only. */
   store?: RowStore | null
+  /** Awaited before start() reads the stored edits (the move of edits from before accounts, legacy-drafts.ts). */
+  beforeStart?: () => Promise<void>
   /** navigator.locks, or null when there is none. */
   locks?: LockManagerLike | null
   /** This page's queue id. Defaults to one kept in sessionStorage (a reload keeps it). */
@@ -213,11 +265,15 @@ export interface RowSaver {
   /** Each saved or refused edit. Returns unsubscribe. */
   onEvent(listener: (event: RowSaveEvent) => void): () => void
   hasUnsavedChanges(): boolean
+  /** This queue's user signed in again on this browser: after a stop for someone else's sign-in, send what is kept. */
+  resume(): void
   /** Send what is waiting now, skipping the wait and any backoff. Resolves when the queue is empty or a try fails. */
   flush(options?: { keepalive?: boolean }): Promise<void>
   /** Takes over the stored edits of this queue's earlier page loads and of closed tabs, and sends them. */
   start(): Promise<void>
   dispose(): void
+  /** Resolves once every store write queued so far has finished. */
+  whenStored(): Promise<void>
 }
 
 type Slot = { kind: RowKind; id: string; patch: RowPatch; queuedAt: string }
@@ -251,8 +307,9 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
   const random = options.random ?? Math.random
   const now = options.now ?? (() => Date.now())
   const newId = options.newId ?? randomId
-  const fetchFn: typeof fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
-  const store: RowStore | null = options.store !== undefined ? options.store : createRowStore()
+  const fetchFn: typeof fetch = options.fetch ?? (options.userId ? appFetchAs(options.userId) : appFetch)
+  const store: RowStore | null =
+    options.store !== undefined ? options.store : options.userId ? createRowStore({ userId: options.userId }) : null
   const locks = options.locks !== undefined ? options.locks : defaultLocks()
   const isOnline =
     options.isOnline ??
@@ -270,6 +327,8 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
   let attempt = 0
   let keepaliveNext = false
   let disposed = false
+  /** Someone else signed in on this browser: nothing more is sent from this page. */
+  let stopped = false
   let started: Promise<void> | null = null
   /** False while start() reads the stored edits, which are older than anything queued meanwhile. */
   let ready = true
@@ -317,6 +376,7 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
 
   /** Saving while anything waits or is out; a retry keeps "retrying" until a try works. */
   function refreshStatus() {
+    if (stopped) return notify()
     const busy = waiting.size > 0 || flight !== null
     if (!busy) setStatus({ kind: 'saved' })
     else if (status.kind === 'retrying') notify()
@@ -356,7 +416,7 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
   }
 
   function scheduleSend(delay: number) {
-    if (disposed || retryTimer !== null) return
+    if (disposed || stopped || retryTimer !== null) return
     clearSendTimer()
     sendTimer = setTimeout(() => {
       sendTimer = null
@@ -387,7 +447,7 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
   }
 
   function pump() {
-    if (disposed || flight || retryTimer !== null || !ready) return
+    if (disposed || stopped || flight || retryTimer !== null || !ready) return
     clearSendTimer()
     const first = waiting.entries().next()
     if (first.done) {
@@ -437,6 +497,15 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
       }
       if (disposed || flight !== current) return
       flight = null
+      if (isStalePage(statusCode, body)) {
+        // Final for this page: the edit goes back in front, stays stored for this user, and is never sent from here again.
+        addToWaiting(slot, true)
+        stopped = true
+        clearSendTimer()
+        clearRetryTimer()
+        setStatus({ kind: 'other-user', reason: OTHER_USER_REASON })
+        return
+      }
       if (statusCode >= 200 && statusCode < 300) {
         attempt = 0
         persist(slot.kind, slot.id)
@@ -483,7 +552,7 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
   }
 
   const onOnline = () => {
-    if (retryTimer === null) return
+    if (stopped || retryTimer === null) return
     clearRetryTimer()
     pump()
   }
@@ -533,6 +602,7 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
   }
 
   async function adopt(): Promise<void> {
+    if (options.beforeStart) await options.beforeStart().catch(() => undefined)
     await holdLock()
     if (!store || disposed) return
     const rows = await store.list()
@@ -593,6 +663,13 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
       return () => void eventListeners.delete(listener)
     },
     hasUnsavedChanges: () => waiting.size > 0 || flight !== null,
+    resume() {
+      if (!stopped || disposed) return
+      stopped = false
+      attempt = 0
+      refreshStatus()
+      pump()
+    },
     async flush(opts) {
       if (opts?.keepalive) keepaliveNext = true
       clearSendTimer()
@@ -603,7 +680,7 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
       for (let i = 0; i < 1000; i++) {
         if (!ready && started) await started
         if (flight && flightPromise) await flightPromise
-        if (disposed || retryTimer !== null) return
+        if (disposed || stopped || retryTimer !== null) return
         if (waiting.size === 0 && !flight) return
         if (!flight) pump()
         if (opts?.keepalive) keepaliveNext = true
@@ -632,19 +709,56 @@ export function createRowSaver(options: RowSaverOptions = {}): RowSaver {
       subscribers.clear()
       eventListeners.clear()
     },
+    async whenStored() {
+      await storeChain.catch(() => undefined)
+    },
   }
 }
 
-let shared: RowSaver | null = null
+const queues = new Map<string, RowSaver>()
 
 /**
- * The app's one queue for this page, made and started on first use, and kept
- * across moves between the app's pages, so a move never drops an edit.
+ * This user's one queue for this page, made and started on first use, and
+ * kept across moves between the app's pages, so a move never drops an edit.
+ * Before it reads its stored edits it waits for edits from before accounts
+ * to move in (legacy-drafts.ts). Signing out reaches it through the saver
+ * registry.
  */
-export function defaultRowSaver(): RowSaver {
-  if (!shared) {
-    shared = createRowSaver()
-    void shared.start()
+export function rowSaverFor(userId: string): RowSaver {
+  let queue = queues.get(userId)
+  if (!queue) {
+    const made = createRowSaver({ userId, beforeStart: () => ensureLegacyAdopted(userId) })
+    queue = made
+    queues.set(userId, made)
+    registerSaver({
+      // Signing out reads this user's storage next: wait until what was sent is out of it.
+      async flush() {
+        await made.flush()
+        await made.whenStored()
+      },
+      hasUnsavedChanges: () => made.hasUnsavedChanges(),
+      resume: () => made.resume(),
+      async stop() {
+        made.dispose()
+        await made.whenStored()
+        queues.delete(userId)
+      },
+    })
+    void made.start()
   }
-  return shared
+  return queue
+}
+
+/** For a page with no signed-in user (never one of the app's screens): keeps edits in memory and sends nothing. */
+let unattended: RowSaver | null = null
+
+/** The queue of the user this page was rendered for (src/client/current-user.tsx), for the guest and group screens. */
+export function pageRowSaver(): RowSaver {
+  const userId = currentUserId()
+  if (userId) return rowSaverFor(userId)
+  unattended ??= createRowSaver({
+    store: null,
+    fetch: async () => Response.json({ error: 'stale_page' }, { status: 401 }),
+  })
+  return unattended
 }

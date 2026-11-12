@@ -14,8 +14,11 @@ import {
   listGuests,
   listVenues,
   removeGroupMember,
+  STALE_PAGE_MESSAGE,
   updateGuest,
+  updateWedding,
 } from './api'
+import { clearOtherUser, pageAuthState } from './auth-channel'
 
 function reply(status: number, body: unknown) {
   return new Response(body === undefined ? null : JSON.stringify(body), {
@@ -34,13 +37,16 @@ describe('api helpers', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wedding = await createWedding({ name: 'Noa & Aiden', unit: 'ft' })
     expect(wedding).toEqual({ id: 'w1', name: 'Noa & Aiden' })
+    // Sent through appFetch (src/client/http.ts), which hands fetch a Headers object.
     expect(fetchMock).toHaveBeenCalledWith('/api/weddings', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: expect.any(Headers),
       body: JSON.stringify({ name: 'Noa & Aiden', unit: 'ft' }),
       cache: 'no-store',
       credentials: 'same-origin',
     })
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(Object.fromEntries(new Headers(init.headers))).toEqual({ 'content-type': 'application/json' })
   })
 
   it('deletes send the typed word', async () => {
@@ -67,7 +73,7 @@ describe('api helpers', () => {
         throw new TypeError('Failed to fetch')
       }),
     )
-    const error = await listVenues().catch((e: unknown) => e)
+    const error = await listVenues('w1').catch((e: unknown) => e)
     expect(error).toMatchObject({ status: 0 })
   })
 })
@@ -92,6 +98,38 @@ describe('errorMessage', () => {
   it('reads the first issue of a 422', () => {
     const error = new ApiRequestError(422, { error: 'invalid', issues: ['name: Names cannot be empty'] }, 'x')
     expect(errorMessage(error)).toBe('Names cannot be empty.')
+  })
+
+  it('says someone else is signed in, not "signed out", when the page is someone else’s now (401 stale_page)', () => {
+    const stale = new ApiRequestError(401, { error: 'stale_page' }, 'x')
+    expect(errorMessage(stale)).toBe(STALE_PAGE_MESSAGE)
+    expect(STALE_PAGE_MESSAGE).toBe('Someone else signed in on this browser. Reload the page.')
+    // A plain 401 (the session ended) still says so.
+    expect(errorMessage(new ApiRequestError(401, { error: 'unauthorized' }, 'x'))).toMatch(/signed out/)
+  })
+})
+
+describe('a change refused because someone else signed in on this browser', () => {
+  afterEach(() => clearOtherUser())
+
+  it('shows the page’s "Someone else signed in" notice, with its Reload button', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => reply(401, { error: 'stale_page' })))
+    expect(pageAuthState()).toBe('current')
+    const error = await updateWedding('w1', { name: 'x' }).catch((e: unknown) => e)
+    expect(error).toMatchObject({ status: 401 })
+    expect(pageAuthState()).toBe('other-user')
+  })
+
+  it('a plain 401, or any other refusal, does not', async () => {
+    for (const [status, body] of [
+      [401, { error: 'unauthorized' }],
+      [403, { error: 'stale_page' }],
+      [409, { error: 'conflict' }],
+    ] as const) {
+      vi.stubGlobal('fetch', vi.fn(async () => reply(status, body)))
+      await updateWedding('w1', { name: 'x' }).catch(() => undefined)
+      expect(pageAuthState(), String(status)).toBe('current')
+    }
   })
 })
 
@@ -124,5 +162,21 @@ describe('guest and group helpers', () => {
       ['DELETE', '/api/groups/gr1/members/g1', undefined],
     ])
     expect(guestsExportUrl(W)).toBe('/api/weddings/w%201/guests/export')
+  })
+})
+
+describe('partner names and sides', () => {
+  it('send the partner names with a wedding, and a guest side as its code', async () => {
+    const fetchMock = vi.fn(async () => reply(200, {}))
+    vi.stubGlobal('fetch', fetchMock)
+    await createWedding({ name: 'Sam & Alex', partner1Name: 'Sam', partner2Name: 'Alex' })
+    await updateWedding('w1', { partner2Name: null })
+    await updateGuest('g1', { side: 'partner2' })
+    const bodies = (fetchMock.mock.calls as unknown as [string, RequestInit][]).map(([path, init]) => [path, JSON.parse(String(init.body))])
+    expect(bodies).toEqual([
+      ['/api/weddings', { name: 'Sam & Alex', partner1Name: 'Sam', partner2Name: 'Alex' }],
+      ['/api/weddings/w1', { partner2Name: null }],
+      ['/api/guests/g1', { side: 'partner2' }],
+    ])
   })
 })

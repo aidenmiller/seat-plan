@@ -15,6 +15,9 @@ import { isZooming } from './NamesLayer'
 import { tightRing } from './TableView'
 import { WorldSvg } from './WorldLayers'
 
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
+
 const GUEST_A = '11111111-1111-4111-8111-111111111111'
 const GUEST_B = '22222222-2222-4222-8222-222222222222'
 
@@ -34,7 +37,7 @@ type RenderOptions = {
 }
 
 function note(type: NoteType, id: string, patch: Partial<Note> = {}, x = 0, y = 0): Note {
-  return { ...makeNote(type, { x, y }, 'Noa', 'pink', Date.UTC(2026, 10, 10), id), ...patch }
+  return { ...makeNote(type, { x, y }, NOA, 'pink', Date.UTC(2026, 10, 10), id), ...patch }
 }
 
 /** The markup of one item's group, from its opening tag to its closing </g>. */
@@ -309,6 +312,11 @@ describe('notes on the plan', () => {
     expect(html.indexOf('data-layer="furniture"')).toBeLessThan(html.indexOf('data-layer="notes"'))
     expect(html.indexOf('data-item-id="t1"')).toBeLessThan(html.indexOf('data-item-id="n1"'))
     expect(html.slice(html.indexOf('data-layer="notes"'))).toContain('data-item-id="n1"')
+  })
+
+  it('draws a whole emoji as the initial of a note by someone with another name', () => {
+    const html = itemMarkup(render([note('sticky', 'n1', { text: 'Hi', author: '🎂 Dayna' })]), 'n1')
+    expect(html).toMatch(/data-note-author="">🎂<\/text>/)
   })
 
   it('draws a sticky note as a filled square with its wrapped text and the author initial', () => {

@@ -25,7 +25,7 @@ describe('the sample file', () => {
   it('covers a partner pair, ";"-split groups, accents, a child and the extra column', () => {
     const decoded = decodeCsvBytes(readFileSync(publicFile))
     const parsed = parseCsv(decoded.text, decoded.delimiter)
-    const { rows, errors, warnings } = applyMapping(parsed.rows, guessMapping(parsed.headers), parsed.rowNumbers)
+    const { rows, errors, warnings } = applyMapping(parsed.rows, guessMapping(parsed.headers), { partner1: 'Noa', partner2: 'Aiden' }, parsed.rowNumbers)
     expect(errors).toEqual([])
     expect(warnings).toEqual([])
     expect(rows.filter((r) => r.partnerName).length).toBeGreaterThanOrEqual(2)
@@ -34,5 +34,18 @@ describe('the sample file', () => {
     expect(rows.some((r) => r.isChild)).toBe(true)
     expect(rows.some((r) => r.extraNotes.some((n) => n.startsWith('Table wish: ')))).toBe(true)
     expect(rows.map((r) => r.rowNumber)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+  })
+
+  it('reads its sides in any wedding, named or not: Partner 1, Partner 2 and Both', () => {
+    const parsed = parseCsv(SAMPLE_CSV_TEXT)
+    for (const partners of [
+      { partner1: 'Noa', partner2: 'Aiden' },
+      { partner1: 'Sam', partner2: 'Alex' },
+      { partner1: null, partner2: null },
+    ]) {
+      const { rows, warnings } = applyMapping(parsed.rows, guessMapping(parsed.headers), partners, parsed.rowNumbers)
+      expect(warnings).toEqual([])
+      expect(new Set(rows.map((r) => r.side))).toEqual(new Set(['partner1', 'partner2', 'both']))
+    }
   })
 })

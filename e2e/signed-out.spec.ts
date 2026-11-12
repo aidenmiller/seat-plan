@@ -1,196 +1,49 @@
 /**
- * Acceptance check 2: no page or API route returns data without the cookie,
- * and the password never reaches the browser. New pages and routes join these
- * lists as each milestone adds them (milestone 4: the guest list, its import
- * page, the sample file, and the guest and group routes; milestone 7: the
+ * Acceptance check 2: no page or API route returns data without a session,
+ * and no password or secret ever reaches the browser. New pages and routes
+ * join these lists as each milestone adds them (milestone 4: the guest list,
+ * its import page, the sample file, and the guest and group routes; milestone 7: the
  * template editor and every venue, image, import and revision route;
  * milestone 6: the rule routes and the couple rule switch;
  * milestone 10: the share link and backup routes, and every restore step).
  * Share pages run their own check: without a cookie, /share/<token> shows
  * only its password page and its data route answers 401.
  */
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { expect, request as playwrightRequest, test } from '@playwright/test'
 import { apiAddGuests, apiCreateGroup, apiListGroups, apiListGuests } from './guest-list'
 import { makePlanPng } from './fixtures/floorplan-png'
-import { apiCreateLayout, apiCreateWedding, signIn, signInRequest, sitePassword } from './helpers'
+import { apiCreateLayout, apiCreateWedding, signIn, signInRequest, sitePassword, userPassword } from './helpers'
 import { apiCreateVenue, apiGetVenue, apiSaveVenue, apiVenueRevisions } from './venues'
-import { emptyCanvas } from '../src/domain/canvas-schema'
+import { ACCOUNT_PAGE_PATHS, API_ROUTES, LINK_PASSWORD, NO_IDS, PAGE_PATHS, PUBLIC_API_ROUTES, PUBLIC_PAGE_PATHS, fill, type Ids } from './routes'
+import { SESSION_COOKIE } from '../src/server/auth/tokens'
 import type { ShareLink, StoredRule, VenueImageInfo } from '../src/shared/api'
 
-type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
-
-const NO_ID = '00000000-0000-4000-8000-000000000000'
-
-/** Every page, with `:wedding`, `:layout` and `:venue` standing for ids, and the sample guest file. */
-const PAGE_PATHS = [
-  '/',
-  '/w/:wedding',
-  '/w/:wedding/layouts',
-  '/w/:wedding/guests',
-  '/w/:wedding/guests/import',
-  '/w/:wedding/groups',
-  '/w/:wedding/rules',
-  '/w/:wedding/venues',
-  '/w/:wedding/links',
-  '/w/:wedding/layouts/:layout',
-  '/venues/:venue',
-  '/venues/:venue?from=:wedding',
-  '/samples/guests-sample.csv',
-]
-
-/** One row of an import, as the column step sends it. */
-const IMPORT_ROW = { rowNumber: 2, firstName: 'Sneaky', lastName: 'Guest', groups: [], extraNotes: [] }
-
-/** A template save, as the template editor sends it. */
-const VENUE_SAVE = { baseVersion: 1, saveId: NO_ID, editedBy: 'Noa' }
-
-/** A share link password made up for this run. */
-const LINK_PASSWORD = `sneaky-${randomBytes(6).toString('hex')}`
-
-/** Restore step 1, as the browser sends it, for a wedding named Sneaky. */
-const RESTORE_START = {
-  format: 'seat-plan-backup',
-  version: 1,
-  jobId: NO_ID,
-  wedding: { id: NO_ID, name: 'Sneaky', date: null, unit: 'ft', minGapCm: 152.4 },
-  guests: [],
-  groups: [],
-  groupMembers: [],
-  rules: [],
-  ruleGuests: [],
-}
-
-/**
- * Every API route but the login route, with a body where the route takes
- * one; `:guest`, `:group`, `:image`, `:revision`, `:link` and `:job` stand
- * for ids too.
- */
-const API_ROUTES: { method: Method; path: string; body?: unknown }[] = [
-  { method: 'GET', path: '/api/weddings' },
-  { method: 'POST', path: '/api/weddings', body: { name: 'Sneaky' } },
-  { method: 'GET', path: '/api/weddings/:wedding' },
-  { method: 'PATCH', path: '/api/weddings/:wedding', body: { name: 'Sneaky' } },
-  { method: 'DELETE', path: '/api/weddings/:wedding', body: { confirm: 'delete' } },
-  { method: 'GET', path: '/api/weddings/:wedding/delete-summary' },
-  { method: 'GET', path: '/api/weddings/:wedding/layouts' },
-  {
-    method: 'POST',
-    path: '/api/weddings/:wedding/layouts',
-    body: { name: 'Sneaky', kind: 'reception', venueTemplateId: null, editedBy: 'Noa' },
-  },
-  { method: 'GET', path: '/api/layouts/:layout' },
-  { method: 'PUT', path: '/api/layouts/:layout', body: { baseVersion: 1 } },
-  { method: 'PATCH', path: '/api/layouts/:layout', body: { name: 'Sneaky' } },
-  { method: 'DELETE', path: '/api/layouts/:layout', body: { confirm: 'delete' } },
-  { method: 'GET', path: '/api/layouts/:layout/delete-summary' },
-  { method: 'GET', path: '/api/layouts/:layout/version' },
-  { method: 'POST', path: '/api/layouts/:layout/duplicate', body: { editedBy: 'Noa' } },
-  { method: 'POST', path: '/api/auth/logout' },
-  // Guests (milestone 4).
-  { method: 'GET', path: '/api/weddings/:wedding/guests' },
-  { method: 'POST', path: '/api/weddings/:wedding/guests', body: { firstName: 'Sneaky', lastName: 'Guest' } },
-  { method: 'POST', path: '/api/weddings/:wedding/guests/bulk', body: { guests: [{ firstName: 'Sneaky', lastName: 'Guest' }] } },
-  { method: 'GET', path: '/api/weddings/:wedding/guests/export' },
-  { method: 'POST', path: '/api/weddings/:wedding/guests/import/preview', body: { rows: [IMPORT_ROW] } },
-  { method: 'POST', path: '/api/weddings/:wedding/guests/import/commit', body: { rows: [IMPORT_ROW], removeMissing: true } },
-  { method: 'PATCH', path: '/api/guests/:guest', body: { firstName: 'Sneaky' } },
-  { method: 'DELETE', path: '/api/guests/:guest' },
-  { method: 'GET', path: '/api/guests/:guest/delete-summary' },
-  // Groups (milestone 4).
-  { method: 'GET', path: '/api/weddings/:wedding/groups' },
-  { method: 'POST', path: '/api/weddings/:wedding/groups', body: { name: 'Sneaky' } },
-  { method: 'PATCH', path: '/api/groups/:group', body: { name: 'Sneaky' } },
-  { method: 'DELETE', path: '/api/groups/:group' },
-  { method: 'POST', path: '/api/groups/:group/members', body: { guestIds: [NO_ID] } },
-  { method: 'DELETE', path: '/api/groups/:group/members/:guest' },
-  // Rules (milestone 6).
-  { method: 'GET', path: '/api/weddings/:wedding/rules' },
-  { method: 'POST', path: '/api/weddings/:wedding/rules', body: { kind: 'apart', guestIds: [NO_ID, NO_ID.replace(/0$/, '1')] } },
-  { method: 'PATCH', path: '/api/rules/:rule', body: { enabled: false } },
-  { method: 'DELETE', path: '/api/rules/:rule' },
-  { method: 'PATCH', path: '/api/rules/couple', body: { guestIds: [NO_ID, NO_ID.replace(/0$/, '1')], enabled: false } },
-  // Seated guests across a wedding's layouts.
-  { method: 'GET', path: '/api/weddings/:wedding/guests/seats' },
-  // Venue templates (milestone 7).
-  { method: 'GET', path: '/api/venues' },
-  { method: 'POST', path: '/api/venues', body: { name: 'Sneaky' } },
-  { method: 'GET', path: '/api/venues/:venue' },
-  { method: 'PUT', path: '/api/venues/:venue', body: { ...VENUE_SAVE, fixedItems: [], reference: null } },
-  { method: 'PATCH', path: '/api/venues/:venue', body: { name: 'Sneaky' } },
-  { method: 'DELETE', path: '/api/venues/:venue', body: { confirm: 'delete' } },
-  { method: 'GET', path: '/api/venues/:venue/delete-summary' },
-  { method: 'POST', path: '/api/venues/:venue/duplicate', body: { name: 'Sneaky' } },
-  { method: 'GET', path: '/api/venues/:venue/wall-check' },
-  { method: 'GET', path: '/api/venues/:venue/revisions' },
-  { method: 'POST', path: '/api/venues/:venue/revisions/:revision/restore', body: VENUE_SAVE },
-  // Floor plan images and the AI import (milestone 7).
-  { method: 'POST', path: '/api/venues/:venue/images', body: 'not an image' },
-  { method: 'GET', path: '/api/venues/:venue/images/:image' },
-  { method: 'POST', path: '/api/venues/:venue/import', body: { imageId: NO_ID, imageWidth: 1000, imageHeight: 700 } },
-  {
-    method: 'POST',
-    path: '/api/venues/:venue/accept-import',
-    body: { ...VENUE_SAVE, fixedItems: [], imageId: NO_ID, reference: { scaleCmPerPx: 1, offsetX: 0, offsetY: 0, rotation: 0, opacity: 0.5 }, importedBy: 'ai' },
-  },
-  // Share links (milestone 10).
-  { method: 'GET', path: '/api/weddings/:wedding/share-links' },
-  { method: 'GET', path: '/api/layouts/:layout/share-links' },
-  { method: 'POST', path: '/api/layouts/:layout/share-links', body: { password: LINK_PASSWORD } },
-  { method: 'PATCH', path: '/api/share-links/:link', body: { enabled: false, password: LINK_PASSWORD } },
-  { method: 'DELETE', path: '/api/share-links/:link' },
-  // Backup and the restore steps (milestone 10).
-  { method: 'GET', path: '/api/weddings/:wedding/backup' },
-  { method: 'POST', path: '/api/weddings/restore', body: RESTORE_START },
-  {
-    method: 'POST',
-    path: '/api/weddings/restore/:job/templates',
-    body: { id: NO_ID, name: 'Sneaky', fixedItems: [], reference: null, importedBy: 'hand', imageId: null },
-  },
-  { method: 'PUT', path: '/api/weddings/restore/:job/templates/:venue/image', body: 'not an image' },
-  {
-    method: 'POST',
-    path: '/api/weddings/restore/:job/layouts',
-    body: { id: NO_ID, name: 'Sneaky', kind: 'reception', venueTemplateId: null, editedBy: 'Noa', canvas: emptyCanvas() },
-  },
-]
-
-type Ids = {
-  wedding: string
-  layout: string
-  guest: string
-  group: string
-  rule: string
-  venue: string
-  image: string
-  revision: string
-  link: string
-  job: string
-}
-const NO_IDS: Ids = {
-  wedding: NO_ID,
-  layout: NO_ID,
-  guest: NO_ID,
-  group: NO_ID,
-  rule: NO_ID,
-  venue: NO_ID,
-  image: NO_ID,
-  revision: NO_ID,
-  link: NO_ID,
-  job: NO_ID,
-}
-
-function fill(path: string, ids: Ids): string {
-  return path.replace(/:(wedding|layout|guest|group|rule|venue|image|revision|link|job)\b/g, (_, key: keyof Ids) => ids[key])
-}
 
 test.describe('without the cookie', () => {
-  for (const path of PAGE_PATHS) {
-    test(`page ${fill(path, NO_IDS)} goes to the password page`, async ({ request }) => {
+  for (const path of [...PAGE_PATHS, ...ACCOUNT_PAGE_PATHS]) {
+    test(`page ${fill(path, NO_IDS)} goes to the sign-in page`, async ({ request }) => {
       const res = await request.get(fill(path, NO_IDS), { maxRedirects: 0 })
       expect(res.status()).toBe(307)
       expect(res.headers()['location']).toMatch(/\/login/)
       expect(res.headers()['x-robots-tag']).toContain('noindex')
+    })
+  }
+
+  // Public by design: for people who cannot have a session yet.
+  for (const { path, status } of PUBLIC_PAGE_PATHS) {
+    test(`public page ${path} answers ${status}, with noindex and nothing private`, async ({ request }) => {
+      const res = await request.get(path, { maxRedirects: 0 })
+      expect(res.status()).toBe(status)
+      expect(res.headers()['x-robots-tag']).toContain('noindex')
+      if (path === '/invite' || path === '/reset') expect(res.headers()['referrer-policy']).toBe('no-referrer')
+    })
+  }
+
+  for (const { method, path, body, status } of PUBLIC_API_ROUTES) {
+    test(`public ${method} ${path} answers ${status} for a made-up token`, async ({ request }) => {
+      const res = await request.fetch(path, { method, data: body, maxRedirects: 0 })
+      expect(res.status()).toBe(status)
     })
   }
 
@@ -249,6 +102,10 @@ test.describe('without the cookie', () => {
         revision: revision.id,
         link: link.id,
         job: randomUUID(),
+        user: randomUUID(),
+        invite: randomUUID(),
+        backup: randomUUID(),
+        session: randomUUID(),
       }
       const hidden = [
         secret,
@@ -265,7 +122,7 @@ test.describe('without the cookie', () => {
         token,
       ]
 
-      for (const path of PAGE_PATHS) {
+      for (const path of [...PAGE_PATHS, ...ACCOUNT_PAGE_PATHS]) {
         const res = await request.get(fill(path, ids), { maxRedirects: 0 })
         expect(res.status(), path).toBe(307)
         const text = await res.text()
@@ -337,18 +194,28 @@ test.describe('without the cookie', () => {
   })
 })
 
-test('no response the app loads contains the password', async ({ page }) => {
-  const password = sitePassword()
+test('no response the app loads contains a password or a secret', async ({ page, context }) => {
+  // The site password, every account's password, AUTH_SECRET, and (once signed in) the session cookie and its secret.
+  const secrets = new Map<string, string>([
+    ['the site password', sitePassword()],
+    ['account A’s password', userPassword('a')],
+    ['account B’s password', userPassword('b')],
+    ['account C’s password', userPassword('c')],
+    ['AUTH_SECRET', process.env.E2E_AUTH_SECRET!],
+  ])
   const leaks: string[] = []
   page.on('response', async (res) => {
     try {
       const body = await res.body()
-      if (body.includes(Buffer.from(password))) leaks.push(res.url())
+      for (const [name, value] of secrets) if (body.includes(Buffer.from(value))) leaks.push(`${name} in ${res.url()}`)
     } catch {
       // Redirects and aborted requests have no body.
     }
   })
   await signIn(page)
+  const session = (await context.cookies()).find((c) => c.name === SESSION_COOKIE)!.value
+  secrets.set('the session cookie', session)
+  secrets.set('the session secret', (JSON.parse(Buffer.from(session.split('.')[0]!, 'base64url').toString('utf8')) as { s: string }).s)
   await page.reload()
   await page.waitForLoadState('networkidle')
   // The wedding pages and the editor too.

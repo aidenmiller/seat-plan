@@ -6,7 +6,7 @@
  * here and kept, so "Try again" after a failure picks up where it stopped:
  * every step the server already did answers the same way again.
  */
-import { backupFileSchema, type BackupFile } from '@/domain/backup/schema'
+import { BACKUP_VERSION, backupFileSchema, type BackupFile } from '@/domain/backup/schema'
 import type { RestoredLayout, RestoredTemplate, RestoreStarted } from '@/shared/api'
 import {
   restoreLayout as postLayout,
@@ -23,10 +23,10 @@ export async function readBackupFile(file: Blob): Promise<ReadBackupResult> {
   try {
     raw = JSON.parse(await file.text())
   } catch {
-    return { ok: false, message: 'This file is not a Seat Plan backup.' }
+    return { ok: false, message: 'This file is not a backup from Something Blueprint.' }
   }
   if (typeof raw !== 'object' || raw === null || (raw as { format?: unknown }).format !== 'seat-plan-backup') {
-    return { ok: false, message: 'This file is not a Seat Plan backup.' }
+    return { ok: false, message: 'This file is not a backup from Something Blueprint.' }
   }
   const parsed = backupFileSchema.safeParse(raw)
   if (!parsed.success) {
@@ -73,9 +73,11 @@ export async function runRestore(
   const report = (label: string) => onProgress({ label, done, total })
 
   report('Guests, groups and rules')
+  // The file reads as version 2 whatever version it was written in (backupFileSchema upgrades version 1).
+  // Its members are never sent: a restore does not decide who can open the wedding.
   const started = await steps.start({
     format: backup.format,
-    version: backup.version,
+    version: BACKUP_VERSION,
     jobId,
     wedding: backup.wedding,
     guests: backup.guests,

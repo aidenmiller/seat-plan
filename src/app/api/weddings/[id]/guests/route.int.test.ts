@@ -9,13 +9,23 @@ import { eq } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../../test/db'
-import { SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
+import { makeUser, makeWeddingFor, sessionCookie } from '../../../../../../test/auth'
+import type { Db } from '@/server/locks'
 import type { Guest, GuestDeleteSummary, UpdateGuestReply } from '@/shared/api'
 
-beforeAll(() => {
+/** The cookie of the user every test acts as: the owner of each wedding it makes. */
+let signedIn = ''
+let me = ''
+
+/** A wedding the signed-in user owns (routes answer 404 to anyone who is not a member). */
+const makeWedding = (database: Db, name?: string) => makeWeddingFor(database, me, name)
+
+beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'guests-route-test-secret-32-chars-plus')
-  vi.stubEnv('SITE_PASSWORD', 'guests-route-made-up-password')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
+  const database = await db()
+  me = (await makeUser(database)).id
+  signedIn = await sessionCookie(database, me)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -24,7 +34,7 @@ afterAll(() => {
 type Handler = (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>
 
 async function call(mod: Record<string, unknown>, method: string, params: Record<string, string>, body?: unknown) {
-  const headers: Record<string, string> = { cookie: `${SITE_COOKIE}=${createSiteToken()}` }
+  const headers: Record<string, string> = { cookie: signedIn }
   if (body !== undefined) headers['content-type'] = 'application/json'
   const req = new NextRequest(`https://seat.example/api/x/${params.id ?? ''}`, {
     method,
@@ -68,7 +78,6 @@ async function patch(id: string, body: unknown) {
 
 describe('/api/weddings/[id]/guests', () => {
   it('creates guests with defaults and cleaned text, lists them, and takes a retried create', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { list } = await routes()
     const w = await makeWedding(await db())
 
@@ -77,6 +86,8 @@ describe('/api/weddings/[id]/guests', () => {
     expect(blank.status).toBe(422)
     expect(blank.body.issues[0]).toMatch(/^firstName: /)
     expect((await call(list, 'POST', { id: w }, { firstName: 'A', lastName: 'B', side: 'Bride' })).status).toBe(422)
+    // Sides are codes; the old names are no longer taken (migration 0007).
+    expect((await call(list, 'POST', { id: w }, { firstName: 'A', lastName: 'B', side: 'Noa' })).status).toBe(422)
 
     const id = randomUUID()
     const made = await call(list, 'POST', { id: w }, {
@@ -95,7 +106,7 @@ describe('/api/weddings/[id]/guests', () => {
       lastName: 'Kowal czyk',
       nickname: null,
       household: null,
-      side: 'Both',
+      side: 'both',
       rsvp: 'pending',
       meal: null,
       isChild: false,
@@ -126,7 +137,6 @@ describe('/api/weddings/[id]/guests', () => {
   })
 
   it('edits in place: only the fields sent, name_key follows the name', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const w = await makeWedding(await db())
     const ann = await add(w, 'Ann', 'Lee', { meal: 'Fish', household: 'Lee' })
 
@@ -141,15 +151,29 @@ describe('/api/weddings/[id]/guests', () => {
     expect(reply.guest).toMatchObject({ firstName: 'Ann', lastName: 'Łee', rsvp: 'yes', meal: 'Fish', household: null })
     expect((await guestRow(ann.id)).nameKey).toBe('ann|lee')
 
-    const nick = await patch(ann.id, { nickname: 'Annie', isChild: true, side: 'Noa', notes: null })
-    expect(nick.body.guest).toMatchObject({ nickname: 'Annie', isChild: true, side: 'Noa', notes: null, lastName: 'Łee' })
+    const nick = await patch(ann.id, { nickname: 'Annie', isChild: true, side: 'partner1', notes: null })
+    expect(nick.body.guest).toMatchObject({ nickname: 'Annie', isChild: true, side: 'partner1', notes: null, lastName: 'Łee' })
 
     expect((await patch('nope', { rsvp: 'yes' })).status).toBe(404)
     expect((await patch(randomUUID(), { rsvp: 'yes' })).status).toBe(404)
   })
 
+  it('reads the old side words an older deployment may still write during a build as codes', async () => {
+    const { sql } = await import('drizzle-orm')
+    const { list } = await routes()
+    const w = await makeWedding(await db())
+    const [ann, ben, cy] = [await add(w, 'Ann'), await add(w, 'Ben'), await add(w, 'Cy')]
+    // The widened check still takes them for one release.
+    await (await db()).execute(sql`update guests set side = case id when ${ann.id}::uuid then 'Noa' when ${ben.id}::uuid then 'Aiden' else 'Both' end where id in (${ann.id}::uuid, ${ben.id}::uuid, ${cy.id}::uuid)`)
+    expect((await guestRow(ann.id)).side).toBe('Noa')
+    const all = (await call(list, 'GET', { id: w })).body as Guest[]
+    expect(Object.fromEntries(all.map((g) => [g.firstName, g.side]))).toEqual({ Ann: 'partner1', Ben: 'partner2', Cy: 'both' })
+    // A save writes the code back.
+    expect((await patch(ann.id, { side: 'partner2' })).body.guest.side).toBe('partner2')
+    expect((await guestRow(ann.id)).side).toBe('partner2')
+  })
+
   it('links partners both ways, relinks, unlinks, and keeps the couple rule switch the same on both', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const w = await makeWedding(await db())
     const [ann, ben, cy, dee] = [await add(w, 'Ann'), await add(w, 'Ben'), await add(w, 'Cy'), await add(w, 'Dee')]
 
@@ -187,7 +211,6 @@ describe('/api/weddings/[id]/guests', () => {
   })
 
   it('answers 409 with a plain message when a link changed since the browser saw it, and saves nothing', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { removeGuests } = await import('@/server/repo/guests')
     const w = await makeWedding(await db())
     const [ann, ben, cy] = [await add(w, 'Ann'), await add(w, 'Ben'), await add(w, 'Cy')]
@@ -226,7 +249,6 @@ describe('/api/weddings/[id]/guests', () => {
   })
 
   it('adds pasted names in one transaction, in order, and refuses more than 5,000', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { bulk, list } = await routes()
     const w = await makeWedding(await db())
     const names = Array.from({ length: 10 }, (_, i) => ({ firstName: `Guest${i}`, lastName: 'van der Berg' }))
@@ -271,7 +293,7 @@ describe('/api/weddings/[id]/guests', () => {
   })
 
   it('summarises and deletes a guest: seats cleared in every layout, partner unlinked, versions kept', async () => {
-    const { makeWedding, makeLayout, canvasOf, roundTable, chairRow, layoutRow, canvasSeats } = await import(
+    const { makeLayout, canvasOf, roundTable, chairRow, layoutRow, canvasSeats } = await import(
       '@/server/repo/test-fixtures'
     )
     const { groupMembers, groups, ruleGuests, rules, layouts } = await import('@/server/db/schema')
@@ -331,7 +353,7 @@ describe('/api/weddings/[id]/guests', () => {
   })
 
   it('lists where every live guest sits, for the Guests page after a browser Back (review finding)', async () => {
-    const { makeWedding, makeLayout, canvasOf, roundTable, chairRow } = await import('@/server/repo/test-fixtures')
+    const { makeLayout, canvasOf, roundTable, chairRow } = await import('@/server/repo/test-fixtures')
     const { layouts, weddings } = await import('@/server/db/schema')
     const { seats, one } = await routes()
     const d = await db()

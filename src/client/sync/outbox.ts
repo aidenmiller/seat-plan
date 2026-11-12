@@ -2,6 +2,14 @@
  * The IndexedDB outbox: one draft per layout and tab (PLAN section 5,
  * "Drafts"), keyed `layout:<layoutId>:<tabId>`.
  *
+ * Each signed-in user has their own database, `seat-plan-u-<userId>`
+ * (draftStoreFor). On a shared device the next person to sign in never sees,
+ * and never sends, the last person's unsaved edits. There is no shared store
+ * to fall back to: every draft is stamped with its user's id, and a store
+ * refuses to write or return a draft of anyone else. Drafts from before
+ * accounts, in the old shared `seat-plan` database, are moved into the first
+ * signed-in user's store by legacy-drafts.ts.
+ *
  * Storage can fail: private windows, a full disk, Safari dropping the
  * connection, or no IndexedDB at all during server rendering. Every function
  * here swallows those errors, reports them to the listeners registered with
@@ -13,12 +21,13 @@
  * app sits in the background, and a dropped connection fails every
  * transaction until it is reopened.
  */
-import { createStore, del, entries, get, set, type UseStore } from 'idb-keyval'
+import { del, entries, get, set, type UseStore } from 'idb-keyval'
 import { canvasSchema } from '@/domain/canvas-schema'
+import { openKeyvalStore } from './idb'
+import { DRAFT_STORE_NAME, draftDbName } from './storage-names'
 import type { DraftSnapshot, DraftStore } from './types'
 
-export const DRAFT_DB_NAME = 'seat-plan'
-export const DRAFT_STORE_NAME = 'drafts'
+export { DRAFT_STORE_NAME, draftDbName }
 
 export type StorageOperation = 'put' | 'get' | 'list' | 'delete'
 export type StorageErrorListener = (error: unknown, operation: StorageOperation) => void
@@ -62,7 +71,7 @@ export function isDraftSnapshot(value: unknown): value is DraftSnapshot {
   const d = value as Record<string, unknown>
   if (typeof d.layoutId !== 'string' || typeof d.tabId !== 'string') return false
   if (typeof d.baseVersion !== 'number' || typeof d.dirty !== 'boolean') return false
-  if (typeof d.updatedAt !== 'string' || (d.editedBy !== 'Noa' && d.editedBy !== 'Aiden')) return false
+  if (typeof d.updatedAt !== 'string' || typeof d.userId !== 'string' || d.userId === '') return false
   if (!canvasSchema.safeParse(d.canvas).success) return false
   if (d.inFlight !== null) {
     if (!d.inFlight || typeof d.inFlight !== 'object') return false
@@ -74,24 +83,32 @@ export function isDraftSnapshot(value: unknown): value is DraftSnapshot {
 }
 
 export type DraftStoreOptions = {
+  /** Whose drafts these are. The store refuses a draft stamped with any other id. */
+  userId: string
+  /** Defaults to draftDbName(userId). */
   dbName?: string
   storeName?: string
   /** Called for this store's failures, as well as the global listeners. */
   onError?: StorageErrorListener
 }
 
-export function createDraftStore(options: DraftStoreOptions = {}): DraftStore {
-  const dbName = options.dbName ?? DRAFT_DB_NAME
+export function createDraftStore(options: DraftStoreOptions): DraftStore {
+  const { userId } = options
+  if (!userId) throw new Error('A draft store needs a user id')
+  const dbName = options.dbName ?? draftDbName(userId)
   const storeName = options.storeName ?? DRAFT_STORE_NAME
   let store: UseStore | null = null
 
-  // createStore opens the database on first use, so building it here is safe
+  // The store opens the database on first use, so building it here is safe
   // during server rendering; a missing indexedDB throws inside the try blocks.
   const openStore = (): UseStore => {
     if (typeof indexedDB === 'undefined') throw new Error('IndexedDB is not available')
-    store ??= createStore(dbName, storeName)
+    store ??= openKeyvalStore(dbName, storeName)
     return store
   }
+
+  /** A stored value this store hands out: a well-formed draft of this user's. */
+  const usable = (value: unknown): value is DraftSnapshot => isDraftSnapshot(value) && value.userId === userId
 
   /** Report a failure and drop the connection, so the next call reopens the database. */
   const failed = (error: unknown, operation: StorageOperation) => {
@@ -101,6 +118,11 @@ export function createDraftStore(options: DraftStoreOptions = {}): DraftStore {
 
   return {
     async putDraft(draft) {
+      if (draft.userId !== userId) {
+        // Never mix two people's edits in one store.
+        report(new Error("A draft of another user's was refused"), 'put', options.onError)
+        return false
+      }
       try {
         await set(draftKey(draft.layoutId, draft.tabId), draft, openStore())
         return true
@@ -114,7 +136,7 @@ export function createDraftStore(options: DraftStoreOptions = {}): DraftStore {
       try {
         const value: unknown = await get(draftKey(layoutId, tabId), openStore())
         if (value === undefined) return null
-        if (isDraftSnapshot(value)) return value
+        if (usable(value)) return value
         report(new Error('A stored draft could not be read'), 'get', options.onError)
         return null
       } catch (error) {
@@ -130,7 +152,7 @@ export function createDraftStore(options: DraftStoreOptions = {}): DraftStore {
         const drafts: DraftSnapshot[] = []
         for (const [key, value] of all) {
           if (typeof key !== 'string' || !key.startsWith(prefix)) continue
-          if (isDraftSnapshot(value)) drafts.push(value)
+          if (usable(value)) drafts.push(value)
           else report(new Error('A stored draft could not be read'), 'list', options.onError)
         }
         return drafts.sort((x, y) => (x.updatedAt < y.updatedAt ? 1 : x.updatedAt > y.updatedAt ? -1 : 0))
@@ -152,15 +174,14 @@ export function createDraftStore(options: DraftStoreOptions = {}): DraftStore {
   }
 }
 
-let defaultStore: DraftStore | null = null
+const stores = new Map<string, DraftStore>()
 
-/** The app's outbox, created on first use. */
-export function defaultDraftStore(): DraftStore {
-  defaultStore ??= createDraftStore()
-  return defaultStore
+/** This user's outbox, created on first use and kept for the page's life. */
+export function draftStoreFor(userId: string): DraftStore {
+  let store = stores.get(userId)
+  if (!store) {
+    store = createDraftStore({ userId })
+    stores.set(userId, store)
+  }
+  return store
 }
-
-export const putDraft = (draft: DraftSnapshot) => defaultDraftStore().putDraft(draft)
-export const getDraft = (layoutId: string, tabId: string) => defaultDraftStore().getDraft(layoutId, tabId)
-export const listDrafts = (layoutId: string) => defaultDraftStore().listDrafts(layoutId)
-export const deleteDraft = (layoutId: string, tabId: string) => defaultDraftStore().deleteDraft(layoutId, tabId)

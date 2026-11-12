@@ -1,11 +1,31 @@
 /**
  * The short sentences the screens show: counts, dates, "Edited 5 minutes ago
- * by Noa", the delete dialog's summary and the save conflict message. Pure,
+ * by Dayna", the delete dialog's summary and the save conflict message. Pure,
  * so every wording rule has a test. Times use the device's own time zone.
+ *
+ * Whether a change was the reader's own is told by account id, never by
+ * name: two people can share a display name.
  */
 import type { LayoutDeleteSummary, LayoutKind, WeddingDeleteSummary } from '@/shared/api'
 
-type Person = 'Noa' | 'Aiden'
+/** A person's display name. */
+type Person = string
+
+/**
+ * Who saved a layout or venue, as the server reports it: their account id and
+ * display name. Rows from before accounts have a name and no id.
+ */
+export type EditorRef = { id: string | null; name: string }
+
+/** The server's editedBy and editedById as an EditorRef, or null when no name is known. */
+export function editorRef(info: { editedBy: string | null; editedById: string | null }): EditorRef | null {
+  return info.editedBy === null ? null : { id: info.editedById, name: info.editedBy }
+}
+
+/** True when the edit was made by the reader's own account (an old row with no id never is). */
+export function isOwnEdit(editor: EditorRef | null, meId: string | null): boolean {
+  return editor !== null && editor.id !== null && meId !== null && editor.id === meId
+}
 
 const MONTHS = [
   'January',
@@ -61,9 +81,9 @@ export function defaultLayoutName(kind: LayoutKind): string {
 
 const MAX_NAME = 200
 
-/** "Reception plan (Noa's copy)", for "Keep mine as a new copy". Shortens a long name so the copy fits. */
-export function copyLayoutName(name: string, author: Person): string {
-  const suffix = ` (${author}'s copy)`
+/** "Reception plan (Dayna's copy)", for "Keep mine as a new copy". Shortens a long name so the copy fits. */
+export function copyLayoutName(name: string, displayName: Person): string {
+  const suffix = ` (${displayName}'s copy)`
   return `${name.slice(0, MAX_NAME - suffix.length).trimEnd()}${suffix}`
 }
 
@@ -114,7 +134,7 @@ export function relativeTime(iso: string, nowMs: number): string {
   return shortDate(date, now)
 }
 
-/** "Edited 5 minutes ago by Noa". */
+/** "Edited 5 minutes ago by Dayna". */
 export function editedLine(updatedAt: string, editedBy: Person | null, nowMs: number): string {
   const when = relativeTime(updatedAt, nowMs)
   return editedBy ? `Edited ${when} by ${editedBy}` : `Edited ${when}`
@@ -147,16 +167,18 @@ export function layoutDeleteMessage(s: LayoutDeleteSummary): string {
 }
 
 /**
- * The save conflict message (PLAN section 5, "Answers"): "Aiden changed this
- * layout at 3:42 pm." When the name is this device's own, the change came from
- * another tab or device.
+ * The save conflict message (PLAN section 5, "Answers"): "Dayna changed this
+ * layout at 3:42 pm." When the save was the reader's own account (same id),
+ * it came from another tab or device: "You changed this layout in another tab
+ * or on another device at 3:42 pm." An old save with a name and no id shows
+ * the name.
  */
-export function conflictMessage(editedBy: Person | null, updatedAt: string, me: Person | null, now: Date): string {
+export function conflictMessage(editor: EditorRef | null, updatedAt: string, meId: string | null, now: Date): string {
   const date = new Date(updatedAt)
   const when = Number.isFinite(date.getTime()) ? ` ${whenText(date, now)}` : ''
-  if (editedBy === null) return `Someone changed this layout${when}.`
-  if (editedBy === me) return `${editedBy} changed this layout from another tab or device${when}.`
-  return `${editedBy} changed this layout${when}.`
+  if (editor === null) return `Someone changed this layout${when}.`
+  if (isOwnEdit(editor, meId)) return `You changed this layout in another tab or on another device${when}.`
+  return `${editor.name} changed this layout${when}.`
 }
 
 /**
@@ -168,7 +190,7 @@ export function conflictMessage(editedBy: Person | null, updatedAt: string, me: 
 export type ConflictSource = 'save' | 'recovery' | 'recovery-partly-saved'
 
 /**
- * The conflict dialog's text under "Aiden changed this layout at 3:42 pm.":
+ * The conflict dialog's text under "Dayna changed this layout at 3:42 pm.":
  * what is not saved, and plainly what each button does with it.
  */
 export function conflictChoiceMessage(source: ConflictSource): string {
@@ -191,9 +213,18 @@ export function conflictChoiceMessage(source: ConflictSource): string {
   }
 }
 
-/** The notice after quietly loading a newer version: "Loaded Aiden's changes". */
-export function loadedChangesMessage(editedBy: Person | null, me: Person | null): string {
-  if (editedBy === null) return 'Loaded the latest changes'
-  if (editedBy === me) return 'Loaded changes from another tab or device'
-  return `Loaded ${editedBy}'s changes`
+/** The notice after quietly loading a newer version: "Loaded Dayna's changes", or yours from another tab. */
+export function loadedChangesMessage(editor: EditorRef | null, meId: string | null): string {
+  if (editor === null) return 'Loaded the latest changes'
+  if (isOwnEdit(editor, meId)) return 'Loaded your changes from another tab or device'
+  return `Loaded ${editor.name}'s changes`
+}
+
+/**
+ * Why a tab stopped saving after someone else signed in on this browser: its
+ * edits belong to the account the page was opened for, and must never be
+ * sent under another one.
+ */
+export function otherUserMessage(displayName: Person): string {
+  return `Someone else signed in on this browser. Sign in again as ${displayName} to save your changes.`
 }

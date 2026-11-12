@@ -1,54 +1,45 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { expect, type APIRequestContext, type BrowserContext, type Page, type Route, type TestInfo } from '@playwright/test'
+import { expect, type APIRequestContext, type Page, type Route, type TestInfo } from '@playwright/test'
 import type { Canvas } from '../src/domain/canvas-schema'
 import { addRoundTable } from '../src/domain/round-table'
 import type { LayoutDetail, SaveLayoutOk, WeddingSummary } from '../src/shared/api'
 import { addControl, setMode } from './canvas'
+import { E2E_USERS, userPassword, type Who } from './users'
 
 export { addRoundTable, addPreset } from './canvas'
+export { E2E_USERS, userPassword, type Who } from './users'
 
-/** The password this run's server was started with (made up per run). */
+/** The site password this run's server was started with (made up per run; it only opens /setup now). */
 export function sitePassword(): string {
   const value = process.env.E2E_SITE_PASSWORD
   if (!value) throw new Error('E2E_SITE_PASSWORD is not set; run through playwright.config.ts')
   return value
 }
 
-export async function signIn(page: Page, next = '/'): Promise<void> {
+/** Signs the page in as one of the run's accounts (e2e/users.ts): A, an admin, unless told otherwise. */
+export async function signIn(page: Page, who: Who = 'a', next = '/'): Promise<void> {
   await page.goto(next === '/' ? '/login' : `/login?next=${encodeURIComponent(next)}`)
-  await page.getByLabel('Password').fill(sitePassword())
-  await page.getByRole('button', { name: 'Enter' }).click()
+  await page.getByLabel('Email').fill(E2E_USERS[who].email)
+  await page.getByLabel('Password').fill(userPassword(who))
+  await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page).not.toHaveURL(/\/login/)
 }
 
 /** Signs a bare request context in (no page), for setting up data through the API. */
-export async function signInRequest(request: APIRequestContext): Promise<void> {
-  const res = await request.post('/api/auth/login', { data: { password: sitePassword() } })
+export async function signInRequest(request: APIRequestContext, who: Who = 'a'): Promise<void> {
+  const res = await request.post('/api/auth/login', { data: { email: E2E_USERS[who].email, password: userPassword(who) } })
   expect(res.status()).toBe(200)
 }
 
-// ---------- Who is using this device ----------
-
-/** The localStorage key src/client/author.ts reads. */
-export const AUTHOR_KEY = 'seat-plan:author'
-export type Author = 'Noa' | 'Aiden'
-
 /**
- * Picks who is using this device before any page script runs, so the "Who is
- * using this device?" prompt stays away. Only fills an empty choice, so a test
- * can still switch with the top bar.
+ * Logs out through the user menu (src/client/ui/UserMenu.tsx). Pass
+ * `answer` when the page has unsaved changes: the sign-out asks first.
  */
-export async function presetAuthor(context: BrowserContext, author: Author = 'Noa'): Promise<void> {
-  await context.addInitScript(
-    ([key, value]) => {
-      try {
-        if (!window.localStorage.getItem(key)) window.localStorage.setItem(key, value)
-      } catch {
-        // about:blank and the like have no storage.
-      }
-    },
-    [AUTHOR_KEY, author] as const,
-  )
+export async function logOut(page: Page, answer?: 'accept' | 'dismiss'): Promise<void> {
+  if (answer) page.once('dialog', (dialog) => void (answer === 'accept' ? dialog.accept() : dialog.dismiss()))
+  await page.getByTestId('user-menu').click()
+  await page.getByRole('menuitem', { name: 'Log out' }).click()
+  if (answer !== 'dismiss') await expect(page).toHaveURL(/\/login/)
 }
 
 // ---------- Names ----------
@@ -63,8 +54,15 @@ export function uniqueName(label: string, testInfo: TestInfo): string {
 
 // ---------- Data through the API (the page's cookies) ----------
 
-export async function apiCreateWedding(request: APIRequestContext, name: string): Promise<WeddingSummary> {
-  const res = await request.post('/api/weddings', { data: { id: randomUUID(), name } })
+/** The partners every wedding had before names were stored, so guest sides read Noa, Aiden and Both. */
+const NOA_AIDEN = { partner1Name: 'Noa', partner2Name: 'Aiden' }
+
+export async function apiCreateWedding(
+  request: APIRequestContext,
+  name: string,
+  partners: { partner1Name: string | null; partner2Name: string | null } = NOA_AIDEN,
+): Promise<WeddingSummary> {
+  const res = await request.post('/api/weddings', { data: { id: randomUUID(), name, ...partners } })
   expect(res.status(), await res.text()).toBe(201)
   return (await res.json()) as WeddingSummary
 }
@@ -72,15 +70,15 @@ export async function apiCreateWedding(request: APIRequestContext, name: string)
 export async function apiCreateLayout(
   request: APIRequestContext,
   weddingId: string,
-  options: { name: string; kind?: 'reception' | 'ceremony'; venueTemplateId?: string | null; editedBy?: Author },
+  options: { name: string; kind?: 'reception' | 'ceremony'; venueTemplateId?: string | null },
 ): Promise<LayoutDetail> {
+  // The server records the signed-in user (the request's session) as the editor.
   const res = await request.post(`/api/weddings/${weddingId}/layouts`, {
     data: {
       id: randomUUID(),
       name: options.name,
       kind: options.kind ?? 'reception',
       venueTemplateId: options.venueTemplateId ?? null,
-      editedBy: options.editedBy ?? 'Noa',
     },
   })
   expect(res.status(), await res.text()).toBe(201)
@@ -98,12 +96,11 @@ export async function apiAddTables(
   request: APIRequestContext,
   layout: Pick<LayoutDetail, 'id' | 'version' | 'canvas'>,
   tables: number,
-  editedBy: Author = 'Noa',
 ): Promise<SaveLayoutOk> {
   let canvas: Canvas = layout.canvas
   for (let i = 0; i < tables; i++) canvas = addRoundTable(canvas, randomUUID())
   const res = await request.put(`/api/layouts/${layout.id}`, {
-    data: { baseVersion: layout.version, saveId: randomUUID(), editedBy, tabId: 'e2e-setup', canvas },
+    data: { baseVersion: layout.version, saveId: randomUUID(), tabId: 'e2e-setup', canvas },
   })
   expect(res.status(), await res.text()).toBe(200)
   return (await res.json()) as SaveLayoutOk
@@ -114,10 +111,9 @@ export async function apiPutCanvas(
   request: APIRequestContext,
   layout: Pick<LayoutDetail, 'id' | 'version'>,
   canvas: Canvas,
-  editedBy: Author = 'Noa',
 ): Promise<SaveLayoutOk> {
   const res = await request.put(`/api/layouts/${layout.id}`, {
-    data: { baseVersion: layout.version, saveId: randomUUID(), editedBy, tabId: 'e2e-setup', canvas },
+    data: { baseVersion: layout.version, saveId: randomUUID(), tabId: 'e2e-setup', canvas },
   })
   expect(res.status(), await res.text()).toBe(200)
   return (await res.json()) as SaveLayoutOk

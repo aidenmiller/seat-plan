@@ -5,7 +5,7 @@
  */
 const buttonBase =
   'inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium ' +
-  'outline-none focus-visible:ring-2 focus-visible:ring-blue-700/50 focus-visible:ring-offset-1 ' +
+  'outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-1 ' +
   'disabled:cursor-not-allowed disabled:opacity-50'
 
 export const primaryButton = `${buttonBase} bg-blue-900 text-white hover:bg-blue-800`

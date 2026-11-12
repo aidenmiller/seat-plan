@@ -6,9 +6,10 @@ import { createWedding, errorMessage } from '@/client/api'
 import { randomId } from '@/client/sync/random-id'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { ChoiceGroup, TextField, UNIT_CHOICES } from '@/client/ui/fields'
+import { PartnerNameFields } from '@/client/ui/PartnerNameFields'
 import { errorClass, primaryButton, secondaryButton } from '@/client/ui/styles'
 
-/** "New wedding": name, optional date, feet or meters. Opens the new wedding once made. */
+/** "New wedding": name, optional date, the partners' names, feet or meters. Opens the new wedding once made. */
 export function NewWeddingButton() {
   const [open, setOpen] = useState(false)
   return (
@@ -27,6 +28,8 @@ function NewWeddingForm({ onCancel }: { onCancel: () => void }) {
   const router = useRouter()
   const [name, setName] = useState('')
   const [date, setDate] = useState('')
+  const [partner1, setPartner1] = useState('')
+  const [partner2, setPartner2] = useState('')
   const [unit, setUnit] = useState<'ft' | 'm'>('ft')
   const [nameError, setNameError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +48,14 @@ function NewWeddingForm({ onCancel }: { onCancel: () => void }) {
     setBusy(true)
     setError(null)
     try {
-      const wedding = await createWedding({ id, name: trimmed, date: date || null, unit })
+      const wedding = await createWedding({
+        id,
+        name: trimmed,
+        date: date || null,
+        unit,
+        partner1Name: partner1.trim() || null,
+        partner2Name: partner2.trim() || null,
+      })
       router.push(`/w/${wedding.id}/layouts`)
     } catch (err) {
       setError(`Could not create the wedding. ${errorMessage(err)}`)
@@ -63,12 +73,13 @@ function NewWeddingForm({ onCancel }: { onCancel: () => void }) {
           setNameError(null)
         }}
         error={nameError}
-        placeholder="Noa & Aiden"
+        placeholder="e.g. Sam & Alex"
         maxLength={200}
         autoComplete="off"
         required
       />
       <TextField label="Date (optional)" type="date" value={date} onChange={setDate} />
+      <PartnerNameFields partner1={partner1} partner2={partner2} onPartner1={setPartner1} onPartner2={setPartner2} />
       <ChoiceGroup legend="Measure in" name="unit" value={unit} onChange={setUnit} choices={UNIT_CHOICES} />
       {error && (
         <p role="alert" className={errorClass}>

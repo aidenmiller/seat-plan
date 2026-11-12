@@ -1,0 +1,4 @@
+# The sample guest list is a CSV with CRLF line ends, and a test compares it
+# byte for byte with what the app generates. Keep git from changing its line
+# ends on any machine.
+public/samples/guests-sample.csv -text

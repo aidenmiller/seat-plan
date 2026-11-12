@@ -30,7 +30,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { acceptVenueImport, errorMessage, getVenue, renameVenue, restoreVenueRevision, venueConflictOf, venueWallCheck } from '@/client/api'
-import { getAuthor, useAuthor } from '@/client/author'
+import { useCurrentUser } from '@/client/current-user'
 import { createDocStore } from '@/client/editor/doc-store'
 import { ZoomPercentLabel } from '@/client/editor/camera/ZoomPercentLabel'
 import { Icon } from '@/client/editor/icons/glyphs'
@@ -40,19 +40,22 @@ import { usePhoneLayout } from '@/client/editor/panels/editor-ui'
 import { browserStorage, readDeviceView } from '@/client/editor/state/device-view'
 import { useStoreSelector } from '@/client/editor/state/store'
 import { randomId } from '@/client/sync/random-id'
+import { registerSaver } from '@/client/sync/saver-registry'
 import type { LayoutSaver, SaveStatus } from '@/client/sync/types'
 import { useUnloadGuard } from '@/client/sync/unload'
-import { AuthorSwitch } from '@/client/ui/AuthorSwitch'
 import { BottomSheet, type SheetSnap } from '@/client/ui/BottomSheet'
 import { ContextMenu, type ContextMenuItem } from '@/client/ui/ContextMenu'
 import { InlineName } from '@/client/ui/InlineName'
 import { primaryButton, secondaryButton } from '@/client/ui/styles'
+import { UserMenu } from '@/client/ui/UserMenu'
 import { saveStatusTitle } from '@/client/editor/save-status'
 import { bringFixedToFront, type TemplateDoc } from '@/domain/template-commands'
 import { advanceWallCheck, imageToCanvas, measuredCm, planScale, redrawDraft, scaleLabels, wallCheckMessage, type WallCheckLayout } from '@/domain/template-import'
 import { formatLength } from '@/domain/units'
-import { loadedChangesText, restoreReloadedText } from '@/domain/venue-wording'
+import { loadedChangesText, restoreReloadedText, venueConflictText, venueReadOnlyText } from '@/domain/venue-wording'
+import { editorRef } from '@/domain/wording'
 import type { VenueDetail, VenueImageInfo, VenueWallCheck } from '@/shared/api'
+import { copyHrefFromBack, useMakeCopy } from '../make-copy'
 import { floorplanBody, scaledDimensionLabels, storedImagePlan } from '../import/plan-body'
 import { ImportDialog, type ImportResult } from '../import/ImportDialog'
 import { DraftPanel, type DraftState } from './DraftPanel'
@@ -72,6 +75,9 @@ import { ToolDrawer, ToolPanel } from './ToolPanel'
 import { SELECT } from './ui-store'
 
 type Tab = 'draft' | 'properties' | 'plan' | 'revisions'
+
+/** What a venue you may only view shows: no Revisions (nothing to put back), no import. */
+const VIEW_ONLY_TABS: Tab[] = ['properties', 'plan']
 
 const TAB_LABELS: Record<Tab, string> = { draft: 'Draft', properties: 'Properties', plan: 'Plan image', revisions: 'Revisions' }
 const SHEET_STRIP_PX = 88
@@ -116,7 +122,7 @@ export type TemplateEditorScreenProps = {
 
 export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenProps) {
   const pathname = usePathname()
-  const author = useAuthor()
+  const user = useCurrentUser()
   const phone = usePhoneLayout()
   const [unit, setUnit] = useVenueUnit()
   const [initial] = useState(venue)
@@ -138,10 +144,13 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
   const [toolsOpen, setToolsOpen] = useState(false)
   const [menu, setMenu] = useState<{ at: { x: number; y: number }; items: ContextMenuItem[] } | null>(null)
   const [resolving, setResolving] = useState(false)
+  // A venue the server says this person may not change (the library, someone else's, or one with no owner): no saver, no tools.
+  const readOnly = !venue.canEdit
+  const makeCopy = useMakeCopy(venue.id, copyHrefFromBack(backHref))
 
   const conflict = status?.kind === 'conflict' ? status : null
   const failed = status?.kind === 'failed' ? status : null
-  const canEdit = author !== null && !busy && !resolving && (draft !== null || (saver !== null && conflict === null && failed === null))
+  const canEdit = !busy && !resolving && (draft !== null || (saver !== null && conflict === null && failed === null))
   const shownImage = draft ? imageInfo(draft.image) : imageInfo(referenceImage)
 
   const [bridge] = useState(createBridge)
@@ -188,7 +197,6 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
       },
       onRefused() {
         if (editor.ui.getState().mode === 'view') setNotice('Switch to Edit to change the venue.')
-        else if (getAuthor() === null) setNotice('Pick Noa or Aiden at the top first.')
       },
     })
   })
@@ -206,6 +214,11 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
   }, [editor])
 
   useEffect(() => editor.setUnit(unit), [editor, unit])
+
+  // Viewing only: always View mode (the device's saved choice is left alone), so no tool or edit control shows.
+  useEffect(() => {
+    if (readOnly && deviceKnown && mode !== 'view') editor.ui.setMode('view')
+  }, [readOnly, deviceKnown, mode, editor])
 
   useLayoutEffect(() => {
     editor.camera.setFitInsets(phone ? PHONE_INSETS : DESKTOP_INSETS)
@@ -228,10 +241,19 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
     return () => cancelAnimationFrame(frame)
   }, [deviceKnown, editor])
 
-  // The save engine, pointed at the venue route.
+  // The save engine, pointed at the venue route, saving as the signed-in user; signing out reaches it through the registry.
+  const userId = user.id
   useEffect(() => {
+    // Nothing to save when the venue cannot be changed: starting the saver would only end in a refused save.
+    if (readOnly) return
     let live = true
-    const s = createTemplateSaver({ templateId: initial.id, baseVersion: initial.version, editedBy: () => getAuthor() ?? 'Noa', onStatus: setStatus })
+    const s = createTemplateSaver({ templateId: initial.id, baseVersion: initial.version, userId, onStatus: setStatus })
+    const unregister = registerSaver({
+      flush: () => s.flush(),
+      hasUnsavedChanges: () => s.hasUnsavedChanges(),
+      resume: () => s.resume(),
+      stop: async () => s.dispose(),
+    })
     // Handed to React after this effect, as the layout session hands over its saver.
     void Promise.resolve().then(() => {
       if (!live) return
@@ -241,9 +263,10 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
     return () => {
       live = false
       s.dispose()
+      unregister()
       setSaver(null)
     }
-  }, [initial])
+  }, [initial, userId, readOnly])
 
   useUnloadGuard(saver)
 
@@ -325,7 +348,7 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
     setReferenceImage(fresh.referenceImage)
     setImportedBy(fresh.importedBy)
     setName(fresh.name)
-    setDraft((d) => (d ? { ...d, saved: { items: fresh.fixedItems, reference: fresh.reference }, over: { who: fresh.editedBy } } : d))
+    setDraft((d) => (d ? { ...d, saved: { items: fresh.fixedItems, reference: fresh.reference }, over: { who: editorRef(fresh) } } : d))
     setRevisionsKey((k) => k + 1)
   }
 
@@ -352,7 +375,7 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
     }
     rebaseWallCheck()
     await loadServerCopy(fresh)
-    setNotice(loadedChangesText(fresh.editedBy))
+    setNotice(loadedChangesText(editorRef(fresh), user.id))
   }
   const catchUpRef = useRef(catchUp)
   useEffect(() => {
@@ -406,10 +429,9 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
   /** Puts a revision back. Answers with a sentence to show when someone else's save came first and was loaded instead. */
   async function restore(revisionId: string, undoImport: boolean): Promise<string | null> {
     if (!(await settled()) || !saver) return null
-    const who = author ?? 'Noa'
     setBusy(true)
     try {
-      await restoreVenueRevision(initial.id, revisionId, { baseVersion: saver.getBaseVersion(), saveId: randomId(), editedBy: who })
+      await restoreVenueRevision(initial.id, revisionId, { baseVersion: saver.getBaseVersion(), saveId: randomId() })
       await loadServerCopy()
       void runWallCheck()
       return null
@@ -418,7 +440,7 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
       if (!theirs) throw err
       rebaseWallCheck()
       await loadServerCopy()
-      return restoreReloadedText(theirs.editedBy, undoImport)
+      return restoreReloadedText(editorRef(theirs), user.id, undoImport)
     } finally {
       setBusy(false)
     }
@@ -431,17 +453,13 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
    * so the draft's Discard and Accept start from the latest version.
    */
   async function readyForImport(): Promise<boolean> {
-    if (!author) {
-      setNotice('Pick Noa or Aiden at the top first.')
-      return false
-    }
     if (!(await settled()) || !saver) return false
     try {
       const fresh = await getVenue(initial.id)
       if (fresh.version !== saver.getBaseVersion()) {
         rebaseWallCheck()
         await loadServerCopy(fresh)
-        setNotice(loadedChangesText(fresh.editedBy))
+        setNotice(loadedChangesText(editorRef(fresh), user.id))
       }
     } catch {
       // Accept checks the version again.
@@ -523,14 +541,12 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
     if (!draft || !saver) return
     const doc = store.getState().canvas
     if (!doc.reference) return
-    const who = author ?? 'Noa'
     setBusy(true)
     setDraftError(null)
     try {
       const ok = await acceptVenueImport(initial.id, {
         baseVersion: saver.getBaseVersion(),
         saveId: draft.saveId,
-        editedBy: who,
         fixedItems: doc.items,
         imageId: draft.image.id,
         reference: doc.reference,
@@ -578,10 +594,9 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
 
   // ---------------------------------------------------------------- layout
 
-  const tabs: Tab[] = draft ? ['draft', 'properties', 'plan'] : ['properties', 'plan', 'revisions']
+  const tabs: Tab[] = draft ? ['draft', 'properties', 'plan'] : readOnly ? VIEW_ONLY_TABS : ['properties', 'plan', 'revisions']
   const openTab = tabs.includes(tab) ? tab : tabs[0]
-  const view = templateStatusView(status, draft !== null)
-  const hint = author === null ? 'Pick Noa or Aiden to start editing.' : null
+  const view = templateStatusView(status, draft !== null, readOnly)
   const zoomBottom = phone ? SHEET_STRIP_PX + 8 : 8
 
   function panel(t: Tab) {
@@ -593,6 +608,7 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
             unit={unit}
             busy={busy}
             error={draftError}
+            meId={user.id}
             onChange={setDraft}
             onRescale={rescaleDraft}
             onAccept={() => void acceptDraft()}
@@ -601,13 +617,14 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
           />
         ) : null
       case 'properties':
-        return <TemplatePropertiesPanel unit={unit} canEdit={canEdit} itemCount={itemCount} onImport={draft ? undefined : () => void openImport()} />
+        return <TemplatePropertiesPanel unit={unit} canEdit={canEdit} itemCount={itemCount} onImport={draft || readOnly ? undefined : () => void openImport()} />
       case 'plan':
         return (
           <ReferencePanel
             image={shownImage}
             draft={draft !== null}
             canEdit={canEdit}
+            readOnly={readOnly}
             onImport={() => void openImport()}
             rerun={!referenceImage ? null : importedBy === 'pdf vectors' ? 'pdf' : 'picture'}
             onRerun={() => void rerunStored()}
@@ -653,41 +670,59 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
             <span className="hidden sm:inline">Venues</span>
           </Link>
           <h1 className="min-w-0 flex-1">
-            <InlineName
-              value={name}
-              label="Venue name"
-              textClassName="text-base font-semibold sm:text-lg"
-              testId="venue-title"
-              onSave={async (next) => {
-                const updated = await renameVenue(initial.id, { name: next })
-                setName(updated.name)
-              }}
-            />
+            {readOnly ? (
+              <span className="flex min-h-11 items-center text-base font-semibold sm:text-lg" data-testid="venue-title">
+                <span className="min-w-0 truncate">{name}</span>
+              </span>
+            ) : (
+              <InlineName
+                value={name}
+                label="Venue name"
+                textClassName="text-base font-semibold sm:text-lg"
+                testId="venue-title"
+                onSave={async (next) => {
+                  const updated = await renameVenue(initial.id, { name: next })
+                  setName(updated.name)
+                }}
+              />
+            )}
           </h1>
           <p
             role="status"
             aria-live="polite"
             title={saveStatusTitle(view)}
             data-testid="save-status"
-            data-status={draft ? 'draft' : (status?.kind ?? 'opening')}
+            data-status={readOnly ? 'read-only' : draft ? 'draft' : (status?.kind ?? 'opening')}
             className={`w-24 shrink-0 truncate text-right text-sm sm:w-48 ${TONE_CLASS[view.tone]}`}
           >
             {view.text}
           </p>
-          {!draft && !phone && (
+          {!draft && !phone && !readOnly && (
             <button type="button" className={`${secondaryButton} shrink-0`} onClick={() => void openImport()} disabled={!canEdit} data-testid="import-plan">
               Import plan
             </button>
           )}
-          <TemplateModeSwitch compact={phone} />
-          <AuthorSwitch compact />
+          {!readOnly && <TemplateModeSwitch compact={phone} />}
+          <UserMenu compact />
         </header>
 
+        {readOnly && (
+          <div role="note" data-testid="template-read-only" className="flex flex-wrap items-center gap-2 border-b border-amber-300 bg-amber-100 px-3 py-2 text-sm text-amber-950">
+            <span className="min-w-0 flex-1 basis-48">{venueReadOnlyText(venue)}</span>
+            <button type="button" className={secondaryButton} onClick={() => void makeCopy.copy()} disabled={makeCopy.busy} data-testid="make-copy">
+              {makeCopy.busy ? 'Copying…' : 'Make my own copy'}
+            </button>
+            {makeCopy.error && (
+              <p role="alert" className="w-full text-red-800">
+                {makeCopy.error}
+              </p>
+            )}
+          </div>
+        )}
         {conflict && !draft && (
           <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950" data-testid="template-conflict">
             <span className="min-w-0 flex-1 basis-48">
-              {conflict.server.editedBy ? `${conflict.server.editedBy} saved this venue after you opened it.` : 'This venue was saved somewhere else after you opened it.'} Your
-              last change is not saved.
+              {venueConflictText(editorRef(conflict.server), user.id)} Your last change is not saved.
             </span>
             <button type="button" className={primaryButton} onClick={() => void loadTheirs()} disabled={resolving}>
               Load their version
@@ -700,6 +735,7 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
         {failed && (
           <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" data-testid="template-failed">
             <span className="min-w-0 flex-1 basis-48">{failed.message}</span>
+            {/* After someone else signed in, signing in from here would land as them: the message says what to do. */}
             {failed.reason === 'signed-out' && (
               <a href={`/login?next=${encodeURIComponent(pathname)}`} className={secondaryButton}>
                 Sign in again
@@ -734,7 +770,7 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
         )}
 
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
-          {!phone && mode === 'edit' && (
+          {!phone && !readOnly && mode === 'edit' && (
             <aside aria-label="Tools" className="hidden w-48 shrink-0 overflow-y-auto overscroll-contain border-r border-stone-200 bg-stone-50 md:block lg:w-56">
               <ToolPanel disabled={!canEdit} />
             </aside>
@@ -742,7 +778,7 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
 
           <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
             <TemplateCanvas image={shownImage} draft={draft !== null} scaleLine={scaleLine} unit={unit} />
-            <TemplateToolbar phone={phone} canEdit={canEdit} unit={unit} onUnit={setUnit} onOpenTools={() => setToolsOpen(true)} hint={hint} />
+            <TemplateToolbar phone={phone} canEdit={canEdit} unit={unit} onUnit={setUnit} onOpenTools={() => setToolsOpen(true)} hint={null} />
             <div className="absolute right-2 z-10" style={{ bottom: zoomBottom }}>
               <TemplateZoomControls />
             </div>
@@ -783,7 +819,7 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
               {panel(openTab)}
             </BottomSheet>
           )}
-          {phone && <ToolDrawer open={toolsOpen && mode === 'edit'} onClose={() => setToolsOpen(false)} disabled={!canEdit} />}
+          {phone && !readOnly && <ToolDrawer open={toolsOpen && mode === 'edit'} onClose={() => setToolsOpen(false)} disabled={!canEdit} />}
         </div>
 
         <ImportDialog

@@ -36,11 +36,7 @@ import {
   selectGuest,
   waitForGuestList,
 } from './guest-list'
-import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, editorPath, presetAuthor, signIn, uniqueName } from './helpers'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
+import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, editorPath, signIn, uniqueName } from './helpers'
 
 /** Opens the editor's Guests tab: the right panel's on a laptop, the bottom sheet's on a phone. */
 async function openGuestsTab(page: Page): Promise<Locator> {
@@ -318,9 +314,9 @@ test('the selection bar says how many selected guests the search and filters hid
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Hidden selection', testInfo))
   const [ava, ben, cy] = await apiAddGuests(page.request, wedding.id, [
-    { firstName: 'Ava', lastName: 'Cohen', side: 'Noa' },
-    { firstName: 'Ben', lastName: 'Levi', side: 'Noa' },
-    { firstName: 'Cy', lastName: 'Diaz', side: 'Aiden' },
+    { firstName: 'Ava', lastName: 'Cohen', side: 'partner1' },
+    { firstName: 'Ben', lastName: 'Levi', side: 'partner1' },
+    { firstName: 'Cy', lastName: 'Diaz', side: 'partner2' },
   ])
   await page.goto(guestsPath(wedding.id))
   await waitForGuestList(page)

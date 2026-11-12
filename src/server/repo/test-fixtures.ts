@@ -107,7 +107,7 @@ export async function makeLayout(
       name: opts.name ?? 'Reception',
       kind: opts.kind ?? 'reception',
       venueTemplateId: opts.venueTemplateId ?? null,
-      editedBy: 'Noa',
+      editor: { userId: null, name: 'Noa' },
     }),
   )
   if (result.status !== 'created') throw new Error(`makeLayout: ${result.status}`)

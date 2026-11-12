@@ -74,3 +74,40 @@ describe('the clipboard', () => {
     expect(clip.read()).toBeNull()
   })
 })
+
+describe('the clipboard on a shared device', () => {
+  const AVERY = '11111111-1111-4111-8111-111111111111'
+  const BLAKE = '22222222-2222-4222-8222-222222222222'
+  const note = () => makeItem('bar', { x: 0, y: 0 }, 'b', emptyCanvas())
+
+  it('pastes in another tab of the same person', () => {
+    const storage = memoryStorage()
+    createClipboard({ storage, memory: freshMemory(), userId: () => AVERY }).write([note()], 'L1')
+    expect(createClipboard({ storage, memory: freshMemory(), userId: () => AVERY }).read()?.layoutId).toBe('L1')
+  })
+
+  it('never hands one person’s copy to someone else signed in after them, and clears it', () => {
+    const storage = memoryStorage()
+    // Avery copies; Blake signs in over Avery's session (Avery never signed out) and opens a layout.
+    createClipboard({ storage, memory: freshMemory(), userId: () => AVERY }).write([seated()], 'L1')
+    const blakes = createClipboard({ storage, memory: freshMemory(), userId: () => BLAKE })
+    expect(blakes.read()).toBeNull()
+    expect(storage.data.has(CLIPBOARD_KEY)).toBe(false)
+    // Blake's own copy works as before.
+    blakes.write([note()], 'L2')
+    expect(blakes.read()?.layoutId).toBe('L2')
+  })
+
+  it('ignores, and clears, a copy stored without a person (from before this change)', () => {
+    const storage = memoryStorage()
+    storage.data.set(CLIPBOARD_KEY, JSON.stringify({ copyId: 'x', layoutId: 'L', copiedAt: 1, items: [note()] }))
+    expect(createClipboard({ storage, memory: freshMemory(), userId: () => AVERY }).read()).toBeNull()
+    expect(storage.data.has(CLIPBOARD_KEY)).toBe(false)
+  })
+
+  it('never hands this tab’s copy to someone else either', () => {
+    const memory = freshMemory()
+    createClipboard({ memory, userId: () => AVERY }).write([note()], 'L1')
+    expect(createClipboard({ memory, userId: () => BLAKE }).read()).toBeNull()
+  })
+})

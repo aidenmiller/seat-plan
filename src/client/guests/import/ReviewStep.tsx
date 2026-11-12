@@ -11,12 +11,14 @@
 import { useId, type ReactNode } from 'react'
 import { primaryButton, secondaryButton } from '@/client/ui/styles'
 import type { ImportRow, RowIssue } from '@/domain/csv/columns'
-import { CHANGE_FIELD_LABELS, type ReviewItem } from '@/domain/csv/import-diff'
+import { CHANGE_FIELD_LABELS, type FieldChange, type ReviewItem } from '@/domain/csv/import-diff'
 import type { PartnerMatch, PartnerPick } from '@/domain/csv/partner-match'
 import { compareByName, fullName } from '@/domain/guest-list'
+import { legacySide, sideLabel, type PartnerNames } from '@/domain/partners'
 import { plural } from '@/domain/wording'
 import type { Guest, ImportPreview } from '@/shared/api'
 import { GroupChip } from '../cells'
+import { usePartnerNames } from '../partners-context'
 import { decodePartnerPick, encodePartnerPick, missingSeatLines, type ReviewChoice } from './picks'
 
 export type ReviewStepProps = {
@@ -39,9 +41,16 @@ export type ReviewStepProps = {
   onImport(): void
 }
 
+/** A change's before or after as it reads: a side by the wedding's names, anything else as it is. */
+function changeText(change: FieldChange, value: string, partners: PartnerNames): string {
+  const side = change.field === 'side' ? legacySide(value) : null
+  return side ? sideLabel(partners, side) : value
+}
+
 export function ReviewStep(props: ReviewStepProps) {
   const { preview, rows, skipped, warnings, guests, removeMissing, busy, refreshing, error } = props
   const { plan } = preview
+  const partners = usePartnerNames()
   const rowByNumber = new Map(rows.map((r) => [r.rowNumber, r]))
   const rowName = (n: number) => {
     const r = rowByNumber.get(n)
@@ -147,7 +156,8 @@ export function ReviewStep(props: ReviewStepProps) {
                 <ul className="mt-0.5 space-y-0.5 pl-3 text-stone-700">
                   {c.changes.map((ch) => (
                     <li key={ch.field} className="break-words">
-                      {CHANGE_FIELD_LABELS[ch.field]}: <span className="text-stone-500">{ch.before || 'empty'}</span> to {ch.after || 'empty'}
+                      {CHANGE_FIELD_LABELS[ch.field]}: <span className="text-stone-500">{changeText(ch, ch.before, partners) || 'empty'}</span> to{' '}
+                      {changeText(ch, ch.after, partners) || 'empty'}
                     </li>
                   ))}
                 </ul>

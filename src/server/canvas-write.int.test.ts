@@ -5,10 +5,12 @@
  */
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { makeTestDb } from '../../test/db'
+import { makeUser } from '../../test/auth'
 import { MAX_RECENT_SAVES, writeCanvas } from './canvas-write'
-import { guests, layouts, weddings } from './db/schema'
+import type { Editor } from './editor-name'
+import { guests, layouts, venueTemplates, weddings } from './db/schema'
 import { saveLayout, updateLayout } from './repo/layouts'
 import {
   canvasOf,
@@ -28,14 +30,27 @@ afterAll(async () => {
   await pool.end()
 })
 
-function save(layoutId: string, baseVersion: number, canvas: unknown, extra: { saveId?: string; editedBy?: 'Noa' | 'Aiden' } = {}) {
-  return saveLayout(db, layoutId, {
-    baseVersion,
-    saveId: extra.saveId ?? randomUUID(),
-    editedBy: extra.editedBy ?? 'Noa',
-    tabId: 'tab-1',
-    canvas: canvas as never,
-  })
+/** Two signed-in people who save, as a route passes them (editorOf). */
+const editors: Record<'Noa' | 'Aiden', Editor> = { Noa: { userId: '', name: 'Noa' }, Aiden: { userId: '', name: 'Aiden' } }
+beforeAll(async () => {
+  for (const name of ['Noa', 'Aiden'] as const) editors[name] = { userId: (await makeUser(db, { displayName: name })).id, name }
+})
+
+async function save(layoutId: string, baseVersion: number, canvas: unknown, extra: { saveId?: string; editedBy?: 'Noa' | 'Aiden' } = {}) {
+  // The wedding a route's guard resolves from the layout; any wedding for a layout nobody made.
+  const [row] = await db.select({ weddingId: layouts.weddingId }).from(layouts).where(eq(layouts.id, layoutId))
+  return saveLayout(
+    db,
+    row?.weddingId ?? randomUUID(),
+    layoutId,
+    {
+      baseVersion,
+      saveId: extra.saveId ?? randomUUID(),
+      tabId: 'tab-1',
+      canvas: canvas as never,
+    },
+    editors[extra.editedBy ?? 'Noa'],
+  )
 }
 
 describe('saving a layout', () => {
@@ -48,12 +63,13 @@ describe('saving a layout', () => {
     const saveId = randomUUID()
     const canvas = canvasOf(roundTable('t1', 3, [null, ben], 'Family'), chairRow('r1', 2, [ann, cy], "Noa's side"))
     const result = await save(layoutId, 1, canvas, { saveId, editedBy: 'Aiden' })
-    expect(result).toMatchObject({ status: 'saved', version: 2, editedBy: 'Aiden', dropped: [] })
+    expect(result).toMatchObject({ status: 'saved', version: 2, editedBy: 'Aiden', editedById: editors.Aiden.userId, dropped: [] })
 
     const row = await layoutRow(db, layoutId)
     expect(row.version).toBe(2)
     expect(row.lastSaveId).toBe(saveId)
-    expect(row.editedBy).toBe('Aiden')
+    // The signed-in user's id and name; the old Noa / Aiden column is no longer written.
+    expect(row).toMatchObject({ editedBy: null, editedByName: 'Aiden', editedByUserId: editors.Aiden.userId })
     expect(row.canvas).toEqual(canvas)
     expect(row.thumbSvg).toMatch(/^<svg /)
     expect(await seatRows(db, layoutId)).toEqual([
@@ -271,13 +287,16 @@ describe('the layout row lock', () => {
   it('saves racing template changes always leave a thumbnail that matches the final template', async () => {
     const w = await makeWedding(db)
     const t = await makeTemplate(db)
+    // The template's owner changes the venue, so the layout may use it.
+    const owner = { userId: (await makeUser(db)).id, isAdmin: false }
+    await db.update(venueTemplates).set({ ownerUserId: owner.userId }).where(eq(venueTemplates.id, t))
     const layoutId = await makeLayout(db, w, canvasOf(roundTable('t1', 1, [null])))
     let version = 1
     for (let round = 0; round < 10; round++) {
       const target = round % 2 === 0 ? t : null
       const [saved] = await Promise.all([
         save(layoutId, version, canvasOf(roundTable('t1', 1, [null]))),
-        updateLayout(db, layoutId, { venueTemplateId: target }),
+        updateLayout(db, w, layoutId, { venueTemplateId: target }, owner),
       ])
       if (saved.status !== 'saved') throw new Error(saved.status)
       version = saved.version
@@ -306,7 +325,7 @@ describe('writeCanvas modes', () => {
     expect(after.lastSaveId).toBe(before.lastSaveId)
     expect(before.recentSaves).toHaveLength(1)
     expect(after.recentSaves).toEqual(before.recentSaves)
-    expect(after.editedBy).toBe('Aiden')
+    expect(after).toMatchObject({ editedByName: 'Aiden', editedByUserId: editors.Aiden.userId })
     expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime())
     expect(canvasSeats(after.canvas)).toEqual([])
     expect(await seatRows(db, layoutId)).toEqual([])
@@ -326,7 +345,7 @@ describe('writeCanvas modes', () => {
           name: 'Again',
           kind: 'reception',
           venueTemplateId: null,
-          editedBy: 'Noa',
+          editor: editors.Noa,
         }),
       )
     expect(await insert(w)).toEqual({ status: 'created', dropped: [], existed: true })

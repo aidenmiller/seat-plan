@@ -9,10 +9,11 @@ const IMG = '00000000-0000-4000-8000-0000000000b1'
 function file(): BackupFile {
   return {
     format: 'seat-plan-backup',
-    version: 1,
+    version: 2,
     exportedAt: '2026-11-10T12:00:00.000Z',
-    wedding: { id: '00000000-0000-4000-8000-000000000001', name: 'Noa & Aiden', date: null, unit: 'ft', minGapCm: 152.4 },
+    wedding: { id: '00000000-0000-4000-8000-000000000001', name: 'Noa & Aiden', date: null, unit: 'ft', minGapCm: 152.4, partner1Name: 'Noa', partner2Name: 'Aiden' },
     guests: [],
+    members: [{ userId: '00000000-0000-4000-8000-0000000000d1', email: 'noa@example.com', displayName: 'Noa', role: 'owner' }],
     groups: [],
     groupMembers: [],
     rules: [],
@@ -71,6 +72,20 @@ describe('runRestore', () => {
     expect(progress.at(-1)).toEqual({ label: 'Done', done: 6, total: 6 })
   })
 
+  it('sends version 2 with the partner names, and never the members', async () => {
+    const bodies: unknown[] = []
+    const { steps } = fakeSteps(false)
+    await runRestore(file(), 'job-1', () => {}, {
+      ...steps,
+      start: async (body) => {
+        bodies.push(body)
+        return steps.start(body)
+      },
+    })
+    expect(bodies[0]).toMatchObject({ format: 'seat-plan-backup', version: 2, wedding: { partner1Name: 'Noa', partner2Name: 'Aiden' } })
+    expect(bodies[0]).not.toHaveProperty('members')
+  })
+
   it('skips the image when the template was reused', async () => {
     const { calls, steps } = fakeSteps(false)
     await runRestore(file(), 'job-1', () => {}, steps)
@@ -80,8 +95,8 @@ describe('runRestore', () => {
 
 describe('readBackupFile', () => {
   it('says plainly when a file is not a backup', async () => {
-    expect(await readBackupFile(new Blob(['not json']))).toEqual({ ok: false, message: 'This file is not a Seat Plan backup.' })
-    expect(await readBackupFile(new Blob(['{"format":"other"}']))).toEqual({ ok: false, message: 'This file is not a Seat Plan backup.' })
+    expect(await readBackupFile(new Blob(['not json']))).toEqual({ ok: false, message: 'This file is not a backup from Something Blueprint.' })
+    expect(await readBackupFile(new Blob(['{"format":"other"}']))).toEqual({ ok: false, message: 'This file is not a backup from Something Blueprint.' })
     const broken = await readBackupFile(new Blob([JSON.stringify({ ...file(), guests: [{ id: 'x' }] })]))
     expect(broken.ok).toBe(false)
     expect(!broken.ok && broken.message).toMatch(/^This backup file has a problem at guests\.0\./)
@@ -90,5 +105,33 @@ describe('readBackupFile', () => {
   it('reads a good file', async () => {
     const read = await readBackupFile(new Blob([JSON.stringify(file())]))
     expect(read.ok && read.backup.layouts.map((l) => l.name)).toEqual(['Dinner', 'Ceremony'])
+  })
+
+  it('reads a version 1 file as version 2: Noa and Aiden, sides by place, no members', async () => {
+    const guest = { firstName: 'Zoë', lastName: 'Levi', nickname: null, partnerId: null, coupleRuleEnabled: true, household: null, rsvp: 'yes', meal: null, isChild: false, notes: null }
+    const { wedding } = file()
+    const v1: Record<string, unknown> = {
+      ...file(),
+      version: 1,
+      wedding: { id: wedding.id, name: wedding.name, date: wedding.date, unit: wedding.unit, minGapCm: wedding.minGapCm },
+      guests: [
+        { ...guest, id: '00000000-0000-4000-8000-0000000000e1', side: 'Noa' },
+        { ...guest, id: '00000000-0000-4000-8000-0000000000e2', side: 'Aiden' },
+        { ...guest, id: '00000000-0000-4000-8000-0000000000e3', side: 'Both' },
+      ],
+    }
+    delete v1.members
+    const read = await readBackupFile(new Blob([JSON.stringify(v1)]))
+    if (!read.ok) throw new Error(read.message)
+    expect(read.backup.version).toBe(2)
+    expect(read.backup.wedding).toMatchObject({ partner1Name: 'Noa', partner2Name: 'Aiden' })
+    expect(read.backup.guests.map((g) => g.side)).toEqual(['partner1', 'partner2', 'both'])
+    expect(read.backup.members).toEqual([])
+  })
+
+  it('says plainly when a file is from a newer version', async () => {
+    const read = await readBackupFile(new Blob([JSON.stringify({ ...file(), version: 3 })]))
+    expect(read.ok).toBe(false)
+    expect(!read.ok && read.message).toMatch(/^This backup file has a problem at version: /)
   })
 })

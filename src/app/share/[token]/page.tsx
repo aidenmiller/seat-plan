@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 
 /**
  * A venue share link (spec section 2): its own password page, then that one
- * layout in View mode and nothing else. The site cookie opens it too. The
+ * layout in View mode and nothing else. A signed-in member of the wedding (or an admin) opens it with no password. The
  * plan comes from the same data the data route sends, built from the link's
  * switches (PLAN change 24), so hidden parts never reach the browser.
  */

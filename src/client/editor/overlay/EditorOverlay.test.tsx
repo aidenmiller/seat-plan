@@ -8,6 +8,9 @@ import type { ContextMenuRequest } from '../input/controller'
 import { createEditorState, EditorStateProvider } from '../state'
 import { EditorOverlay, moreMenuRequest } from './EditorOverlay'
 
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
+
 function render(items: Item[], setup: (editor: ReturnType<typeof createEditorState>) => void) {
   const editor = createEditorState({
     layoutId: 'L1',
@@ -131,8 +134,8 @@ describe('seating in the overlay', () => {
 })
 
 describe('notes in the overlay', () => {
-  const arrow = makeNote('arrow', { x: 0, y: 300 }, 'Noa', 'blue', 0, 'a')
-  const sticky = { ...makeNote('sticky', { x: 0, y: -300 }, 'Noa', 'pink', 0, 's'), text: 'Call the DJ' }
+  const arrow = makeNote('arrow', { x: 0, y: 300 }, NOA, 'blue', 0, 'a')
+  const sticky = { ...makeNote('sticky', { x: 0, y: -300 }, NOA, 'pink', 0, 's'), text: 'Call the DJ' }
 
   it('shows end handles for a selected arrow, 44 px on touch, and no resize handles', () => {
     const html = render([table, arrow], (e) => e.ui.select(['a']))

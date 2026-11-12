@@ -1,6 +1,6 @@
 /**
  * Acceptance check 21: a venue share link made with the editor's Share
- * button asks for its own password in a fresh browser (no site cookie). A
+ * button asks for its own password in a fresh browser (signed out). A
  * wrong password is refused; the right one opens that one layout in View mode
  * and nothing else. A new password signs the viewer out, and so does turning
  * the link off in the Links tab.
@@ -23,12 +23,11 @@ import { SHARE_RECHECK_MS } from '../src/domain/share-view'
 import type { ShareLink, ShareView } from '../src/shared/api'
 import { itemLocator, itemTransforms, LAPTOP, mouseDrag, PHONE, settledCamera, tableClientCenter, Touch, viewport, type Point } from './canvas'
 import { apiAddGuests, apiSeatGuests, expectHydrated } from './guest-list'
-import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, signIn, uniqueName } from './helpers'
 import { detailLevel, seatOnScreen } from './seating'
 
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
 
 const WRONG = 'That password is wrong, or the link was turned off.'
 
@@ -91,7 +90,7 @@ test('a share link opens one layout with its own password; a new password or tur
   const path = new URL(url).pathname
   await dialog.getByRole('button', { name: 'Done' }).click()
 
-  // The site cookie opens the link too, and that does not count as the venue opening it.
+  // A planner's session (here an admin's) opens the link too, and that does not count as the venue opening it.
   await page.goto(path)
   await expect(page.getByTestId('share-layout-name')).toHaveText(shared.name)
   await page.goto(`/w/${wedding.id}/links`)
@@ -101,7 +100,7 @@ test('a share link opens one layout with its own password; a new password or tur
   await expect(card).toContainText(shared.name)
   await expect(card).toContainText('Not opened yet')
 
-  // A fresh browser with no site cookie gets the link's password page, and its data stays closed.
+  // A fresh, signed-out browser gets the link's password page, and its data stays closed.
   const viewer = await browser.newContext(testInfo.project.name === 'phone' ? PHONE : LAPTOP)
   try {
     const view = await viewer.newPage()
@@ -174,7 +173,7 @@ test('a share link opens one layout with its own password; a new password or tur
     await expect(shareError(view)).toHaveText(WRONG)
     await expectPasswordPage(view)
 
-    // Even the site cookie no longer opens it.
+    // Even a planner's session no longer opens it.
     await page.goto(path)
     await expectPasswordPage(page)
   } finally {
@@ -184,7 +183,7 @@ test('a share link opens one layout with its own password; a new password or tur
 
 // ---------- The viewer ----------
 
-/** A browser with no site cookie, set up as this project's device. */
+/** A signed-out browser, set up as this project's device. */
 async function venueBrowser(browser: Browser, testInfo: TestInfo): Promise<BrowserContext> {
   return browser.newContext(testInfo.project.name === 'phone' ? PHONE : LAPTOP)
 }
@@ -267,7 +266,7 @@ test('the share viewer shows the plan and names, finds a guest, and follows the 
   canvas = { ...canvas, items: [t1 as Item] }
   const t2 = roundTable(canvas, { x: 3000, y: 1800 }, [null, null, null, null, jane!.id, ann!.id])
   const noteText = `Keep Uncle Bob away from the bar ${tag}`
-  const note = { ...makeNote('sticky', { x: 1500, y: -400 }, 'Noa', 'yellow', Date.now(), randomUUID()), text: noteText }
+  const note = { ...makeNote('sticky', { x: 1500, y: -400 }, NOA, 'yellow', Date.now(), randomUUID()), text: noteText }
   canvas = { ...canvas, items: [t1 as Item, t2 as Item, note] }
   await apiPutCanvas(request, layout, canvas)
   const saved = await apiGetLayout(request, layout.id)

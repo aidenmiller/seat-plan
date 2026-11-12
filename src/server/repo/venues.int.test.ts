@@ -3,16 +3,21 @@
  * rename, duplicate (with the image row), save with the version check, delete
  * refused while layouts use the template, images, Accept then "Undo import"
  * through a restored revision, revisions, wall check, and the layout
- * thumbnails a template write redraws.
+ * thumbnails a template write redraws. Also who sees what: templates belong
+ * to their maker, and replies about who uses a template name only layouts in
+ * the viewer's weddings and count the rest.
  */
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { makeTestDb, truncateAll } from '../../../test/db'
+import { makeMember, makeUser } from '../../../test/auth'
 import { makeGridPng } from '@/domain/floorplan/__fixtures__/plans'
 import type { FixedItem, ReferenceMeta } from '@/domain/venue-schema'
 import { MAX_VENUE_IMAGE_BYTES } from '@/shared/api'
-import { layouts, venueImages, venueTemplateRevisions, venueTemplates } from '../db/schema'
+import type { Viewer } from '../auth/venue-access'
+import type { Editor } from '../editor-name'
+import { layouts, users, venueImages, venueTemplateRevisions, venueTemplates } from '../db/schema'
 import { weddingLock } from '../locks'
 import { createLayout, softDeleteLayout, updateLayout } from './layouts'
 import {
@@ -32,14 +37,31 @@ import {
   templateDeleteSummary,
   templateWallCheck,
 } from './venues'
-import { canvasOf, layoutRow, makeLayout, makeWedding, roundTable } from './test-fixtures'
+import { canvasOf, layoutRow, makeLayout, makeWedding as makeBareWedding, roundTable } from './test-fixtures'
 import { softDeleteWedding } from './weddings'
 
 const { pool, db } = makeTestDb()
+/** The planner most tests act as, and someone else. */
+let me: Viewer
+let other: Viewer
+/** Two signed-in people who save, as a route passes them (editorOf). */
+let NOA: Editor
+let AIDEN: Editor
 // Start from what migrations leave, whichever file ran before (one fills the seeded template).
 beforeAll(async () => {
   await truncateAll(pool)
+  me = { userId: (await makeUser(db, { displayName: 'Me' })).id, isAdmin: false }
+  other = { userId: (await makeUser(db, { displayName: 'Other' })).id, isAdmin: false }
+  NOA = { userId: (await makeUser(db, { displayName: 'Noa' })).id, name: 'Noa' }
+  AIDEN = { userId: (await makeUser(db, { displayName: 'Aiden' })).id, name: 'Aiden' }
 })
+
+/** A wedding `me` owns (or `owner`, when given). */
+async function makeWedding(database: typeof db, name?: string, owner: Viewer = me): Promise<string> {
+  const id = await makeBareWedding(database, name)
+  await makeMember(database, id, owner.userId, 'owner')
+  return id
+}
 afterAll(async () => {
   await pool.end()
 })
@@ -77,14 +99,14 @@ function jpegHeader(width: number, height: number): Uint8Array {
   ])
 }
 
-async function newTemplate(name = `Venue ${randomUUID().slice(0, 8)}`) {
-  const result = await createTemplate(db, { name, editedBy: 'Noa' })
+async function newTemplate(name = `Venue ${randomUUID().slice(0, 8)}`, viewer: Viewer = me) {
+  const result = await createTemplate(db, { name }, viewer, NOA)
   if (result.status !== 'created') throw new Error(result.status)
   return result.venue
 }
 
 function saveBody(baseVersion: number, fixedItems: FixedItem[], ref: ReferenceMeta | null = null, saveId = randomUUID()) {
-  return { baseVersion, saveId, editedBy: 'Aiden' as const, fixedItems, reference: ref }
+  return { baseVersion, saveId, fixedItems, reference: ref }
 }
 
 async function revisionRows(templateId: string) {
@@ -97,7 +119,7 @@ async function revisionRows(templateId: string) {
 describe('create, read, list, rename', () => {
   it('creates an empty template with its first revision; a retry gives it back; a deleted id is taken', async () => {
     const id = randomUUID()
-    const first = await createTemplate(db, { id, name: 'Lakeside Hall', editedBy: 'Aiden' })
+    const first = await createTemplate(db, { id, name: 'Lakeside Hall' }, me, AIDEN)
     expect(first).toMatchObject({
       status: 'created',
       existed: false,
@@ -112,33 +134,40 @@ describe('create, read, list, rename', () => {
         reference: null,
         referenceImage: null,
         usedBy: 0,
+        access: 'mine',
+        ownerName: 'Me',
+        canEdit: true,
       },
     })
     expect(await revisionRows(id)).toEqual([{ id: expect.any(String), reason: 'save' }])
+    const [row] = await db.select().from(venueTemplates).where(eq(venueTemplates.id, id))
+    expect(row).toMatchObject({ ownerUserId: me.userId, isLibrary: false })
 
-    const retry = await createTemplate(db, { id, name: 'Other name' })
+    const retry = await createTemplate(db, { id, name: 'Other name' }, me, NOA)
     expect(retry).toMatchObject({ status: 'created', existed: true, venue: { id, name: 'Lakeside Hall' } })
     expect(await revisionRows(id)).toHaveLength(1)
+    // The same id from someone else: taken, and nothing about the template comes back.
+    expect(await createTemplate(db, { id, name: 'Mine now' }, other, NOA)).toEqual({ status: 'id-taken' })
 
-    expect(await softDeleteTemplate(db, id)).toEqual({ status: 'deleted' })
-    expect(await createTemplate(db, { id, name: 'Again' })).toEqual({ status: 'id-taken' })
-    expect(await getTemplate(db, id)).toBeNull()
-    expect(await getTemplate(db, randomUUID())).toBeNull()
+    expect(await softDeleteTemplate(db, id, me)).toEqual({ status: 'deleted' })
+    expect(await createTemplate(db, { id, name: 'Again' }, me, NOA)).toEqual({ status: 'id-taken' })
+    expect(await getTemplate(db, id, me)).toBeNull()
+    expect(await getTemplate(db, randomUUID(), me)).toBeNull()
   })
 
   it('lists live templates with live usage, item counts, version and image flag', async () => {
     const t = await newTemplate()
-    const saved = await saveTemplate(db, t.id, saveBody(1, [wall('w1', [{ x: 0, y: 0 }, { x: 500, y: 0 }]), room('r1', 'Main Room')]))
+    const saved = await saveTemplate(db, t.id, saveBody(1, [wall('w1', [{ x: 0, y: 0 }, { x: 500, y: 0 }]), room('r1', 'Main Room')]), AIDEN)
     expect(saved.status).toBe('saved')
     const w = await makeWedding(db)
     const goneWedding = await makeWedding(db)
     await makeLayout(db, w, canvasOf(), { venueTemplateId: t.id })
     await makeLayout(db, w, canvasOf(), { venueTemplateId: t.id })
-    await softDeleteLayout(db, await makeLayout(db, w, canvasOf(), { venueTemplateId: t.id }))
+    await softDeleteLayout(db, w, await makeLayout(db, w, canvasOf(), { venueTemplateId: t.id }))
     await makeLayout(db, goneWedding, canvasOf(), { venueTemplateId: t.id })
     await softDeleteWedding(db, goneWedding)
 
-    const listed = (await listVenues(db)).find((v) => v.id === t.id)
+    const listed = (await listVenues(db, me)).find((v) => v.id === t.id)
     expect(listed).toEqual({
       id: t.id,
       name: t.name,
@@ -146,21 +175,31 @@ describe('create, read, list, rename', () => {
       usedBy: 2,
       version: 2,
       editedBy: 'Aiden',
+      editedById: AIDEN.userId,
       importedBy: 'hand',
       fixedItemCount: 2,
       hasReferenceImage: false,
+      access: 'mine',
+      ownerName: 'Me',
+      canEdit: true,
     })
-    expect((await getTemplate(db, t.id))?.usedBy).toBe(2)
-    // The template migration 0001 seeds is there, empty (truncateAll puts it back as 0001 made it).
-    expect((await listVenues(db)).find((v) => v.name === 'Toronto Beach Club')).toMatchObject({ fixedItemCount: 0, hasReferenceImage: false })
+    expect((await getTemplate(db, t.id, me))?.usedBy).toBe(2)
+    // The template migration 0001 seeds is there, empty (truncateAll puts it back as 0001 made it), in the library.
+    expect((await listVenues(db, me)).find((v) => v.name === 'Toronto Beach Club')).toMatchObject({
+      fixedItemCount: 0,
+      hasReferenceImage: false,
+      access: 'library',
+      ownerName: null,
+      canEdit: false,
+    })
   })
 
   it('renames without touching the version or the last edited time', async () => {
     const t = await newTemplate()
-    const renamed = await renameTemplate(db, t.id, 'The Boathouse')
+    const renamed = await renameTemplate(db, t.id, 'The Boathouse', me)
     expect(renamed).toMatchObject({ name: 'The Boathouse', version: 1, updatedAt: t.updatedAt })
-    await softDeleteTemplate(db, t.id)
-    expect(await renameTemplate(db, t.id, 'Nope')).toBeNull()
+    await softDeleteTemplate(db, t.id, me)
+    expect(await renameTemplate(db, t.id, 'Nope', me)).toBeNull()
   })
 })
 
@@ -169,17 +208,17 @@ describe('saveTemplate', () => {
     const t = await newTemplate()
     const items = [wall('w1', [{ x: 0, y: 0 }, { x: 800, y: 0 }])]
     const saveId = randomUUID()
-    const saved = await saveTemplate(db, t.id, saveBody(1, items, reference, saveId))
+    const saved = await saveTemplate(db, t.id, saveBody(1, items, reference, saveId), AIDEN)
     expect(saved).toMatchObject({ status: 'saved', version: 2, editedBy: 'Aiden' })
-    const detail = await getTemplate(db, t.id)
+    const detail = await getTemplate(db, t.id, me)
     expect(detail).toMatchObject({ version: 2, lastSaveId: saveId, fixedItems: items, reference, referenceImage: null })
 
     // The same save again (its reply was lost): already saved, nothing new.
-    expect(await saveTemplate(db, t.id, saveBody(1, items, reference, saveId))).toMatchObject({ status: 'already-saved', version: 2 })
+    expect(await saveTemplate(db, t.id, saveBody(1, items, reference, saveId), AIDEN)).toMatchObject({ status: 'already-saved', version: 2 })
     // Another tab still on version 1.
-    const stale = await saveTemplate(db, t.id, { ...saveBody(1, []), editedBy: 'Noa' })
+    const stale = await saveTemplate(db, t.id, { ...saveBody(1, []) }, NOA)
     expect(stale).toMatchObject({ status: 'conflict', version: 2, editedBy: 'Aiden', lastSaveId: saveId })
-    expect((await getTemplate(db, t.id))?.fixedItems).toEqual(items)
+    expect((await getTemplate(db, t.id, me))?.fixedItems).toEqual(items)
 
     // One revision per save that landed (the create, then this save).
     const revisions = await listRevisions(db, t.id)
@@ -189,9 +228,9 @@ describe('saveTemplate', () => {
     ])
     expect(revisions?.undoImportRevisionId).toBeNull()
 
-    await softDeleteTemplate(db, t.id)
-    expect(await saveTemplate(db, t.id, saveBody(2, []))).toEqual({ status: 'gone' })
-    expect(await saveTemplate(db, randomUUID(), saveBody(1, []))).toEqual({ status: 'gone' })
+    await softDeleteTemplate(db, t.id, me)
+    expect(await saveTemplate(db, t.id, saveBody(2, []), AIDEN)).toEqual({ status: 'gone' })
+    expect(await saveTemplate(db, randomUUID(), saveBody(1, []), AIDEN)).toEqual({ status: 'gone' })
     expect(await listRevisions(db, t.id)).toBeNull()
   })
 
@@ -200,15 +239,15 @@ describe('saveTemplate', () => {
     const mine = [wall('w1', [{ x: 0, y: 0 }, { x: 800, y: 0 }])]
     const s1 = randomUUID()
     // Noa's phone: S1 lands as version 2, but the reply never arrives.
-    expect(await saveTemplate(db, t.id, { ...saveBody(1, mine, null, s1), editedBy: 'Noa' })).toMatchObject({ status: 'saved', version: 2 })
+    expect(await saveTemplate(db, t.id, { ...saveBody(1, mine, null, s1) }, NOA)).toMatchObject({ status: 'saved', version: 2 })
     // Aiden's laptop saves version 3 meanwhile.
     const theirs = [wall('w2', [{ x: 0, y: 0 }, { x: 0, y: 600 }])]
-    expect(await saveTemplate(db, t.id, saveBody(2, theirs))).toMatchObject({ status: 'saved', version: 3 })
+    expect(await saveTemplate(db, t.id, saveBody(2, theirs), AIDEN)).toMatchObject({ status: 'saved', version: 3 })
     // Noa's retry of S1: her change did land, at version 2. Nothing is written again.
-    expect(await saveTemplate(db, t.id, { ...saveBody(1, mine, null, s1), editedBy: 'Noa' })).toMatchObject({ status: 'already-saved', version: 2, editedBy: 'Noa' })
-    expect(await getTemplate(db, t.id)).toMatchObject({ version: 3, fixedItems: theirs })
+    expect(await saveTemplate(db, t.id, { ...saveBody(1, mine, null, s1) }, NOA)).toMatchObject({ status: 'already-saved', version: 2, editedBy: 'Noa' })
+    expect(await getTemplate(db, t.id, me)).toMatchObject({ version: 3, fixedItems: theirs })
     // Her next save, from version 2, then meets Aiden's as a conflict.
-    expect(await saveTemplate(db, t.id, { ...saveBody(2, mine), editedBy: 'Noa' })).toMatchObject({ status: 'conflict', version: 3, editedBy: 'Aiden' })
+    expect(await saveTemplate(db, t.id, { ...saveBody(2, mine) }, NOA)).toMatchObject({ status: 'conflict', version: 3, editedBy: 'Aiden' })
     // Accepted imports and restores are remembered the same way.
     const [row] = await db.select({ recentSaves: venueTemplates.recentSaves }).from(venueTemplates).where(eq(venueTemplates.id, t.id))
     expect(row.recentSaves.map((r) => r.version)).toEqual([3, 2])
@@ -221,12 +260,62 @@ describe('saveTemplate', () => {
     const blank = await makeLayout(db, w, canvasOf(roundTable('t1', 1, [null])))
     const before = await layoutRow(db, layoutId)
     const blankBefore = await layoutRow(db, blank)
-    await saveTemplate(db, t.id, saveBody(1, [wall('w1', [{ x: -2000, y: -1500 }, { x: 2000, y: -1500 }])]))
+    await saveTemplate(db, t.id, saveBody(1, [wall('w1', [{ x: -2000, y: -1500 }, { x: 2000, y: -1500 }])]), AIDEN)
     const after = await layoutRow(db, layoutId)
     expect(after.thumbSvg).not.toBe(before.thumbSvg)
     expect(after.version).toBe(before.version)
     expect(after.updatedAt).toEqual(before.updatedAt)
     expect((await layoutRow(db, blank)).thumbSvg).toBe(blankBefore.thumbSvg)
+  })
+})
+
+describe('who edited a template', () => {
+  const rowOf = async (id: string) => (await db.select().from(venueTemplates).where(eq(venueTemplates.id, id)))[0]!
+
+  it('create, duplicate and save record the signed-in user (id and name), never the old column', async () => {
+    const t = await newTemplate()
+    expect(await rowOf(t.id)).toMatchObject({ editedBy: null, editedByName: 'Noa', editedByUserId: NOA.userId })
+    expect(t).toMatchObject({ editedBy: 'Noa', editedById: NOA.userId })
+
+    // An old Noa / Aiden value, as written before accounts: the next save clears it.
+    await db.update(venueTemplates).set({ editedBy: 'Noa' }).where(eq(venueTemplates.id, t.id))
+    const saved = await saveTemplate(db, t.id, saveBody(1, []), AIDEN)
+    expect(saved).toMatchObject({ status: 'saved', editedBy: 'Aiden', editedById: AIDEN.userId })
+    expect(await rowOf(t.id)).toMatchObject({ editedBy: null, editedByName: 'Aiden', editedByUserId: AIDEN.userId })
+
+    const copy = await duplicateTemplate(db, t.id, { id: randomUUID() }, me, AIDEN)
+    expect(copy.status).toBe('created')
+    if (copy.status === 'created') {
+      expect(await rowOf(copy.venue.id)).toMatchObject({ editedBy: null, editedByName: 'Aiden', editedByUserId: AIDEN.userId })
+    }
+  })
+
+  it('reads the name from edited_by_name when edited_by is null, in every reply', async () => {
+    const t = await newTemplate()
+    await db.update(venueTemplates).set({ editedBy: null, editedByName: 'Dayna K.', editedByUserId: null }).where(eq(venueTemplates.id, t.id))
+
+    expect(await getTemplate(db, t.id, me)).toMatchObject({ editedBy: 'Dayna K.', editedById: null })
+    expect((await listVenues(db, me)).find((v) => v.id === t.id)).toMatchObject({ editedBy: 'Dayna K.', editedById: null })
+    expect(await saveTemplate(db, t.id, saveBody(0, []), AIDEN)).toMatchObject({ status: 'conflict', editedBy: 'Dayna K.', editedById: null })
+  })
+
+  it('reads edited_by_user_id back as the id, and the next save puts its own editor in its place', async () => {
+    const t = await newTemplate()
+    const [user] = await db
+      .insert(users)
+      .values({ email: `${randomUUID()}@example.com`, displayName: 'Dayna K.', passwordHash: 'x' })
+      .returning({ id: users.id })
+    await db
+      .update(venueTemplates)
+      .set({ editedBy: null, editedByName: 'Dayna K.', editedByUserId: user!.id })
+      .where(eq(venueTemplates.id, t.id))
+
+    expect(await getTemplate(db, t.id, me)).toMatchObject({ editedById: user!.id })
+    expect((await listVenues(db, me)).find((v) => v.id === t.id)).toMatchObject({ editedById: user!.id })
+    expect(await saveTemplate(db, t.id, saveBody(0, []), AIDEN)).toMatchObject({ status: 'conflict', editedById: user!.id })
+
+    expect(await saveTemplate(db, t.id, saveBody(1, []), AIDEN)).toMatchObject({ status: 'saved', editedBy: 'Aiden', editedById: AIDEN.userId })
+    expect(await rowOf(t.id)).toMatchObject({ editedByName: 'Aiden', editedByUserId: AIDEN.userId })
   })
 })
 
@@ -240,15 +329,14 @@ describe('duplicate and delete', () => {
     await acceptImport(db, t.id, {
       baseVersion: 1,
       saveId: randomUUID(),
-      editedBy: 'Noa',
       fixedItems: items,
       imageId: upload.image.id,
       reference,
       importedBy: 'ai',
-    })
+    }, NOA)
 
     const copyId = randomUUID()
-    const copy = await duplicateTemplate(db, t.id, { id: copyId, editedBy: 'Aiden' })
+    const copy = await duplicateTemplate(db, t.id, { id: copyId }, me, AIDEN)
     if (copy.status !== 'created') throw new Error(copy.status)
     expect(copy.venue).toMatchObject({
       id: copyId,
@@ -270,16 +358,17 @@ describe('duplicate and delete', () => {
     expect((await listRevisions(db, copyId))?.revisions).toEqual([
       expect.objectContaining({ reason: 'save', fixedItemCount: 2, referenceImageId: image.id, hasReference: true }),
     ])
-    // A retry with the same id gives the same copy.
-    expect(await duplicateTemplate(db, t.id, { id: copyId })).toMatchObject({ status: 'created', existed: true })
+    // A retry with the same id gives the same copy; someone else's retry of that id does not.
+    expect(await duplicateTemplate(db, t.id, { id: copyId }, me, NOA)).toMatchObject({ status: 'created', existed: true })
+    expect(await duplicateTemplate(db, t.id, { id: copyId }, other, NOA)).toEqual({ status: 'id-taken' })
 
     // Without an image, and with a given name.
     const plain = await newTemplate('Garden')
-    const named = await duplicateTemplate(db, plain.id, { name: 'Garden West' })
+    const named = await duplicateTemplate(db, plain.id, { name: 'Garden West' }, me, NOA)
     expect(named).toMatchObject({ status: 'created', venue: { name: 'Garden West', referenceImage: null, fixedItems: [] } })
 
-    await softDeleteTemplate(db, plain.id)
-    expect(await duplicateTemplate(db, plain.id, {})).toEqual({ status: 'not-found' })
+    await softDeleteTemplate(db, plain.id, me)
+    expect(await duplicateTemplate(db, plain.id, {}, me, NOA)).toEqual({ status: 'not-found' })
     expect(copyName('x'.repeat(200))).toHaveLength(200)
   })
 
@@ -290,7 +379,7 @@ describe('duplicate and delete', () => {
     const a = await makeLayout(db, w1, canvasOf(), { name: 'Reception', venueTemplateId: t.id })
     const b = await makeLayout(db, w2, canvasOf(), { name: 'Dinner', venueTemplateId: t.id })
     const c = await makeLayout(db, w2, canvasOf(), { name: 'Afterparty', venueTemplateId: t.id })
-    await softDeleteLayout(db, await makeLayout(db, w1, canvasOf(), { name: 'Gone', venueTemplateId: t.id }))
+    await softDeleteLayout(db, w1, await makeLayout(db, w1, canvasOf(), { name: 'Gone', venueTemplateId: t.id }))
     const goneWedding = await makeWedding(db, 'Deleted wedding')
     await makeLayout(db, goneWedding, canvasOf(), { venueTemplateId: t.id })
     await softDeleteWedding(db, goneWedding)
@@ -300,15 +389,15 @@ describe('duplicate and delete', () => {
       { weddingId: w2, weddingName: 'Ada & Lin', layoutId: b, layoutName: 'Dinner' },
       { weddingId: w1, weddingName: 'Zoe & Sam', layoutId: a, layoutName: 'Reception' },
     ]
-    expect(await softDeleteTemplate(db, t.id)).toEqual({ status: 'in-use', layouts: expected })
-    expect(await templateDeleteSummary(db, t.id)).toEqual({ kind: 'venue', name: t.name, layouts: expected, images: 0, revisions: 1 })
-    expect(await getTemplate(db, t.id)).not.toBeNull()
+    expect(await softDeleteTemplate(db, t.id, me)).toEqual({ status: 'in-use', layouts: expected, hiddenLayouts: 0 })
+    expect(await templateDeleteSummary(db, t.id, me)).toEqual({ kind: 'venue', name: t.name, layouts: expected, hiddenLayouts: 0, images: 0, revisions: 1 })
+    expect(await getTemplate(db, t.id, me)).not.toBeNull()
 
-    for (const id of [a, b, c]) await updateLayout(db, id, { venueTemplateId: null })
-    expect(await softDeleteTemplate(db, t.id)).toEqual({ status: 'deleted' })
-    expect(await softDeleteTemplate(db, t.id)).toEqual({ status: 'not-found' })
-    expect(await templateDeleteSummary(db, t.id)).toBeNull()
-    expect((await listVenues(db)).some((v) => v.id === t.id)).toBe(false)
+    for (const [weddingId, id] of [[w1, a], [w2, b], [w2, c]] as const) await updateLayout(db, weddingId, id, { venueTemplateId: null }, me)
+    expect(await softDeleteTemplate(db, t.id, me)).toEqual({ status: 'deleted' })
+    expect(await softDeleteTemplate(db, t.id, me)).toEqual({ status: 'not-found' })
+    expect(await templateDeleteSummary(db, t.id, me)).toBeNull()
+    expect((await listVenues(db, me)).some((v) => v.id === t.id)).toBe(false)
   })
 })
 
@@ -328,10 +417,10 @@ describe('deleting a template while a layout starts using it', () => {
     })
     await isLocked
     // Noa makes a layout on the venue: the template check passes, then it waits for the wedding lock.
-    const creating = createLayout(db, w, { name: 'Reception', kind: 'reception', venueTemplateId: t.id, editedBy: 'Noa' })
+    const creating = createLayout(db, w, { name: 'Reception', kind: 'reception', venueTemplateId: t.id }, me, NOA)
     await new Promise((resolve) => setTimeout(resolve, 200))
     // Aiden deletes the venue meanwhile: it waits for Noa's layout.
-    const deleting = softDeleteTemplate(db, t.id)
+    const deleting = softDeleteTemplate(db, t.id, me)
     await new Promise((resolve) => setTimeout(resolve, 200))
     release()
     await holder
@@ -339,7 +428,7 @@ describe('deleting a template while a layout starts using it', () => {
     expect(created.status).toBe('created')
     const deleted = await deleting
     expect(deleted.status).toBe('in-use')
-    expect(await getTemplate(db, t.id)).not.toBeNull()
+    expect(await getTemplate(db, t.id, me)).not.toBeNull()
 
     // The other order: the delete holds the template first, the create waits and is refused.
     const t2 = await newTemplate()
@@ -354,8 +443,8 @@ describe('deleting a template while a layout starts using it', () => {
       await deleteHeld
     })
     await isDeleteLocked
-    const late = createLayout(db, w, { name: 'Dinner', kind: 'reception', venueTemplateId: t2.id, editedBy: 'Noa' })
-    const moved = updateLayout(db, layoutId, { venueTemplateId: t2.id })
+    const late = createLayout(db, w, { name: 'Dinner', kind: 'reception', venueTemplateId: t2.id }, me, NOA)
+    const moved = updateLayout(db, w, layoutId, { venueTemplateId: t2.id }, me)
     await new Promise((resolve) => setTimeout(resolve, 200))
     releaseDelete()
     await slowDelete
@@ -381,7 +470,7 @@ describe('images', () => {
     expect(jpeg).toMatchObject({ status: 'created', image: { contentType: 'image/jpeg', width: 2576, height: 1449 } })
 
     // The template is unchanged until Accept.
-    expect(await getTemplate(db, t.id)).toMatchObject({ version: 1, referenceImage: null })
+    expect(await getTemplate(db, t.id, me)).toMatchObject({ version: 1, referenceImage: null })
 
     expect(await addTemplateImage(db, t.id, new TextEncoder().encode('GIF89a not a plan'))).toEqual({ status: 'bad-type' })
     expect(await addTemplateImage(db, t.id, jpegHeader(9000, 100))).toEqual({ status: 'bad-size' })
@@ -395,7 +484,7 @@ describe('images', () => {
     // Another template's image, or a deleted template, is not found.
     const other = await newTemplate()
     expect(await getTemplateImage(db, other.id, first.image.id)).toBeNull()
-    await softDeleteTemplate(db, t.id)
+    await softDeleteTemplate(db, t.id, me)
     expect(await getTemplateImage(db, t.id, first.image.id)).toBeNull()
   })
 })
@@ -422,18 +511,17 @@ describe('Accept and Undo import', () => {
     const body = {
       baseVersion: 1,
       saveId: randomUUID(),
-      editedBy: 'Noa' as const,
       fixedItems: imported,
       imageId: otherUpload.image.id,
       reference,
       importedBy: 'pdf vectors' as const,
     }
-    expect(await acceptImport(db, id, body)).toEqual({ status: 'bad-image' })
+    expect(await acceptImport(db, id, body, NOA)).toEqual({ status: 'bad-image' })
     expect(await revisionRows(id)).toEqual([])
 
-    const accepted = await acceptImport(db, id, { ...body, imageId: upload.image.id })
+    const accepted = await acceptImport(db, id, { ...body, imageId: upload.image.id }, NOA)
     expect(accepted).toMatchObject({ status: 'saved', version: 2, editedBy: 'Noa' })
-    expect(await getTemplate(db, id)).toMatchObject({
+    expect(await getTemplate(db, id, me)).toMatchObject({
       version: 2,
       importedBy: 'pdf vectors',
       fixedItems: imported,
@@ -442,14 +530,14 @@ describe('Accept and Undo import', () => {
     })
     expect((await layoutRow(db, layoutId)).thumbSvg).not.toBe(thumbBefore)
     // The retry of the same Accept, and a stale one.
-    expect(await acceptImport(db, id, { ...body, imageId: upload.image.id })).toMatchObject({ status: 'already-saved', version: 2 })
-    expect(await acceptImport(db, id, { ...body, imageId: upload.image.id, saveId: randomUUID() })).toMatchObject({
+    expect(await acceptImport(db, id, { ...body, imageId: upload.image.id }, NOA)).toMatchObject({ status: 'already-saved', version: 2 })
+    expect(await acceptImport(db, id, { ...body, imageId: upload.image.id, saveId: randomUUID() }, NOA)).toMatchObject({
       status: 'conflict',
       version: 2,
     })
 
     // A hand edit after the import.
-    await saveTemplate(db, id, saveBody(2, [...imported, wall('w2', [{ x: 0, y: 0 }, { x: 0, y: 300 }])], reference))
+    await saveTemplate(db, id, saveBody(2, [...imported, wall('w2', [{ x: 0, y: 0 }, { x: 0, y: 300 }])], reference), AIDEN)
 
     const list = await listRevisions(db, id)
     expect(list!.revisions.map((r) => [r.reason, r.fixedItemCount, r.referenceImageId])).toEqual([
@@ -462,9 +550,9 @@ describe('Accept and Undo import', () => {
 
     // Undo import, at any later time: a new save putting the state before the import back.
     const restoreSaveId = randomUUID()
-    const restored = await restoreRevision(db, id, baseline, { baseVersion: 3, saveId: restoreSaveId, editedBy: 'Aiden' })
+    const restored = await restoreRevision(db, id, baseline, { baseVersion: 3, saveId: restoreSaveId }, AIDEN)
     expect(restored).toMatchObject({ status: 'saved', version: 4, editedBy: 'Aiden' })
-    expect(await getTemplate(db, id)).toMatchObject({
+    expect(await getTemplate(db, id, me)).toMatchObject({
       version: 4,
       importedBy: 'hand',
       fixedItems: [wall('hand', [{ x: 0, y: 0 }, { x: 100, y: 0 }])],
@@ -472,23 +560,23 @@ describe('Accept and Undo import', () => {
       referenceImage: null,
     })
     expect((await layoutRow(db, layoutId)).thumbSvg).toBe(thumbBefore)
-    expect(await restoreRevision(db, id, baseline, { baseVersion: 3, saveId: restoreSaveId, editedBy: 'Aiden' })).toMatchObject({
+    expect(await restoreRevision(db, id, baseline, { baseVersion: 3, saveId: restoreSaveId }, AIDEN)).toMatchObject({
       status: 'already-saved',
       version: 4,
     })
     const after = await listRevisions(db, id)
     expect(after!.revisions.map((r) => r.reason)).toEqual(['save', 'save', 'import', 'save'])
     // The image stays stored, so the import can be redone from the import revision.
-    const redo = await restoreRevision(db, id, after!.revisions[2]!.id, { baseVersion: 4, saveId: randomUUID(), editedBy: 'Noa' })
+    const redo = await restoreRevision(db, id, after!.revisions[2]!.id, { baseVersion: 4, saveId: randomUUID() }, NOA)
     expect(redo).toMatchObject({ status: 'saved', version: 5 })
-    expect(await getTemplate(db, id)).toMatchObject({ fixedItems: imported, referenceImage: { id: upload.image.id }, importedBy: 'hand' })
+    expect(await getTemplate(db, id, me)).toMatchObject({ fixedItems: imported, referenceImage: { id: upload.image.id }, importedBy: 'hand' })
 
     // A revision of another template is not found; a stale restore is a conflict.
     const foreign = (await listRevisions(db, other.id))!.revisions[0]!.id
-    expect(await restoreRevision(db, id, foreign, { baseVersion: 5, saveId: randomUUID(), editedBy: 'Noa' })).toEqual({
+    expect(await restoreRevision(db, id, foreign, { baseVersion: 5, saveId: randomUUID() }, NOA)).toEqual({
       status: 'revision-not-found',
     })
-    expect(await restoreRevision(db, id, baseline, { baseVersion: 1, saveId: randomUUID(), editedBy: 'Noa' })).toMatchObject({
+    expect(await restoreRevision(db, id, baseline, { baseVersion: 1, saveId: randomUUID() }, NOA)).toMatchObject({
       status: 'conflict',
       version: 5,
     })
@@ -498,23 +586,94 @@ describe('Accept and Undo import', () => {
 describe('templateWallCheck', () => {
   it('lists every live layout using the template with the tables a wall runs through', async () => {
     const t = await newTemplate()
-    await saveTemplate(db, t.id, saveBody(1, [wall('w1', [{ x: -1000, y: -600 }, { x: 1000, y: -600 }], 20)]))
+    await saveTemplate(db, t.id, saveBody(1, [wall('w1', [{ x: -1000, y: -600 }, { x: 1000, y: -600 }], 20)]), AIDEN)
     const w = await makeWedding(db, 'Wall check')
     const crossed = { ...roundTable('t1', 4, [null], 'Family'), x: 0, y: -600 }
     const clear = { ...roundTable('t2', 2, [null]), x: 0, y: 400 }
     const hit = await makeLayout(db, w, canvasOf(crossed, clear), { name: 'A', venueTemplateId: t.id })
     const fine = await makeLayout(db, w, canvasOf(clear), { name: 'B', venueTemplateId: t.id })
-    await softDeleteLayout(db, await makeLayout(db, w, canvasOf(crossed), { name: 'C', venueTemplateId: t.id }))
+    await softDeleteLayout(db, w, await makeLayout(db, w, canvasOf(crossed), { name: 'C', venueTemplateId: t.id }))
 
-    expect(await templateWallCheck(db, t.id)).toEqual({
+    expect(await templateWallCheck(db, t.id, me)).toEqual({
       templateVersion: 2,
+      hiddenLayouts: 0,
       layouts: [
         { weddingId: w, weddingName: 'Wall check', layoutId: hit, layoutName: 'A', tables: [{ tableId: 't1', label: 'Family (table 4)', wallIds: ['w1'] }] },
         { weddingId: w, weddingName: 'Wall check', layoutId: fine, layoutName: 'B', tables: [] },
       ],
     })
     await db.update(layouts).set({ venueTemplateId: null }).where(eq(layouts.id, hit))
-    expect((await templateWallCheck(db, t.id))!.layouts.map((l) => l.layoutId)).toEqual([fine])
-    expect(await templateWallCheck(db, randomUUID())).toBeNull()
+    expect((await templateWallCheck(db, t.id, me))!.layouts.map((l) => l.layoutId)).toEqual([fine])
+    expect(await templateWallCheck(db, randomUUID(), me)).toBeNull()
+  })
+})
+
+describe('who sees what', () => {
+  it('names only layouts in weddings the viewer belongs to, counts the rest, and still refuses the delete', async () => {
+    const t = await newTemplate()
+    await saveTemplate(db, t.id, saveBody(1, [wall('w1', [{ x: -1000, y: 0 }, { x: 1000, y: 0 }])]), AIDEN)
+    const mine = await makeWedding(db, 'Mine')
+    const theirs = await makeWedding(db, 'Their secret wedding', other)
+    const crossed = { ...roundTable('t1', 1, [null], 'Secret table'), x: 0, y: 0 }
+    const myLayout = await makeLayout(db, mine, canvasOf(), { name: 'Mine A', venueTemplateId: t.id })
+    const theirLayout = await makeLayout(db, theirs, canvasOf(crossed), { name: 'Their layout', venueTemplateId: t.id })
+    const myUse = { weddingId: mine, weddingName: 'Mine', layoutId: myLayout, layoutName: 'Mine A' }
+
+    expect(await templateDeleteSummary(db, t.id, me)).toMatchObject({ layouts: [myUse], hiddenLayouts: 1 })
+    const check = await templateWallCheck(db, t.id, me)
+    expect(check).toEqual({ templateVersion: 2, hiddenLayouts: 1, layouts: [{ ...myUse, tables: [] }] })
+    expect((await listVenues(db, me)).find((v) => v.id === t.id)?.usedBy).toBe(1)
+    expect((await getTemplate(db, t.id, me))?.usedBy).toBe(1)
+    const refused = await softDeleteTemplate(db, t.id, me)
+    expect(refused).toEqual({ status: 'in-use', layouts: [myUse], hiddenLayouts: 1 })
+    for (const reply of [await templateDeleteSummary(db, t.id, me), check, refused]) {
+      expect(JSON.stringify(reply)).not.toContain(theirs)
+      expect(JSON.stringify(reply)).not.toContain('Their secret wedding')
+      expect(JSON.stringify(reply)).not.toContain(theirLayout)
+      expect(JSON.stringify(reply)).not.toContain('Secret table')
+    }
+
+    // Once mine moves off it, theirs alone still blocks the delete.
+    await updateLayout(db, mine, myLayout, { venueTemplateId: null }, me)
+    expect(await softDeleteTemplate(db, t.id, me)).toEqual({ status: 'in-use', layouts: [], hiddenLayouts: 1 })
+    expect(await getTemplate(db, t.id, me)).not.toBeNull()
+
+    // The other planner sees their own layout named, as shared (mine) and read-only.
+    expect(await templateDeleteSummary(db, t.id, other)).toMatchObject({
+      layouts: [{ weddingId: theirs, layoutId: theirLayout }],
+      hiddenLayouts: 0,
+    })
+    expect(await getTemplate(db, t.id, other)).toMatchObject({ access: 'shared', ownerName: 'Me', canEdit: false, usedBy: 1 })
+
+    // An admin sees every layout named.
+    const admin = { userId: (await makeUser(db, { isAdmin: true })).id, isAdmin: true }
+    expect(await templateDeleteSummary(db, t.id, admin)).toMatchObject({ layouts: [{ layoutId: theirLayout }], hiddenLayouts: 0 })
+  })
+
+  it('lists the library, the viewer own and what the wedding uses, and keeps other private templates out', async () => {
+    const w = await makeWedding(db, 'Picker')
+    const mineT = await newTemplate('Mine for picker')
+    const theirsUsedHere = await newTemplate('Theirs used here', other)
+    const theirsUnused = await newTemplate('Theirs unused', other)
+    await makeMember(db, w, other.userId, 'editor')
+    await makeLayout(db, w, canvasOf(), { venueTemplateId: theirsUsedHere.id })
+
+    const names = (await listVenues(db, me, { weddingId: w })).map((v) => v.name)
+    expect(names).toEqual(expect.arrayContaining(['Mine for picker', 'Theirs used here', 'Toronto Beach Club']))
+    expect(names).not.toContain('Theirs unused')
+    const shared = (await listVenues(db, me, { weddingId: w })).find((v) => v.id === theirsUsedHere.id)
+    expect(shared).toMatchObject({ access: 'shared', ownerName: 'Other', canEdit: false })
+    // Someone else's private template cannot be read, or copied, by name of its id.
+    expect(await getTemplate(db, theirsUnused.id, me)).toBeNull()
+    expect((await listVenues(db, me)).map((v) => v.id)).not.toContain(theirsUnused.id)
+    // A copy of a library template is the copier's own, and private.
+    const [tbc] = await db.select({ id: venueTemplates.id }).from(venueTemplates).where(eq(venueTemplates.name, 'Toronto Beach Club'))
+    const copy = await duplicateTemplate(db, tbc!.id, { name: 'My beach club' }, me, NOA)
+    expect(copy).toMatchObject({ status: 'created', venue: { access: 'mine', canEdit: true } })
+    if (copy.status === 'created') {
+      const [row] = await db.select().from(venueTemplates).where(eq(venueTemplates.id, copy.venue.id))
+      expect(row).toMatchObject({ ownerUserId: me.userId, isLibrary: false })
+    }
+    expect(mineT.access).toBe('mine')
   })
 })

@@ -2,12 +2,15 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import type { CreateWeddingBody, UpdateWeddingBody, WeddingDeleteSummary, WeddingSummary } from '@/shared/api'
-import { weddings } from '../db/schema'
+import { weddingMembers, weddings } from '../db/schema'
 import type { Db } from '../locks'
+import { recordEvent } from './activity'
 
 /**
  * Weddings. Deleting one marks only the wedding row (DECISIONS 32); every
- * other query skips rows whose wedding is marked.
+ * other query skips rows whose wedding is marked. Who may open a wedding is
+ * the guards' business (src/server/auth/guards.ts); the functions here that
+ * take a wedding id trust that the caller checked.
  */
 
 /*
@@ -26,6 +29,8 @@ const summaryColumns = {
   date: weddings.date,
   unit: weddings.unit,
   minGapCm: weddings.minGapCm,
+  partner1Name: weddings.partner1Name,
+  partner2Name: weddings.partner2Name,
   updatedAt: weddings.updatedAt,
   guestCount: liveGuestCount,
   layoutCount: liveLayoutCount,
@@ -37,6 +42,8 @@ type SummaryRow = {
   date: string | null
   unit: 'ft' | 'm'
   minGapCm: number
+  partner1Name: string | null
+  partner2Name: string | null
   updatedAt: Date
   guestCount: number
   layoutCount: number
@@ -49,6 +56,8 @@ function toSummary(row: SummaryRow): WeddingSummary {
     date: row.date,
     unit: row.unit,
     minGapCm: row.minGapCm,
+    partner1Name: row.partner1Name,
+    partner2Name: row.partner2Name,
     guestCount: Number(row.guestCount),
     layoutCount: Number(row.layoutCount),
     updatedAt: row.updatedAt.toISOString(),
@@ -60,6 +69,20 @@ export async function listWeddings(db: Db): Promise<WeddingSummary[]> {
   const rows = await db
     .select(summaryColumns)
     .from(weddings)
+    .where(isNull(weddings.deletedAt))
+    .orderBy(asc(weddings.createdAt), asc(weddings.id))
+  return rows.map(toSummary)
+}
+
+/**
+ * The live weddings the user belongs to (any role), in listWeddings' order.
+ * An admin gets only their own memberships here too.
+ */
+export async function listWeddingsForUser(db: Db, userId: string): Promise<WeddingSummary[]> {
+  const rows = await db
+    .select(summaryColumns)
+    .from(weddings)
+    .innerJoin(weddingMembers, and(eq(weddingMembers.weddingId, weddings.id), eq(weddingMembers.userId, userId)))
     .where(isNull(weddings.deletedAt))
     .orderBy(asc(weddings.createdAt), asc(weddings.id))
   return rows.map(toSummary)
@@ -82,31 +105,50 @@ export async function weddingIsLive(db: Db, id: string): Promise<boolean> {
   return Boolean(row)
 }
 
+export type CreateWeddingResult = { status: 'created'; wedding: WeddingSummary; existed: boolean } | { status: 'id-taken' }
+
 /**
- * Creates a wedding. The browser may choose the id, so a retried create gives
- * back the wedding the first try made. 'id-taken' when that id belongs to a
- * deleted wedding.
+ * Creates a wedding with its creator as its owner, in one transaction, and
+ * logs wedding_created. The browser may choose the id, so a retried create
+ * gives back the wedding the first try made, but only to someone who already
+ * belongs to it. Anyone else gets 'id-taken' and learns nothing about the
+ * wedding (whether it is live, deleted, or whose); so does a retry for a
+ * wedding deleted since.
  */
-export async function createWedding(
-  db: Db,
-  body: CreateWeddingBody,
-): Promise<{ status: 'created'; wedding: WeddingSummary } | { status: 'id-taken' }> {
-  const id = body.id ?? randomUUID()
-  await db
-    .insert(weddings)
-    .values({ id, name: body.name, date: body.date ?? null, unit: body.unit ?? 'ft' })
-    .onConflictDoNothing({ target: weddings.id })
+export async function createWedding(db: Db, body: CreateWeddingBody, userId: string): Promise<CreateWeddingResult> {
+  const id = (body.id ?? randomUUID()).toLowerCase()
+  const outcome = await db.transaction(async (tx): Promise<'created' | 'existed' | 'id-taken'> => {
+    const inserted = await tx
+      .insert(weddings)
+      .values({ id, name: body.name, date: body.date ?? null, unit: body.unit ?? 'ft', partner1Name: body.partner1Name ?? null, partner2Name: body.partner2Name ?? null })
+      .onConflictDoNothing({ target: weddings.id })
+      .returning({ id: weddings.id })
+    if (inserted.length === 0) {
+      const [mine] = await tx
+        .select({ id: weddings.id })
+        .from(weddings)
+        .innerJoin(weddingMembers, and(eq(weddingMembers.weddingId, weddings.id), eq(weddingMembers.userId, userId)))
+        .where(and(eq(weddings.id, id), isNull(weddings.deletedAt)))
+      return mine ? 'existed' : 'id-taken'
+    }
+    await tx.insert(weddingMembers).values({ weddingId: id, userId, role: 'owner', addedByUserId: null })
+    await recordEvent(tx, { kind: 'wedding_created', userId, weddingId: id })
+    return 'created'
+  })
+  if (outcome === 'id-taken') return { status: 'id-taken' }
   const wedding = await getWedding(db, id)
-  return wedding ? { status: 'created', wedding } : { status: 'id-taken' }
+  return wedding ? { status: 'created', wedding, existed: outcome === 'existed' } : { status: 'id-taken' }
 }
 
-/** Name, date, unit and minimum gap. Null when the wedding is missing or deleted. */
+/** Name, date, unit, minimum gap and the partners' names. Null when the wedding is missing or deleted. */
 export async function updateWedding(db: Db, id: string, body: UpdateWeddingBody): Promise<WeddingSummary | null> {
   const set: Partial<typeof weddings.$inferInsert> = {}
   if (body.name !== undefined) set.name = body.name
   if (body.date !== undefined) set.date = body.date
   if (body.unit !== undefined) set.unit = body.unit
   if (body.minGapCm !== undefined) set.minGapCm = body.minGapCm
+  if (body.partner1Name !== undefined) set.partner1Name = body.partner1Name
+  if (body.partner2Name !== undefined) set.partner2Name = body.partner2Name
   const updated = await db
     .update(weddings)
     .set(set)

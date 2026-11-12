@@ -26,11 +26,7 @@ import {
   guestsPath,
   waitForGuestList,
 } from './guest-list'
-import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, presetAuthor, signIn, uniqueName } from './helpers'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
+import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, signIn, uniqueName } from './helpers'
 
 const SAMPLE_HEADER = 'first_name,last_name,partner,household,side,groups,rsvp,meal,child,notes,Table wish'
 
@@ -129,7 +125,7 @@ test('the sample CSV imports through column matching, and importing it again add
   // Row, First name, Last name, Nickname (blank in the sample), Partner, Household, Side, Groups.
   await expect(first.nth(3)).toHaveText('')
   await expect(first.nth(4)).toHaveText('Łukasz Kowalczyk')
-  await expect(first.nth(7)).toHaveText('Noa Family; Noa Cousins')
+  await expect(first.nth(7)).toHaveText('Partner 1 family; Partner 1 cousins')
   await expect(preview.locator('tbody tr').nth(9).locator('td').nth(1)).toHaveText('Theo')
 
   // The summary: ten new guests, the file's groups to make.
@@ -153,10 +149,10 @@ test('the sample CSV imports through column matching, and importing it again add
   expect(lukasz.partnerId).toBe(zoe.id)
   expect(zoe.notes).toBe('Allergic to nuts\nTable wish: Near the dance floor')
   await expect(guestEntry(page, zoe.id)).toContainText('Łukasz Kowalczyk')
-  await expect(guestEntry(page, zoe.id)).toContainText('Noa Cousins')
+  await expect(guestEntry(page, zoe.id)).toContainText('Partner 1 cousins')
   const groupsBefore = await apiListGroups(page.request, wedding.id)
   expect(groupsBefore.map((g) => g.name).sort()).toEqual(
-    ['Aiden Cousins', 'Aiden Family', 'Aiden HS Friends', 'Book Club', 'Noa College', 'Noa Cousins', 'Noa Family', 'Work Friends'],
+    ['Book Club', 'College friends', 'Partner 1 college', 'Partner 1 cousins', 'Partner 1 family', 'Partner 2 cousins', 'Partner 2 family', 'Work Friends'],
   )
 
   // The same file again: nothing new, nothing changed, nobody missing.
@@ -241,7 +237,7 @@ test('an edited copy reports one changed meal, one new guest and one missing gue
   expect(guests).toHaveLength(10)
   expect(guests.some((g) => g.id === theo.id)).toBe(false)
   expect(guests.find((g) => g.firstName === 'Sam')?.meal).toBe('Beef')
-  expect(guests.find((g) => g.firstName === 'Nadia')).toMatchObject({ lastName: 'Haddad', side: 'Both', rsvp: 'yes', meal: 'Vegan' })
+  expect(guests.find((g) => g.firstName === 'Nadia')).toMatchObject({ lastName: 'Haddad', side: 'both', rsvp: 'yes', meal: 'Vegan' })
 
   await page.getByTestId('import-back').click()
   await waitForGuestList(page)

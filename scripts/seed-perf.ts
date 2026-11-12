@@ -6,7 +6,8 @@
  * shapes. The same layout e2e/perf.spec.ts measures.
  *
  * Safe to run twice: it skips the wedding, the guests and the layout when
- * they already exist. Run it with `npm run seed:perf` (tsx with the
+ * they already exist. The wedding belongs to the first admin (the account
+ * /setup made), as its owner, so make that account first. Run it with `npm run seed:perf` (tsx with the
  * react-server condition, like `npm run seed`, so the layout goes through
  * the app's own writeCanvas()).
  */
@@ -44,6 +45,14 @@ async function main() {
   const pool = createPool(requireDatabaseUrl('direct'), { max: 1 })
   const db = drizzle({ client: pool, schema, casing: 'snake_case' })
   try {
+    // The first admin owns the wedding and is the layout's editor.
+    const [owner] = await db
+      .select({ id: schema.users.id, displayName: schema.users.displayName })
+      .from(schema.users)
+      .where(and(eq(schema.users.isAdmin, true), isNull(schema.users.disabledAt)))
+      .orderBy(asc(schema.users.createdAt), asc(schema.users.id))
+      .limit(1)
+    if (!owner) throw new Error(`Make the first account at /setup first: "${PERF_WEDDING_NAME}" needs an owner.`)
     const [existing] = await db
       .select({ id: schema.weddings.id })
       .from(schema.weddings)
@@ -53,7 +62,7 @@ async function main() {
       weddingId = existing.id
       console.log(`"${PERF_WEDDING_NAME}" already exists.`)
     } else {
-      const made = await server.createWedding(db, { name: PERF_WEDDING_NAME, date: '2027-06-19', unit: 'ft' })
+      const made = await server.createWedding(db, { name: PERF_WEDDING_NAME, date: '2027-06-19', unit: 'ft' }, owner.id)
       if (made.status !== 'created') throw new Error(`Could not make "${PERF_WEDDING_NAME}": ${made.status}`)
       weddingId = made.wedding.id
       console.log(`Made "${PERF_WEDDING_NAME}".`)
@@ -91,7 +100,7 @@ async function main() {
         name: PERF_LAYOUT_NAME,
         canvas,
         venueTemplateId: null,
-        editedBy: 'Noa',
+        editor: { userId: owner.id, name: owner.displayName },
       }),
     )
     if (result.status !== 'created') {

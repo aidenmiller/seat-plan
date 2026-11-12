@@ -15,12 +15,8 @@
 import { expect, test, type Page } from '@playwright/test'
 import { nextLevel, seatScreenPx, type DetailLevel } from '../src/domain/detail-level'
 import { isPhoneLayout, itemLocator, settledCamera, zoomLevel } from './canvas'
-import { presetAuthor } from './helpers'
+import {  } from './helpers'
 import { detailLevel, drawn, openEditor, setupSeating, tableOnScreen, wheelZoom } from './seating'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 const NAMES: [string, string][] = [
   ['Ava', 'Cohen'],

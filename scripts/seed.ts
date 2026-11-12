@@ -21,6 +21,10 @@
  * wedding's Links tab to try it. The Toronto Beach Club template itself comes
  * from a migration, so production has it too.
  *
+ * The demo wedding belongs to the first admin (the account /setup made), as
+ * its owner, so make that account before seeding. That account is also the
+ * editor of every layout the seed writes, and the author of the demo notes.
+ *
  * On a second run: guests are matched by name (ignoring case and accents)
  * and only missing ones are added; a group that exists keeps its members; a
  * couple is linked only while neither has a partner; a rule is added only
@@ -37,10 +41,11 @@
  */
 import { randomBytes, randomUUID } from 'node:crypto'
 import { loadEnvConfig } from '@next/env'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { emptyCanvas, type Author, type Canvas, type Item } from '../src/domain/canvas-schema'
+import { emptyCanvas, type Canvas, type Item } from '../src/domain/canvas-schema'
 import { nameKey } from '../src/domain/names'
+import { legacySide } from '../src/domain/partners'
 import { createPool, requireDatabaseUrl } from '../src/server/db/connection'
 import * as schema from '../src/server/db/schema'
 import type { LayoutKind } from '../src/shared/api'
@@ -103,7 +108,15 @@ async function main() {
   const pool = createPool(requireDatabaseUrl('direct'), { max: 1 })
   const db = drizzle({ client: pool, schema, casing: 'snake_case' })
   try {
-    // The wedding.
+    // The wedding, owned by the first admin.
+    const [owner] = await db
+      .select({ id: schema.users.id, displayName: schema.users.displayName })
+      .from(schema.users)
+      .where(and(eq(schema.users.isAdmin, true), isNull(schema.users.disabledAt)))
+      .orderBy(asc(schema.users.createdAt), asc(schema.users.id))
+      .limit(1)
+    if (!owner) throw new Error('Make the first account at /setup before seeding: the demo wedding needs an owner.')
+    const editor = { userId: owner.id, name: owner.displayName }
     const [existing] = await db
       .select({ id: schema.weddings.id })
       .from(schema.weddings)
@@ -113,7 +126,17 @@ async function main() {
       weddingId = existing.id
       console.log(`"${DEMO_WEDDING_NAME}" already exists.`)
     } else {
-      const made = await server.createWedding(db, { name: DEMO_WEDDING_NAME, date: '2027-06-19', unit: 'ft' })
+      const made = await server.createWedding(
+        db,
+        {
+          name: DEMO_WEDDING_NAME,
+          date: '2027-06-19',
+          unit: 'ft',
+          partner1Name: 'Noa',
+          partner2Name: 'Aiden',
+        },
+        owner.id,
+      )
       if (made.status !== 'created') throw new Error(`Could not make "${DEMO_WEDDING_NAME}": ${made.status}`)
       weddingId = made.wedding.id
       console.log(`Made "${DEMO_WEDDING_NAME}".`)
@@ -125,7 +148,6 @@ async function main() {
       name: string
       canvas: Canvas
       venueTemplateId: string | null
-      editedBy: Author
       kind?: LayoutKind
     }) => {
       if (names.has(layout.name)) {
@@ -133,7 +155,7 @@ async function main() {
         return
       }
       const result = await db.transaction((tx) =>
-        server.writeCanvas(tx, { mode: 'insert', weddingId, layoutId: randomUUID(), kind: 'reception', ...layout }),
+        server.writeCanvas(tx, { mode: 'insert', weddingId, layoutId: randomUUID(), kind: 'reception', editor, ...layout }),
       )
       if (result.status !== 'created') {
         const detail = result.status === 'invalid' ? `: ${result.issues.join('; ')}` : ''
@@ -143,25 +165,25 @@ async function main() {
       console.log(tables === 0 ? `Made "${layout.name}".` : `Made "${layout.name}" with ${tables} tables.`)
     }
 
-    await addLayout({ name: BLANK_LAYOUT_NAME, canvas: receptionPlanA(), venueTemplateId: null, editedBy: 'Noa' })
-    await addLayout({ name: TOUR_LAYOUT_NAME, canvas: canvasTour(), venueTemplateId: null, editedBy: 'Noa' })
+    await addLayout({ name: BLANK_LAYOUT_NAME, canvas: receptionPlanA(), venueTemplateId: null })
+    await addLayout({ name: TOUR_LAYOUT_NAME, canvas: canvasTour(), venueTemplateId: null })
 
-    const beach = (await server.listVenues(db)).find((v) => v.name === BEACH_TEMPLATE_NAME)
+    const beach = (await server.listVenues(db, { userId: owner.id, isAdmin: false }, { weddingId })).find((v) => v.name === BEACH_TEMPLATE_NAME)
     if (beach) {
-      await addLayout({ name: BEACH_LAYOUT_NAME, canvas: emptyCanvas(), venueTemplateId: beach.id, editedBy: 'Aiden' })
+      await addLayout({ name: BEACH_LAYOUT_NAME, canvas: emptyCanvas(), venueTemplateId: beach.id })
     } else {
       console.log(`No "${BEACH_TEMPLATE_NAME}" template, so no "${BEACH_LAYOUT_NAME}". Run npm run db:migrate first.`)
     }
 
     // The guest list (milestone 4).
     const plan = demoPlan({ tour: TOUR_LAYOUT_NAME, planA: BLANK_LAYOUT_NAME })
-    const ids = await seedGuestList(db, server, weddingId, plan)
+    const ids = await seedGuestList(db, server, weddingId, plan, editor)
 
     // Notes (milestone 9).
-    await seedNotes(db, server, weddingId, TOUR_LAYOUT_NAME)
+    await seedNotes(db, server, weddingId, TOUR_LAYOUT_NAME, editor)
 
     // The ceremony (milestone 8): a few of Aiden's family by name, couples side by side.
-    await addLayout({ name: CEREMONY_LAYOUT_NAME, canvas: ceremonyPlan(ceremonyGuests(plan, ids)), venueTemplateId: null, editedBy: 'Aiden', kind: 'ceremony' })
+    await addLayout({ name: CEREMONY_LAYOUT_NAME, canvas: ceremonyPlan(ceremonyGuests(plan, ids)), venueTemplateId: null, kind: 'ceremony' })
 
     // A share link (milestone 10).
     await seedShareLink(server, db, weddingId, TOUR_LAYOUT_NAME)
@@ -172,6 +194,8 @@ async function main() {
 
 type Db = NodePgDatabase<typeof schema>
 type Server = Awaited<ReturnType<typeof loadServerModules>>
+/** The seeding admin, as the editor of the layouts and the author of the notes. */
+type Editor = { userId: string; name: string }
 
 /**
  * Up to six of Aiden's family who said yes, as guest ids: whole couples side
@@ -194,12 +218,12 @@ async function seedShareLink(server: Server, db: Db, weddingId: string, layoutNa
     console.log(`No "${layoutName}", so no share link.`)
     return
   }
-  const links = (await server.listLayoutShareLinks(db, summary.id)) ?? []
+  const links = (await server.listLayoutShareLinks(db, weddingId, summary.id)) ?? []
   if (links.length > 0) {
     console.log(`"${layoutName}" already has a share link.`)
     return
   }
-  const made = await server.createShareLink(db, summary.id, {
+  const made = await server.createShareLink(db, weddingId, summary.id, {
     label: SHARE_LABEL,
     password: randomBytes(18).toString('base64url'),
     showNames: true,
@@ -210,7 +234,7 @@ async function seedShareLink(server: Server, db: Db, weddingId: string, layoutNa
 }
 
 /** Guests, groups, couples, rules and seats, each step skipping what is already there. Returns the guest ids in plan order. */
-async function seedGuestList(db: Db, server: Server, weddingId: string, plan: DemoPlan): Promise<string[]> {
+async function seedGuestList(db: Db, server: Server, weddingId: string, plan: DemoPlan, editor: Editor): Promise<string[]> {
   // Guests, matched by name; the missing ones are added in one transaction.
   const live = async () =>
     db
@@ -229,7 +253,8 @@ async function seedGuestList(db: Db, server: Server, weddingId: string, plan: De
         lastName: g.lastName,
         nickname: g.nickname,
         household: g.household,
-        side: g.side,
+        // The demo plan names sides the old way: Noa is partner 1, Aiden partner 2.
+        side: legacySide(g.side) ?? 'both',
         rsvp: g.rsvp,
         meal: g.meal,
         isChild: g.isChild,
@@ -260,7 +285,7 @@ async function seedGuestList(db: Db, server: Server, weddingId: string, plan: De
   for (const [a, b] of plan.couples) {
     const [idA, idB] = [ids[a]!, ids[b]!]
     if (partnerOf.get(idA) !== null || partnerOf.get(idB) !== null) continue
-    const result = await server.updateGuest(db, idA, { partnerId: idB })
+    const result = await server.updateGuest(db, weddingId, idA, { partnerId: idB })
     if (result.status !== 'updated') throw new Error(`Could not link a demo couple: ${result.status}`)
     partnerOf.set(idA, idB)
     partnerOf.set(idB, idA)
@@ -295,7 +320,7 @@ async function seedGuestList(db: Db, server: Server, weddingId: string, plan: De
   const layouts = (await server.listLayouts(db, weddingId)) ?? []
   for (const [layoutName, tables] of Object.entries(plan.seating)) {
     const summary = layouts.find((l) => l.name === layoutName)
-    const layout = summary ? await server.getLayoutDetail(db, summary.id) : null
+    const layout = summary ? await server.getLayoutDetail(db, weddingId, summary.id) : null
     if (!layout) {
       console.log(`No "${layoutName}", so no seats there.`)
       continue
@@ -330,7 +355,7 @@ async function seedGuestList(db: Db, server: Server, weddingId: string, plan: De
         canvas,
         baseVersion: layout.version,
         saveId: randomUUID(),
-        editedBy: 'Noa',
+        editor,
       }),
     )
     if (result.status !== 'saved') {
@@ -343,9 +368,9 @@ async function seedGuestList(db: Db, server: Server, weddingId: string, plan: De
 }
 
 /** The demo notes, through writeCanvas(), in a layout that has no notes yet. */
-async function seedNotes(db: Db, server: Server, weddingId: string, layoutName: string) {
+async function seedNotes(db: Db, server: Server, weddingId: string, layoutName: string, editor: Editor) {
   const summary = ((await server.listLayouts(db, weddingId)) ?? []).find((l) => l.name === layoutName)
-  const layout = summary ? await server.getLayoutDetail(db, summary.id) : null
+  const layout = summary ? await server.getLayoutDetail(db, weddingId, summary.id) : null
   if (!layout) {
     console.log(`No "${layoutName}", so no notes.`)
     return
@@ -354,7 +379,7 @@ async function seedNotes(db: Db, server: Server, weddingId: string, layoutName: 
     console.log(`"${layoutName}" already has notes.`)
     return
   }
-  const canvas = addDemoNotes(layout.canvas, randomUUID, Date.now())
+  const canvas = addDemoNotes(layout.canvas, randomUUID, Date.now(), { name: editor.name, id: editor.userId })
   const added = canvas.items.length - layout.canvas.items.length
   const result = await db.transaction((tx) =>
     server.writeCanvas(tx, {
@@ -364,7 +389,7 @@ async function seedNotes(db: Db, server: Server, weddingId: string, layoutName: 
       canvas,
       baseVersion: layout.version,
       saveId: randomUUID(),
-      editedBy: 'Aiden',
+      editor,
     }),
   )
   if (result.status !== 'saved') {

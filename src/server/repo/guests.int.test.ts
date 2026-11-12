@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto'
 import { and, eq, inArray } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
+import { makeUser } from '../../../test/auth'
 import { makeTestDb } from '../../../test/db'
 import { guests, layoutSeats, layouts, weddings } from '../db/schema'
 import { commitImport } from './guest-import'
@@ -25,6 +26,9 @@ import {
 } from './test-fixtures'
 
 const { pool, db } = makeTestDb()
+/** The signed-in user the saves in this file are made by, made on first use. */
+let aiden: ReturnType<typeof makeUser> | null = null
+const editor = () => (aiden ??= makeUser(db, { displayName: 'Aiden' }))
 afterAll(async () => {
   await pool.end()
 })
@@ -39,8 +43,10 @@ async function link(a: string, b: string) {
   await db.update(guests).set({ partnerId: a, coupleRuleEnabled: false }).where(eq(guests.id, b))
 }
 
-function save(layoutId: string, baseVersion: number, canvas: ReturnType<typeof canvasOf>) {
-  return saveLayout(db, layoutId, { baseVersion, saveId: randomUUID(), editedBy: 'Aiden', tabId: 'tab', canvas })
+async function save(layoutId: string, baseVersion: number, canvas: ReturnType<typeof canvasOf>) {
+  // The wedding a route's guard resolves from the layout.
+  const { weddingId } = await layoutRow(db, layoutId)
+  return saveLayout(db, weddingId, layoutId, { baseVersion, saveId: randomUUID(), tabId: 'tab', canvas }, { userId: (await editor()).id, name: 'Aiden' })
 }
 
 describe('removeGuests', () => {
@@ -197,11 +203,11 @@ describe('partner links and imports running at once', () => {
     for (let round = 0; round < 20; round++) {
       const pick = (k: number) => ids[(round * 3 + k) % ids.length]!
       const results = await Promise.all([
-        updateGuest(db, pick(0), { partnerId: pick(1) }),
-        updateGuest(db, pick(1), { partnerId: pick(2) }),
-        updateGuest(db, pick(3), { partnerId: pick(0) }),
-        updateGuest(db, pick(2), { partnerId: null }),
-        updateGuest(db, pick(4), { coupleRuleEnabled: round % 2 === 0 }),
+        updateGuest(db, w, pick(0), { partnerId: pick(1) }),
+        updateGuest(db, w, pick(1), { partnerId: pick(2) }),
+        updateGuest(db, w, pick(3), { partnerId: pick(0) }),
+        updateGuest(db, w, pick(2), { partnerId: null }),
+        updateGuest(db, w, pick(4), { coupleRuleEnabled: round % 2 === 0 }),
       ])
       for (const r of results) expect(r.status).toBe('updated')
       await expectTwoWay(w)
@@ -230,8 +236,8 @@ describe('partner links and imports running at once', () => {
       const results = await Promise.allSettled([
         commitImport(db, w, { rows, removeMissing: false }),
         removeGuests(db, w, [doomed]),
-        addGroupMembers(db, group.group.id, [extra]),
-        updateGuest(db, extra, { partnerId: live[round % live.length] === extra ? null : live[round % live.length]! }),
+        addGroupMembers(db, w, group.group.id, [extra]),
+        updateGuest(db, w, extra, { partnerId: live[round % live.length] === extra ? null : live[round % live.length]! }),
         save(layoutId, 1, canvasOf(roundTable('t1', 1, [doomed, extra]))),
       ])
       for (const r of results) expect(r.status, r.status === 'rejected' ? String(r.reason) : '').toBe('fulfilled')

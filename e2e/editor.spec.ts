@@ -39,7 +39,6 @@ import {
   canvasTables,
   editorPath,
   expectSaved,
-  presetAuthor,
   signIn,
   tableIds,
   uniqueName,
@@ -78,9 +77,8 @@ function laptopOnly(testInfo: TestInfo) {
   test.skip(testInfo.project.name === 'phone', 'Keyboard and mouse; phones have their own tests here.')
 }
 
-test('keyboard: select all, delete, undo and redo; duplicate and paste give new numbers and empty seats; a burst of nudges is one undo step', async ({ context, page }, testInfo) => {
+test('keyboard: select all, delete, undo and redo; duplicate and paste give new numbers and empty seats; a burst of nudges is one undo step', async ({ page }, testInfo) => {
   laptopOnly(testInfo)
-  await presetAuthor(context, 'Noa')
   const { layout, ids } = await openWith(page, testInfo, 'Keys', [{ preset: 'round', x: 0, y: 0 }, { preset: 'round', x: 450, y: 0 }], async (weddingId, canvas) => {
     // Two guests at Table 1, so copies can show their seats come empty.
     const guests = await dbAddGuests(weddingId, [
@@ -164,8 +162,7 @@ test('keyboard: select all, delete, undo and redo; duplicate and paste give new 
   for (const t of tables.filter((t) => t.id === copy || t.id === pasted)) expect(t.seats.every((s) => s.guestId === null)).toBe(true)
 })
 
-test('a locked table cannot be moved, nudged or resized until unlocked', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('a locked table cannot be moved, nudged or resized until unlocked', async ({ page }, testInfo) => {
   const { layout, ids } = await openWith(page, testInfo, 'Lock', [{ preset: 'round', x: 0, y: 0 }])
   const [id] = ids
   const phone = await isPhoneLayout(page)
@@ -211,8 +208,7 @@ test('a locked table cannot be moved, nudged or resized until unlocked', async (
   expect(stored.x).toBeCloseTo(moved.x, 6)
 })
 
-test('Align left lines up two tables by their left edges', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('Align left lines up two tables by their left edges', async ({ page }, testInfo) => {
   const { layout, ids } = await openWith(page, testInfo, 'Align', [
     { preset: 'round', x: 0, y: 0 },
     { preset: 'rect', x: 520, y: 400 },
@@ -249,8 +245,7 @@ test('Align left lines up two tables by their left edges', async ({ context, pag
   expect(await itemPlace(page, rect)).toMatchObject({ x: after[1].x, y: after[1].y })
 })
 
-test('the shape panel: drag a fixture and a table onto the plan (laptop), or tap to add in the middle (phone)', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('the shape panel: drag a fixture and a table onto the plan (laptop), or tap to add in the middle (phone)', async ({ page }, testInfo) => {
   const { layout } = await openWith(page, testInfo, 'Shapes', [])
   const camera = await settledCamera(page)
   const view = (await viewport(page).boundingBox())!
@@ -298,9 +293,8 @@ test('the shape panel: drag a fixture and a table onto the plan (laptop), or tap
   expect((await storedItems(page, layout.id)).length).toBeGreaterThan(0)
 })
 
-test('on a phone, a tile dragged out of the Shapes drawer lands on the canvas where the finger lifts', async ({ context, page }, testInfo) => {
+test('on a phone, a tile dragged out of the Shapes drawer lands on the canvas where the finger lifts', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'phone', 'The Shapes drawer is the phone layout; the laptop drag is above.')
-  await presetAuthor(context, 'Noa')
   const { layout } = await openWith(page, testInfo, 'Drawer drag', [])
   const camera = await settledCamera(page)
   const view = (await viewport(page).boundingBox())!
@@ -342,8 +336,7 @@ test('on a phone, a tile dragged out of the Shapes drawer lands on the canvas wh
   expect(stored[0]).toMatchObject({ id, kind: 'table', shape: 'round', seatCount: 8 })
 })
 
-test('zoom buttons step the zoom, show the percent and fit the content', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('zoom buttons step the zoom, show the percent and fit the content', async ({ page }, testInfo) => {
   const { ids } = await openWith(page, testInfo, 'Zoom', [{ preset: 'round', x: 0, y: 0 }, { preset: 'round', x: 900, y: 600 }])
   const controls = page.getByTestId('zoom-controls')
   const view = (await viewport(page).boundingBox())!
@@ -406,9 +399,8 @@ test('zoom buttons step the zoom, show the percent and fit the content', async (
   await expect(zoomLevel(page)).toHaveText(`${Math.round(camera.zoom * 100)}%`)
 })
 
-test('Space+drag and a middle-button drag pan without moving anything', async ({ context, page }, testInfo) => {
+test('Space+drag and a middle-button drag pan without moving anything', async ({ page }, testInfo) => {
   laptopOnly(testInfo)
-  await presetAuthor(context, 'Noa')
   const { ids } = await openWith(page, testInfo, 'Pan', [{ preset: 'round', x: 0, y: 0 }])
   const before = await itemTransforms(page)
   const camera = await settledCamera(page)
@@ -435,9 +427,8 @@ test('Space+drag and a middle-button drag pan without moving anything', async ({
   expect(await itemTransforms(page)).toEqual(before)
 })
 
-test('on a phone, two fingers pinch to zoom and pan without moving anything', async ({ context, page }, testInfo) => {
+test('on a phone, two fingers pinch to zoom and pan without moving anything', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'phone', 'Touch.')
-  await presetAuthor(context, 'Noa')
   const { ids } = await openWith(page, testInfo, 'Pinch', [{ preset: 'round', x: 0, y: 0 }])
   const before = await itemTransforms(page)
   const camera = await settledCamera(page)

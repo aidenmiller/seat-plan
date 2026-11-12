@@ -11,14 +11,15 @@
  * Accept; after Accept its walls are the draft's; Undo import puts the empty
  * template back. A refusal from the model shows a plain message.
  *
- * Saves from another device (Aiden through the API) meet an open draft's
- * Accept and a later Undo import: nothing is lost, the editor asks or says
- * what it loaded, and the second try goes through. The stored plan picture
+ * Saves from another device (the same planner, through the API, so the
+ * words say "you") meet an open draft's Accept and a later Undo import:
+ * nothing is lost, the editor asks or says what it loaded, and the second
+ * try goes through. The stored plan picture
  * runs through the import again from the Plan image tab.
  */
 import { expect, test } from '@playwright/test'
 import { PLAN_PNG, PLAN_PNG_CM_PER_PX, makePlanPng } from './fixtures/floorplan-png'
-import { presetAuthor, signIn, uniqueName } from './helpers'
+import { signIn, uniqueName } from './helpers'
 import { REFUSAL_MARKER, readRecordedDraft, standInCallsFor } from './stand-in-anthropic'
 import {
   apiCreateVenue,
@@ -37,10 +38,6 @@ import {
   wallItem,
 } from './venues'
 import type { Point } from './canvas'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 const PNG_FILE = () => ({ name: 'floor-plan.png', mimeType: 'image/png', buffer: makePlanPng() })
 const S = PLAN_PNG_CM_PER_PX
@@ -254,15 +251,17 @@ test('a save from another device while a draft is open: Accept asks, then goes o
   const panel = page.getByTestId('draft-panel')
   await panel.getByTestId('scale-step').getByTestId('scale-confirm').click()
 
-  // ---- Aiden changes a wall from his phone while Noa checks the draft (version 1 to 2).
+  // ---- The planner changes a wall from their phone while this tab checks the draft (version 1 to 2).
   const aidenWall = wallItem({ x: 0, y: 0 }, { x: 500, y: 0 })
-  await apiSaveVenue(page.request, venue, [aidenWall], 'Aiden')
+  await apiSaveVenue(page.request, venue, [aidenWall])
 
   // Accept meets his save: nothing is lost, and the panel asks before going over it.
   const firstTry = page.waitForResponse((res) => res.request().method() === 'POST' && new URL(res.url()).pathname === `/api/venues/${venue.id}/accept-import`)
   await panel.getByTestId('draft-accept').click()
   expect((await firstTry).status()).toBe(409)
-  await expect(panel.getByTestId('draft-over')).toHaveText('Aiden changed this venue after you opened it. Accept your draft over it?')
+  await expect(panel.getByTestId('draft-over')).toHaveText(
+    'You changed this venue in another tab or on another device after you opened it. Accept your draft over it?',
+  )
   await expect(templateStatus(page)).toHaveText('Draft, not saved')
   expect(await apiGetVenue(page.request, venue.id)).toMatchObject({ version: 2, fixedItems: [aidenWall] })
 
@@ -292,29 +291,29 @@ test('a save from another device while a draft is open: Accept asks, then goes o
   await expect(fixedOnCanvas(page, 'wall')).toHaveCount(2)
   expect((await apiGetVenue(page.request, venue.id)).version).toBe(3)
 
-  // ---- Aiden saves again; Undo import loads his version and asks to try again.
+  // ---- Another save from the phone; Undo import loads that version and asks to try again.
   const aidenAgain = [wallItem({ x: 0, y: 0 }, { x: 0, y: 700 })]
-  await apiSaveVenue(page.request, accepted, aidenAgain, 'Aiden')
+  await apiSaveVenue(page.request, accepted, aidenAgain)
   await openTemplateTab(page, 'Revisions')
   const undo = page.getByTestId('undo-import')
   const refused = page.waitForResponse((res) => res.request().method() === 'POST' && /\/revisions\/[^/]+\/restore$/.test(new URL(res.url()).pathname))
   await undo.click()
   expect((await refused).status()).toBe(409)
-  await expect(page.getByTestId('revisions-error')).toHaveText('Loaded Aiden’s changes. Try Undo import again.')
+  await expect(page.getByTestId('revisions-error')).toHaveText('Loaded your changes from another tab or device. Try Undo import again.')
   await expect(fixedOnCanvas(page, 'wall')).toHaveCount(1)
   await expectTemplateSaved(page)
   const undone = page.waitForResponse((res) => res.request().method() === 'POST' && /\/revisions\/[^/]+\/restore$/.test(new URL(res.url()).pathname))
   await undo.click()
   expect((await undone).status()).toBe(200)
-  // Back to the venue as it was just before the import: Aiden's first wall, no plan picture.
+  // Back to the venue as it was just before the import: the phone's first wall, no plan picture.
   await expectTemplateSaved(page)
   expect(await apiGetVenue(page.request, venue.id)).toMatchObject({ version: 5, fixedItems: [aidenWall], referenceImage: null })
   await expect(fixedOnCanvas(page, 'wall')).toHaveCount(1)
 
-  // ---- Back on this tab after Aiden saved once more: his version loads, with a word about it.
-  await apiSaveVenue(page.request, { id: venue.id, version: 5 }, [aidenWall, ...aidenAgain], 'Aiden')
+  // ---- Back on this tab after the phone saved once more: that version loads, with a word about it.
+  await apiSaveVenue(page.request, { id: venue.id, version: 5 }, [aidenWall, ...aidenAgain])
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-  await expect(page.getByTestId('editor-notice')).toHaveText('Loaded Aiden’s changes.')
+  await expect(page.getByTestId('editor-notice')).toHaveText('Loaded your changes from another tab or device.')
   await expect(fixedOnCanvas(page, 'wall')).toHaveCount(2)
   await expectTemplateSaved(page)
 })

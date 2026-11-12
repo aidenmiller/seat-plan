@@ -13,18 +13,29 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../../../test/db'
+import { makeUser, makeWeddingFor, sessionCookie } from '../../../../../../../test/auth'
+import type { Db } from '@/server/locks'
 import { applyMapping, guessMapping, type ImportRow } from '@/domain/csv/columns'
 import { CSV_BOM, EXPORT_COLUMNS } from '@/domain/csv/export'
 import { MAX_IMPORT_ROWS, parseCsv } from '@/domain/csv/parse'
 import { SAMPLE_CSV_FILE } from '@/domain/csv/sample'
 import { GROUP_COLORS } from '@/domain/group-colors'
-import { SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
+import type { PartnerNames } from '@/domain/partners'
 import { MAX_GUEST_ROWS, type Guest, type ImportCommitResult, type ImportPreview } from '@/shared/api'
 
-beforeAll(() => {
+/** The cookie of the user every test acts as: the owner of each wedding it makes. */
+let signedIn = ''
+let me = ''
+
+/** A wedding the signed-in user owns (routes answer 404 to anyone who is not a member). */
+const makeWedding = (database: Db, name?: string) => makeWeddingFor(database, me, name)
+
+beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'import-route-test-secret-32-chars-plus')
-  vi.stubEnv('SITE_PASSWORD', 'import-route-made-up-password')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
+  const database = await db()
+  me = (await makeUser(database)).id
+  signedIn = await sessionCookie(database, me)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -33,7 +44,7 @@ afterAll(() => {
 type Handler = (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>
 
 async function send(mod: Record<string, unknown>, method: string, id: string, body?: unknown) {
-  const headers: Record<string, string> = { cookie: `${SITE_COOKIE}=${createSiteToken()}` }
+  const headers: Record<string, string> = { cookie: signedIn }
   if (body !== undefined) headers['content-type'] = 'application/json'
   const req = new NextRequest('https://seat.example/api/x', {
     method,
@@ -62,11 +73,13 @@ const routes = async () => ({
   guest: await import('../../../../guests/[id]/route'),
 })
 
-/** What the browser sends after the column matching step. */
-function rowsOf(text: string): ImportRow[] {
+const NOA_AIDEN: PartnerNames = { partner1: 'Noa', partner2: 'Aiden' }
+
+/** What the browser sends after the column matching step, reading sides with the wedding's names. */
+function rowsOf(text: string, partners: PartnerNames = NOA_AIDEN): ImportRow[] {
   const parsed = parseCsv(text)
   expect(parsed.errors).toEqual([])
-  const mapped = applyMapping(parsed.rows, guessMapping(parsed.headers), parsed.rowNumbers)
+  const mapped = applyMapping(parsed.rows, guessMapping(parsed.headers), partners, parsed.rowNumbers)
   expect(mapped.errors).toEqual([])
   return mapped.rows
 }
@@ -96,7 +109,6 @@ const byName = (list: Guest[], first: string, last?: string) =>
 
 describe('guest CSV import', () => {
   it('imports the sample file, and importing it again gives 0 new and 0 changed (check 13)', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { groups } = await routes()
     const w = await makeWedding(await db())
     const rows = rowsOf(SAMPLE_CSV_FILE)
@@ -105,14 +117,14 @@ describe('guest CSV import', () => {
     const first = await preview(w, { rows })
     expect(first.plan.counts).toEqual({ new: 10, changed: 0, unchanged: 0, needsReview: 0, missing: 0 })
     expect(first.plan.groupsToCreate).toEqual([
-      'Noa Family',
-      'Noa Cousins',
-      'Aiden HS Friends',
+      'Partner 1 family',
+      'Partner 1 cousins',
+      'College friends',
       'Book Club',
       'Work Friends',
-      'Aiden Family',
-      'Noa College',
-      'Aiden Cousins',
+      'Partner 2 family',
+      'Partner 1 college',
+      'Partner 2 cousins',
     ])
     expect(first.plan.partnerLinks.map((l) => [l.aName, l.bName])).toEqual([
       ['Zoë Kowalczyk', 'Łukasz Kowalczyk'],
@@ -142,7 +154,7 @@ describe('guest CSV import', () => {
     expect(lukasz.partnerId).toBe(zoe.id)
     expect(zoe.coupleRuleEnabled && lukasz.coupleRuleEnabled).toBe(true)
     expect(zoe).toMatchObject({
-      side: 'Noa',
+      side: 'partner1',
       rsvp: 'yes',
       meal: 'Fish',
       household: 'Kowalczyk',
@@ -154,7 +166,7 @@ describe('guest CSV import', () => {
     const groupList = (await call(groups, 'GET', w)).body as { name: string; color: string; memberIds: string[] }[]
     expect(groupList).toHaveLength(8)
     expect(new Set(groupList.map((g) => g.color))).toEqual(new Set(GROUP_COLORS))
-    expect(groupList.find((g) => g.name === 'Noa Family')!.memberIds).toHaveLength(3)
+    expect(groupList.find((g) => g.name === 'Partner 1 family')!.memberIds).toHaveLength(3)
 
     // The same file again: nothing new, nothing changed, nobody missing.
     const second = await preview(w, { rows: rowsOf(SAMPLE_CSV_FILE) })
@@ -167,7 +179,7 @@ describe('guest CSV import', () => {
   })
 
   it('blocks the commit while a needs-review row has no pick, then applies the pick', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const { commit: commitRoute } = await routes()
     const d = await db()
     const w = await makeWedding(d)
@@ -193,9 +205,9 @@ describe('guest CSV import', () => {
     expect(done).toMatchObject({ created: 9, updated: 1, unchanged: 0 })
     const list = await guestList(w)
     expect(list).toHaveLength(11)
-    expect(list.find((g) => g.id === samA)).toMatchObject({ side: 'Aiden', rsvp: 'yes', meal: 'Fish', groupIds: expect.any(Array) })
+    expect(list.find((g) => g.id === samA)).toMatchObject({ side: 'partner2', rsvp: 'yes', meal: 'Fish', groupIds: expect.any(Array) })
     expect(list.find((g) => g.id === samA)!.groupIds).toHaveLength(2)
-    expect(list.find((g) => g.id === samB)).toMatchObject({ side: 'Both', rsvp: 'pending', meal: null, groupIds: [] })
+    expect(list.find((g) => g.id === samB)).toMatchObject({ side: 'both', rsvp: 'pending', meal: null, groupIds: [] })
 
     // 'new' adds the row as another guest.
     const w2 = await makeWedding(d)
@@ -206,7 +218,7 @@ describe('guest CSV import', () => {
   })
 
   it('links an unmatched partner through a pick', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const d = await db()
     const w = await makeWedding(d)
     const bob = await makeGuest(d, w, 'Bob', 'Stone')
@@ -227,7 +239,7 @@ describe('guest CSV import', () => {
   })
 
   it('links many couples at once: earlier partners unlinked, couple rule back on for all (review finding)', async () => {
-    const { makeWedding, makeGuest } = await import('@/server/repo/test-fixtures')
+    const { makeGuest } = await import('@/server/repo/test-fixtures')
     const { guest: guestRoute } = await routes()
     const d = await db()
     const w = await makeWedding(d)
@@ -252,7 +264,7 @@ describe('guest CSV import', () => {
   })
 
   it('removes guests missing from the file only when asked, clearing the seats the summary names', async () => {
-    const { makeWedding, makeLayout, canvasOf, roundTable, chairRow, layoutRow, canvasSeats } = await import(
+    const { makeLayout, canvasOf, roundTable, chairRow, layoutRow, canvasSeats } = await import(
       '@/server/repo/test-fixtures'
     )
     const { layouts, guests } = await import('@/server/db/schema')
@@ -315,12 +327,14 @@ describe('guest CSV import', () => {
   })
 
   it('exports CSV that re-imports with 0 new and 0 changed', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { weddings } = await import('@/server/db/schema')
     const { exporter, guests: guestsRoute, guest: guestRoute, groups: groupsRoute } = await routes()
     const d = await db()
     const w = await makeWedding(d, 'Noa & Aiden: Zoë’s "list"')
-    await commit(w, { rows: rowsOf(SAMPLE_CSV_FILE) })
+    // Another couple's wedding: the file names sides after them, and reads back with their names.
+    const samAlex: PartnerNames = { partner1: 'Sam', partner2: 'Alex' }
+    await d.update(weddings).set({ partner1Name: 'Sam', partner2Name: 'Alex' }).where(eq(weddings.id, w))
+    await commit(w, { rows: rowsOf(SAMPLE_CSV_FILE, samAlex) })
     const list = await guestList(w)
     // Hand edits the CSV has to carry: formula-looking cells, commas, quotes,
     // line breaks, a second guest with the same name, a partner set by hand.
@@ -363,8 +377,11 @@ describe('guest CSV import', () => {
 
     expect(text).toContain(',"Mom side, cousins;",')
     expect(text).toContain("''=already quoted")
+    expect(text).toContain('Zoë,Kowalczyk,Łukasz Kowalczyk,Kowalczyk,Sam,')
+    expect(text).toContain("Daniel,O'Connor,Priya Raman,O'Connor and Raman,Alex,")
+    expect(text).toContain('José,García,,"García, Smith",Both,')
 
-    const rows = rowsOf(text)
+    const rows = rowsOf(text, samAlex)
     expect(rows).toHaveLength(14)
     expect(rows.every((r) => r.guestId)).toBe(true)
     expect(byName(list, 'José').id).toBe(rows.find((r) => r.nickname === 'Pepe')!.guestId)
@@ -390,7 +407,6 @@ describe('guest CSV import', () => {
   })
 
   it('refuses bad bodies: 400, 404, 413 over 5,000 rows, 422', async () => {
-    const { makeWedding } = await import('@/server/repo/test-fixtures')
     const { preview: previewRoute, commit: commitRoute } = await routes()
     const w = await makeWedding(await db())
     expect(MAX_GUEST_ROWS).toBe(MAX_IMPORT_ROWS)

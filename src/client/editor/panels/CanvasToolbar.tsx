@@ -5,7 +5,7 @@
  * and Redo on every screen size, and on phones the Shapes button (the shape
  * panel's drawer) and the Select switch (one finger draws a selection box
  * and taps add to the selection, PLAN change 12). A hint beside it (such as
- * "Pick Noa or Aiden to start editing.") shows in both modes.
+ * "Click the plan to place the note.") shows in both modes.
  *
  * Beside it, the notes layer's switches (spec section 9), kept per device
  * (PLAN change 1): Show (all notes on the plan, or none) in both modes, and
@@ -114,10 +114,10 @@ export function CanvasToolbar({
   hint,
 }: {
   phone: boolean
-  /** The page can take edits (author picked, saving ready, no conflict). */
+  /** The page can take edits (saving ready, no conflict). */
   canEdit: boolean
   onOpenShapes(): void
-  /** A short line beside the toolbar, such as "Pick Noa or Aiden to start editing." */
+  /** A short line beside the toolbar, such as "Click the plan to place the note." */
   hint: string | null
 }) {
   const { actions, ui, store } = useEditorState()

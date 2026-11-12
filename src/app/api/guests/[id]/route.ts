@@ -1,21 +1,23 @@
 import type { NextRequest } from 'next/server'
 import { updateGuestBody, type DeleteGuestReply, type GuestConflict, type UpdateGuestReply } from '@/shared/api'
 import { idParam, json, notFound, readBody, refuseUnstorableText, type IdContext } from '@/server/api-route'
-import { withSiteAuth } from '@/server/auth/require'
+import { withWeddingRole } from '@/server/auth/guards'
+import { byGuestId } from '@/server/auth/resolvers'
 import { getDb } from '@/server/db/client'
 import { deleteGuest, updateGuest } from '@/server/repo/guests'
 
 /**
  * UpdateGuestReply: saves only the fields sent (PLAN section 5). A partner
  * change links both ways and clears earlier partners; 409 GuestConflict when
- * a link changed since the browser last saw it, or the partner is gone.
+ * a link changed since the browser last saw it, or the partner is gone. Any
+ * member of the guest's wedding; a partner must be in that wedding too.
  */
-export const PATCH = withSiteAuth(async (req: NextRequest, ctx: IdContext) => {
+export const PATCH = withWeddingRole(byGuestId, 'editor', async (req: NextRequest, ctx: IdContext, access) => {
   const id = await idParam(ctx)
   if (!id) return notFound()
   const body = await readBody(req, updateGuestBody)
   if (!body.ok) return body.response
-  const write = await refuseUnstorableText(() => updateGuest(getDb(), id, body.data))
+  const write = await refuseUnstorableText(() => updateGuest(getDb(), access.weddingId, id, body.data))
   if (!write.ok) return write.response
   const result = write.value
   switch (result.status) {
@@ -37,12 +39,12 @@ export const PATCH = withSiteAuth(async (req: NextRequest, ctx: IdContext) => {
 /**
  * DeleteGuestReply: removes the guest (PLAN change 7). Their seats are
  * cleared in every layout without changing layout versions, and their
- * partner link is cleared on both sides.
+ * partner link is cleared on both sides. Any member.
  */
-export const DELETE = withSiteAuth(async (_req: NextRequest, ctx: IdContext) => {
+export const DELETE = withWeddingRole(byGuestId, 'editor', async (_req: NextRequest, ctx: IdContext, access) => {
   const id = await idParam(ctx)
   if (!id) return notFound()
-  const result = await deleteGuest(getDb(), id)
+  const result = await deleteGuest(getDb(), access.weddingId, id)
   if (!result) return notFound()
   const reply: DeleteGuestReply = { ok: true, clearedSeats: result.clearedSeats }
   return json(reply)

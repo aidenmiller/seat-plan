@@ -8,7 +8,7 @@
  */
 import { expect, test } from '@playwright/test'
 import { apiListGuests, guestEntry, guestsPath, waitForGuestList } from './guest-list'
-import { apiCreateWedding, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiCreateWedding, signIn, uniqueName } from './helpers'
 
 /** Each pasted line and how the preview should split it ('' for a part to fix by hand). */
 const LINES: [line: string, first: string, last: string][] = [
@@ -25,10 +25,6 @@ const LINES: [line: string, first: string, last: string][] = [
 ]
 const FIXED_LINE = 7
 const FIXED_LAST = 'Nelson'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 test('pasting 10 names shows them split for checking, and after fixing one, saving adds 10 guests', async ({ page }, testInfo) => {
   await signIn(page)

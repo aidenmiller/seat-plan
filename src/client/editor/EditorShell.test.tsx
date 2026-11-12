@@ -6,9 +6,14 @@ import { makeNote } from '@/domain/notes'
 import { makeItem } from '@/domain/presets'
 import type { LayoutDetail } from '@/shared/api'
 import { canvasInsets, EditorShell, refusalNotice } from './EditorShell'
+import { WeddingAccessProvider, type WeddingAccessValue } from '../wedding-access'
+import { CurrentUserProvider } from '../current-user'
 import { projectOverlay, TAP_TARGET_PX } from './overlay/geometry'
 import { PHONE_TOOLBAR_BOTTOM_PX } from './panels/CanvasToolbar'
 import { ZOOM_CONTROLS_PX } from './panels/ZoomControls'
+
+const AIDEN = { name: 'Aiden', id: '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b' }
+const USER = { id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a', displayName: 'Noa', email: 'noa@example.com', isAdmin: false }
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
@@ -32,6 +37,7 @@ const layout: LayoutDetail = {
   venueDeleted: false,
   version: 3,
   editedBy: 'Noa',
+  editedById: null,
   updatedAt: '2026-11-09T15:42:00.000Z',
   thumbSvg: '<svg/>',
   canvas: emptyCanvas(),
@@ -40,9 +46,28 @@ const layout: LayoutDetail = {
   template: null,
 }
 
+function renderShell(detail: LayoutDetail, access: WeddingAccessValue = { role: 'owner', viaAdmin: false }): string {
+  return renderToStaticMarkup(
+    <CurrentUserProvider user={USER}>
+      <WeddingAccessProvider access={access}>
+        <EditorShell layout={detail} />
+      </WeddingAccessProvider>
+    </CurrentUserProvider>,
+  )
+}
+
 describe('EditorShell top bar', () => {
+  it('shows Share to an owner and hides it from an editor', () => {
+    expect(renderShell(layout)).toContain('data-testid="share-button"')
+    expect(renderShell(layout, { role: 'editor', viaAdmin: false })).not.toContain('data-testid="share-button"')
+  })
+
   it('never wraps: the name is cut short and the save status has a fixed slot', () => {
-    const markup = renderToStaticMarkup(<EditorShell layout={layout} />)
+    const markup = renderShell(layout)
+    // The signed-in person's menu, as their initial, where the Noa / Aiden switch was.
+    expect(markup).toContain('data-testid="user-menu"')
+    expect(markup).toContain('aria-label="Signed in as Noa. Account menu"')
+    expect(markup).not.toContain('author-switch')
     const header = /<header class="([^"]*)"/.exec(markup)![1].split(' ')
     expect(header).toContain('flex')
     expect(header.some((c) => c.includes('wrap'))).toBe(false)
@@ -91,15 +116,13 @@ describe('canvasInsets', () => {
 })
 
 describe('refusalNotice', () => {
-  it('says why a change was refused, View mode and the author first', () => {
-    expect(refusalNotice('notesHidden', 'view', true)).toBe('Switch to Edit to change the plan.')
-    expect(refusalNotice(undefined, 'edit', false)).toBe('Pick Noa or Aiden at the top first.')
-    expect(refusalNotice('noAuthor', 'edit', true)).toBe('Pick Noa or Aiden at the top first.')
-    expect(refusalNotice('notesHidden', 'edit', true)).toBe('Notes are hidden. Show them to change notes.')
-    expect(refusalNotice('notesLocked', 'edit', true)).toBe('Notes are locked. Unlock them to change notes.')
-    expect(refusalNotice('layerLocked', 'edit', true)).toBe('That part of the plan is locked.')
+  it('says why a change was refused, View mode first', () => {
+    expect(refusalNotice('notesHidden', 'view')).toBe('Switch to Edit to change the plan.')
+    expect(refusalNotice('notesHidden', 'edit')).toBe('Notes are hidden. Show them to change notes.')
+    expect(refusalNotice('notesLocked', 'edit')).toBe('Notes are locked. Unlock them to change notes.')
+    expect(refusalNotice('layerLocked', 'edit')).toBe('That part of the plan is locked.')
     // Saving not ready, or a conflict open: those have their own banners.
-    expect(refusalNotice(undefined, 'edit', true)).toBeNull()
+    expect(refusalNotice(undefined, 'edit')).toBeNull()
   })
 })
 
@@ -108,10 +131,10 @@ describe('EditorShell notes', () => {
     ...layout,
     canvas: {
       ...emptyCanvas(),
-      items: [{ ...makeNote('sticky', { x: 0, y: 0 }, 'Aiden', 'green', Date.UTC(2026, 10, 10), 'n1'), text: 'Bar opens at 6' }],
+      items: [{ ...makeNote('sticky', { x: 0, y: 0 }, AIDEN, 'green', Date.UTC(2026, 10, 10), 'n1'), text: 'Bar opens at 6' }],
     },
   }
-  const html = renderToStaticMarkup(<EditorShell layout={withNotes} />)
+  const html = renderShell(withNotes)
 
   it('draws notes on the plan and puts the notes switches on the canvas', () => {
     expect(html).toMatch(/data-item-id="n1" data-kind="note" data-note-type="sticky" data-note-color="green"/)

@@ -16,7 +16,7 @@ import { ApiRequestError, errorMessage, runFloorplanImport, uploadVenueImage } f
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { errorClass, hintClass, inputClass, labelClass, primaryButton, secondaryButton } from '@/client/ui/styles'
 import type { FloorplanDraft } from '@/domain/floorplan/draft-schema'
-import type { VenueImageInfo } from '@/shared/api'
+import type { ImportLimitReached, VenueImageInfo } from '@/shared/api'
 import { elapsedText, floorplanBody, planFileKind, type ImportPlan } from './plan-body'
 import { openPdf, PlanReadError, prepareImage, preparePdfPage, type OpenPdf, type PreparedPlan } from './prepare-plan'
 
@@ -124,6 +124,12 @@ function ImportFlow({ templateId, rerun, onClose, onDraft }: ImportDialogProps) 
       if (run !== runRef.current) return
       if (abort.signal.aborted) return
       const notConfigured = err instanceof ApiRequestError && err.status === 503
+      // Over the planner's AI import allowance: the reply says so, and trying again will not help.
+      const limit = err instanceof ApiRequestError && err.status === 429 ? (err.body as Partial<ImportLimitReached> | null) : null
+      if (limit?.error === 'import_limit' && limit.message) {
+        setStep({ kind: 'error', message: limit.message, retry: false })
+        return
+      }
       setStep({ kind: 'error', message: errorMessage(err), retry: !notConfigured })
     }
   }

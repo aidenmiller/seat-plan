@@ -10,6 +10,7 @@ export const WEDDING_TABS = [
   { segment: 'rules', label: 'Rules' },
   { segment: 'venues', label: 'Venues' },
   { segment: 'links', label: 'Links' },
+  { segment: 'people', label: 'People' },
 ] as const
 
 /** The wedding's tabs. On a phone they scroll sideways inside their own strip, never the page. */

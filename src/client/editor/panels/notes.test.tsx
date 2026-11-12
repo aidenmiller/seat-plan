@@ -18,10 +18,13 @@ import { emptyListText, focusNoteOnPlan, noteCounts, noteFocusCamera, visibleNot
 import { PropertiesPanel } from './PropertiesPanel'
 import { dropNote, NOTE_TOOL_NAMES, noteToolsBlocked, ShapePanel, toggleNoteTool } from './ShapePanel'
 
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
+
 const T0 = Date.UTC(2026, 10, 10, 15, 0, 0)
 
 function note(type: NoteType, id: string, patch: Partial<Note> = {}, at = { x: 0, y: 0 }, minutes = 0): Note {
-  return { ...makeNote(type, at, 'Noa', 'yellow', T0 + minutes * 60_000, id), ...patch }
+  return { ...makeNote(type, at, NOA, 'yellow', T0 + minutes * 60_000, id), ...patch }
 }
 
 function table(id: string, x = 0, y = 0): Table {
@@ -53,7 +56,7 @@ function setup(items: Item[], options: SetupOptions = {}): EditorState {
     storage: null,
     scheduler: manualScheduler(),
     traits: () => ({ width: 1440, touchOnly: false, phone: false }),
-    author: () => 'Aiden',
+    author: () => ({ name: 'Aiden', id: '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b' }),
     wallClock: () => T0,
   })
   editor.loadDevice()

@@ -9,6 +9,7 @@ import type { DraftSnapshot, DraftStore, LayoutSaverOptions, SaveStatus } from '
 const LAYOUT = '6f1c2b9e-3d4a-4c5b-8e7f-0a1b2c3d4e5f'
 const TAB = 'tab-a'
 const GUEST = '0b9f6a3e-6c1d-4c8e-9f57-2a1d6f1e7a10'
+const USER = '11111111-1111-4111-8111-111111111111'
 const START = new Date('2026-11-09T12:00:00.000Z')
 
 /** A valid canvas that differs by `n`. */
@@ -24,7 +25,7 @@ function canvasN(n: number, label = 'Bar'): Canvas {
 type Call = {
   url: string
   init: RequestInit
-  body: { baseVersion: number; saveId: string; editedBy: string; tabId: string; canvas: Canvas }
+  body: { baseVersion: number; saveId: string; tabId: string; canvas: Canvas }
   at: number
   respond(status: number, data?: unknown): void
   fail(error?: unknown): void
@@ -62,6 +63,7 @@ function ok(version: number, extra: Partial<SaveLayoutOk> = {}): SaveLayoutOk {
     version,
     updatedAt: `2026-11-09T12:00:${String(version).padStart(2, '0')}.000Z`,
     editedBy: 'Noa',
+    editedById: null,
     droppedSeats: [],
     ...extra,
   }
@@ -80,7 +82,7 @@ async function tick(ms: number) {
 let dbCounter = 0
 
 function setup(over: Partial<LayoutSaverOptions> = {}, opts: { log?: string[] } = {}) {
-  const realDrafts = createDraftStore({ dbName: `saver-test-${++dbCounter}` })
+  const realDrafts = createDraftStore({ userId: USER, dbName: `saver-test-${++dbCounter}` })
   const f = fakeFetch(opts.log)
   const statuses: SaveStatus[] = []
   const dropped: DroppedSeat[][] = []
@@ -91,7 +93,7 @@ function setup(over: Partial<LayoutSaverOptions> = {}, opts: { log?: string[] } 
     layoutId: LAYOUT,
     tabId: TAB,
     baseVersion: 3,
-    editedBy: () => 'Noa',
+    userId: USER,
     onStatus: (s) => statuses.push(s),
     onDroppedSeats: (d) => dropped.push(d),
     fetch: f.fn,
@@ -134,14 +136,14 @@ describe('drafts', () => {
     await settle()
     expect(t.calls).toHaveLength(0)
     const draft = await t.draft()
-    expect(draft).toMatchObject({ layoutId: LAYOUT, tabId: TAB, baseVersion: 3, dirty: true, inFlight: null })
+    expect(draft).toMatchObject({ layoutId: LAYOUT, tabId: TAB, baseVersion: 3, dirty: true, inFlight: null, userId: USER })
     expect(draft!.canvas).toEqual(canvasN(1))
     expect(t.saver.hasUnsavedChanges()).toBe(true)
   })
 
   it('records the in-flight snapshot and saveId before the request leaves', async () => {
     const log: string[] = []
-    const real = createDraftStore({ dbName: `saver-log-${++dbCounter}` })
+    const real = createDraftStore({ userId: USER, dbName: `saver-log-${++dbCounter}` })
     const spy: DraftStore = {
       ...real,
       async putDraft(d: DraftSnapshot) {
@@ -222,8 +224,10 @@ describe('debounce', () => {
     expect(t.calls).toHaveLength(1)
     expect(t.calls[0].url).toBe(`/api/layouts/${LAYOUT}`)
     expect(t.calls[0].init.method).toBe('PUT')
-    expect(t.calls[0].body).toMatchObject({ baseVersion: 3, editedBy: 'Noa', tabId: TAB, canvas: canvasN(1) })
+    expect(t.calls[0].body).toEqual({ baseVersion: 3, saveId: expect.any(String), tabId: TAB, canvas: canvasN(1) })
     expect(t.calls[0].body.saveId).toMatch(/^[0-9a-f-]{36}$/)
+    // No name in the body: the server takes the editor from the session.
+    expect(t.calls[0].body).not.toHaveProperty('editedBy')
   })
 
   it('starts the wait again on every edit', async () => {
@@ -498,7 +502,7 @@ describe('offline', () => {
 describe('when this device will not store the draft', () => {
   function flaky() {
     let works = false
-    const store = createDraftStore({ dbName: `saver-flaky-${++dbCounter}` })
+    const store = createDraftStore({ userId: USER, dbName: `saver-flaky-${++dbCounter}` })
     const drafts: DraftStore = {
       ...store,
       putDraft: async (d) => (works ? store.putDraft(d) : false),
@@ -559,7 +563,8 @@ describe('replies that stop saving', () => {
       error: 'conflict',
       version: 6,
       updatedAt: '2026-11-09T11:42:00.000Z',
-      editedBy: 'Aiden',
+      editedBy: 'Dayna K.',
+      editedById: '0b9f6a3e-6c1d-4c8e-9f57-2a1d6f1e7a10',
       lastSaveId: '9d9d9d9d-1111-4111-8111-111111111111',
       recentSaveIds: ['9d9d9d9d-1111-4111-8111-111111111111'],
     })
@@ -569,7 +574,8 @@ describe('replies that stop saving', () => {
       server: {
         version: 6,
         updatedAt: '2026-11-09T11:42:00.000Z',
-        editedBy: 'Aiden',
+        editedBy: 'Dayna K.',
+        editedById: '0b9f6a3e-6c1d-4c8e-9f57-2a1d6f1e7a10',
         lastSaveId: '9d9d9d9d-1111-4111-8111-111111111111',
         recentSaveIds: ['9d9d9d9d-1111-4111-8111-111111111111'],
       },
@@ -610,6 +616,93 @@ describe('replies that stop saving', () => {
     await tick(120_000)
     expect(t.calls).toHaveLength(1)
     expect(t.saver.hasUnsavedChanges()).toBe(true)
+  })
+
+  it('401 stale_page (someone else signed in) stops for good: never again from this tab, draft kept', async () => {
+    const t = setup()
+    t.saver.noteEdit(canvasN(1))
+    await tick(1000)
+    t.calls[0].respond(401, { error: 'stale_page' })
+    await settle()
+    const s = t.status()
+    expect(s).toMatchObject({ kind: 'failed', reason: 'other-user' })
+    expect(s.kind === 'failed' && s.message).toMatch(/Someone else signed in/)
+    expect(await t.draft()).toMatchObject({ dirty: true, canvas: canvasN(1), userId: USER })
+    // Nothing brings it back: the page shown again, online again, a flush, more edits, time.
+    t.doc.dispatchEvent(new Event('visibilitychange'))
+    t.win.dispatchEvent(new Event('online'))
+    await t.saver.flush()
+    t.saver.noteEdit(canvasN(2))
+    await tick(120_000)
+    expect(t.calls).toHaveLength(1)
+    // Later edits still reach this user's draft, for when they sign in again.
+    expect(await t.draft()).toMatchObject({ dirty: true, canvas: canvasN(2), userId: USER })
+    // Even a reset (load their version) keeps this user's draft as it is.
+    await t.saver.resetTo(9)
+    expect(t.status()).toMatchObject({ kind: 'failed', reason: 'other-user' })
+    expect(await t.draft()).toMatchObject({ canvas: canvasN(2) })
+  })
+
+  it('resume() after stale_page (the same person signed in again) sends the kept edits, the same save first', async () => {
+    const t = setup()
+    t.saver.noteEdit(canvasN(1))
+    await tick(1000)
+    t.calls[0].respond(401, { error: 'stale_page' })
+    await settle()
+    t.saver.noteEdit(canvasN(2))
+    expect(t.status()).toMatchObject({ kind: 'failed', reason: 'other-user' })
+
+    t.saver.resume()
+    await settle()
+    expect(t.calls).toHaveLength(2)
+    // The save that met someone else's session goes again unchanged (the server's saved-twice check holds)...
+    expect(t.calls[1].body.saveId).toBe(t.calls[0].body.saveId)
+    expect(t.calls[1].body.canvas).toEqual(canvasN(1))
+    t.calls[1].respond(200, ok(4))
+    await settle()
+    // ...then the edit made while stopped, from the version it returned.
+    await tick(1000)
+    expect(t.calls).toHaveLength(3)
+    expect(t.calls[2].body).toMatchObject({ baseVersion: 4, canvas: canvasN(2) })
+    t.calls[2].respond(200, ok(5))
+    await settle()
+    expect(t.status().kind).toBe('saved')
+    expect(await t.draft()).toBeNull()
+  })
+
+  it('resume() brings back only a tab stopped by a sign-in, never one the server refused for good', async () => {
+    for (const [status, body, reason] of [
+      [410, { error: 'gone' }, 'gone'],
+      [422, { error: 'invalid' }, 'invalid'],
+      [403, { error: 'forbidden' }, 'forbidden'],
+    ] as const) {
+      const t = setup()
+      t.saver.noteEdit(canvasN(1))
+      await tick(1000)
+      t.calls[0].respond(status, body)
+      await settle()
+      t.saver.resume()
+      await tick(60_000)
+      expect(t.calls, reason).toHaveLength(1)
+      expect(t.status(), reason).toMatchObject({ kind: 'failed', reason })
+    }
+  })
+
+  it('sends as the user it was made for, whoever the page names later', async () => {
+    const sent: Headers[] = []
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      sent.push(new Headers(init.headers))
+      return new Response(JSON.stringify(ok(4)), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+    try {
+      const t = setup({ fetch: undefined })
+      t.saver.noteEdit(canvasN(1))
+      await tick(1000)
+      expect(sent).toHaveLength(1)
+      expect(sent[0]!.get('x-seat-plan-user')).toBe(USER)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('401 asks to sign in again, keeps the draft, and tries again when the page is shown', async () => {

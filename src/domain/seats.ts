@@ -35,9 +35,9 @@ export const ROUND_EDGE_PER_SEAT_CM = 55.88
 export const STRAIGHT_EDGE_PER_SEAT_CM = 60.96
 /** Lengths within half a centimeter of the rule still count as fitting (PLAN change 4). */
 export const EDGE_ALLOWANCE_CM = 0.5
-/** Seat colors at every zoom (spec section 4, "Seats"). */
+/** Seat colors at every zoom (spec section 4, "Seats"): the brand's seat-filled and seat-empty (globals.css). */
 export const SEAT_TAKEN_COLOR = '#1e3a8a'
-export const SEAT_EMPTY_COLOR = '#9ca3af'
+export const SEAT_EMPTY_COLOR = '#7b879a'
 
 export type TableSide = 'top' | 'right' | 'bottom' | 'left'
 export type SeatSide = 'round' | TableSide

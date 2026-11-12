@@ -1,6 +1,7 @@
 import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
-import { and, asc, count, desc, eq, isNull, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, isNull, sql, type SQL } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import type { Canvas, Table } from '@/domain/canvas-schema'
 import { readImageHeader } from '@/domain/image-header'
 import { itemLabel } from '@/domain/item-labels'
@@ -16,6 +17,7 @@ import {
   type DuplicateVenueBody,
   type RestoreRevisionBody,
   type SaveVenueBody,
+  type VenueAccess,
   type VenueDeleteSummary,
   type VenueDetail,
   type VenueImageInfo,
@@ -25,13 +27,23 @@ import {
   type VenueUse,
   type VenueWallCheck,
 } from '@/shared/api'
+import { readableTemplateSql, templateAccess, templateRights, type Viewer } from '../auth/venue-access'
 import { MAX_RECENT_SAVES, recentSavesOf } from '../canvas-write'
-import { layouts, venueImages, venueTemplateRevisions, venueTemplates, weddings, type RecentSave } from '../db/schema'
+import { layouts, users, venueImages, venueTemplateRevisions, venueTemplates, weddings, type RecentSave } from '../db/schema'
+import { editorName, type Editor } from '../editor-name'
 import type { Db, Tx } from '../locks'
 
 /**
- * Venue templates (spec section 5, PLAN sections 4 and 7). Templates are
- * shared by all weddings (PLAN change 5); every read skips deleted ones.
+ * Venue templates (spec section 5, PLAN sections 4 and 7). A template belongs
+ * to the planner who made it, sits in the shared library, or (from before
+ * accounts) belongs to no one; src/server/auth/venue-access.ts says who may
+ * see, change and use each, and the routes check it before calling in here.
+ * Every read skips deleted templates.
+ *
+ * Replies about who uses a template (usedBy, the delete summary, the wall
+ * check, a refused delete) name only layouts in weddings the viewer belongs
+ * to (every wedding for an admin). Layouts in other weddings are only
+ * counted (hiddenLayouts), never named.
  *
  * Fixed items, the reference meta and the reference image change only through
  * saveTemplate, acceptImport and restoreRevision. Each one, in one transaction:
@@ -53,14 +65,47 @@ const MAX_NAME = 200
 
 const liveTemplate = (id: string) => and(eq(venueTemplates.id, id), isNull(venueTemplates.deletedAt))
 
-/** Live layouts in live weddings that use the template, as a SQL count. */
-const usedByCount = sql<number>`(
-  select count(*)::int from "layouts" l
-  join "weddings" w on w."id" = l."wedding_id"
-  where l."venue_template_id" = "venue_templates"."id"
-    and l."deleted_at" is null
-    and w."deleted_at" is null
-)`
+/**
+ * SQL: the viewer belongs to the wedding whose id `weddingIdSql` names (any
+ * role), or is an admin. Written with explicit table names: in a select from
+ * one table, drizzle prints columns inside sql`` without their table.
+ */
+function viewerBelongsTo(viewer: Viewer, weddingIdSql: SQL): SQL {
+  if (viewer.isAdmin) return sql`true`
+  return sql`exists (select 1 from "wedding_members" m where m."wedding_id" = ${weddingIdSql} and m."user_id" = ${viewer.userId})`
+}
+
+/** Live layouts that use the template, in live weddings the viewer belongs to (all for an admin), as a SQL count. */
+function usedByCount(viewer: Viewer): SQL<number> {
+  return sql<number>`(
+    select count(*)::int from "layouts" l
+    join "weddings" w on w."id" = l."wedding_id"
+    where l."venue_template_id" = "venue_templates"."id"
+      and l."deleted_at" is null
+      and w."deleted_at" is null
+      and ${viewerBelongsTo(viewer, sql`w."id"`)}
+  )`
+}
+
+/** Whose template it is, as the viewer sees it (VenueAccess in src/shared/api.ts). */
+export function venueAccessOf(viewer: Viewer, isLibrary: boolean, ownerUserId: string | null): VenueAccess {
+  if (isLibrary) return 'library'
+  if (ownerUserId === viewer.userId) return 'mine'
+  if (ownerUserId === null) return 'unowned'
+  return 'shared'
+}
+
+/** The fields every template reply carries about its owner and the viewer's rights. */
+function ownership(viewer: Viewer, row: { isLibrary: boolean; ownerUserId: string | null; ownerName: string | null }) {
+  return {
+    access: venueAccessOf(viewer, row.isLibrary, row.ownerUserId),
+    ownerName: row.ownerName,
+    // Changing a template never depends on who uses it (venue-access.ts), so usedByViewer does not matter here.
+    canEdit: templateRights(viewer, { isLibrary: row.isLibrary, ownerUserId: row.ownerUserId, usedByViewer: false }).edit,
+  }
+}
+
+const owner = alias(users, 'venue_owner')
 
 export function imageUrl(templateId: string, imageId: string): string {
   return `/api/venues/${templateId}/images/${imageId}`
@@ -68,24 +113,35 @@ export function imageUrl(templateId: string, imageId: string): string {
 
 // ---------------------------------------------------------------- reads
 
-/** Live venue templates (shared by all weddings, PLAN change 5), by name. */
-export async function listVenues(db: Db): Promise<VenueSummary[]> {
+/**
+ * The live templates the viewer may pick from, by name (readableTemplateSql).
+ * For a wedding: the library, the viewer's own, and any template a live
+ * layout of that wedding uses. Without one: the library, the viewer's own,
+ * and those used in any wedding the viewer belongs to. An admin gets nothing
+ * extra here. The caller checks the viewer may open the wedding first.
+ */
+export async function listVenues(db: Db, viewer: Viewer, opts: { weddingId?: string } = {}): Promise<VenueSummary[]> {
   const rows = await db
     .select({
       id: venueTemplates.id,
       name: venueTemplates.name,
       updatedAt: venueTemplates.updatedAt,
       version: venueTemplates.version,
-      editedBy: venueTemplates.editedBy,
+      editedBy: editorName(venueTemplates),
+      editedById: venueTemplates.editedByUserId,
       importedBy: venueTemplates.importedBy,
       referenceImageId: venueTemplates.referenceImageId,
       fixedItemCount: sql<number>`jsonb_array_length("venue_templates"."fixed_items")`,
       // Explicit table names: in a select from one table, drizzle prints
       // columns inside sql`` without their table.
-      usedBy: usedByCount,
+      usedBy: usedByCount(viewer),
+      isLibrary: venueTemplates.isLibrary,
+      ownerUserId: venueTemplates.ownerUserId,
+      ownerName: owner.displayName,
     })
     .from(venueTemplates)
-    .where(isNull(venueTemplates.deletedAt))
+    .leftJoin(owner, eq(owner.id, venueTemplates.ownerUserId))
+    .where(readableTemplateSql(viewer, opts.weddingId))
     .orderBy(asc(sql`lower(${venueTemplates.name})`), asc(venueTemplates.id))
   return rows.map((r) => ({
     id: r.id,
@@ -94,9 +150,11 @@ export async function listVenues(db: Db): Promise<VenueSummary[]> {
     usedBy: Number(r.usedBy),
     version: r.version,
     editedBy: r.editedBy,
+    editedById: r.editedById,
     importedBy: r.importedBy,
     fixedItemCount: Number(r.fixedItemCount),
     hasReferenceImage: r.referenceImageId !== null,
+    ...ownership(viewer, { isLibrary: r.isLibrary, ownerUserId: r.ownerUserId, ownerName: r.ownerName ?? null }),
   }))
 }
 
@@ -142,21 +200,28 @@ function storedItems(value: unknown): FixedItem[] {
   return parsed.success ? parsed.data : []
 }
 
-/** One live template with its fixed items, reference meta and reference image. */
-export async function getTemplate(db: Db | Tx, id: string): Promise<VenueDetail | null> {
+/**
+ * One live template with its fixed items, reference meta and reference image,
+ * as the viewer sees it. Null when it is missing or deleted, or the viewer may
+ * not read it (venue-access.ts).
+ */
+export async function getTemplate(db: Db | Tx, id: string, viewer: Viewer): Promise<VenueDetail | null> {
+  const access = await templateAccess(db, viewer, id)
+  if (!access?.read) return null
   const [row] = await db
     .select({
       id: venueTemplates.id,
       name: venueTemplates.name,
       version: venueTemplates.version,
       lastSaveId: venueTemplates.lastSaveId,
-      editedBy: venueTemplates.editedBy,
+      editedBy: editorName(venueTemplates),
+      editedById: venueTemplates.editedByUserId,
       updatedAt: venueTemplates.updatedAt,
       importedBy: venueTemplates.importedBy,
       fixedItems: venueTemplates.fixedItems,
       reference: venueTemplates.reference,
       referenceImageId: venueTemplates.referenceImageId,
-      usedBy: usedByCount,
+      usedBy: usedByCount(viewer),
     })
     .from(venueTemplates)
     .where(liveTemplate(id))
@@ -172,12 +237,14 @@ export async function getTemplate(db: Db | Tx, id: string): Promise<VenueDetail 
     version: row.version,
     lastSaveId: row.lastSaveId,
     editedBy: row.editedBy,
+    editedById: row.editedById,
     updatedAt: row.updatedAt.toISOString(),
     importedBy: row.importedBy,
     fixedItems: storedItems(row.fixedItems),
     reference: row.reference ?? null,
     referenceImage,
     usedBy: Number(row.usedBy),
+    ...ownership(viewer, { isLibrary: access.library, ownerUserId: access.ownerUserId, ownerName: access.ownerName }),
   }
 }
 
@@ -187,27 +254,54 @@ export async function liveTemplateName(db: Db, id: string): Promise<string | nul
   return row?.name ?? null
 }
 
-/** Live layouts in live weddings that use the template, by wedding name then layout name. */
-async function templateUses(db: Db | Tx, templateId: string): Promise<VenueUse[]> {
+/** Live layouts in live weddings that use a template: those the viewer may see, and how many others. */
+type TemplateUses = { layouts: VenueUse[]; hiddenLayouts: number }
+
+/**
+ * Live layouts in live weddings that use the template. Those in weddings the
+ * viewer belongs to (every wedding for an admin) come back by wedding name
+ * then layout name; the rest only as a count.
+ */
+async function templateUses(db: Db | Tx, templateId: string, viewer: Viewer): Promise<TemplateUses> {
   const rows = await db
-    .select({ weddingId: weddings.id, weddingName: weddings.name, layoutId: layouts.id, layoutName: layouts.name })
+    .select({
+      weddingId: weddings.id,
+      weddingName: weddings.name,
+      layoutId: layouts.id,
+      layoutName: layouts.name,
+      visible: sql<boolean>`${viewerBelongsTo(viewer, sql`"weddings"."id"`)}`,
+    })
     .from(layouts)
     .innerJoin(weddings, eq(weddings.id, layouts.weddingId))
     .where(and(eq(layouts.venueTemplateId, templateId), isNull(layouts.deletedAt), isNull(weddings.deletedAt)))
     .orderBy(asc(sql`lower(${weddings.name})`), asc(weddings.id), asc(sql`lower(${layouts.name})`), asc(layouts.id))
-  return rows
+  const shown = rows.filter((r) => r.visible === true)
+  return {
+    layouts: shown.map((r) => ({ weddingId: r.weddingId, weddingName: r.weddingName, layoutId: r.layoutId, layoutName: r.layoutName })),
+    hiddenLayouts: rows.length - shown.length,
+  }
 }
 
-/** What the delete dialog lists: the layouts that block the delete, and what goes with the template. */
-export async function templateDeleteSummary(db: Db, id: string): Promise<VenueDeleteSummary | null> {
+/**
+ * What the delete dialog lists: the layouts that block the delete (those the
+ * viewer may see, and a count of the rest), and what goes with the template.
+ */
+export async function templateDeleteSummary(db: Db, id: string, viewer: Viewer): Promise<VenueDeleteSummary | null> {
   const [row] = await db.select({ name: venueTemplates.name }).from(venueTemplates).where(liveTemplate(id))
   if (!row) return null
   const [[images], [revisions], uses] = await Promise.all([
     db.select({ n: count() }).from(venueImages).where(eq(venueImages.templateId, id)),
     db.select({ n: count() }).from(venueTemplateRevisions).where(eq(venueTemplateRevisions.templateId, id)),
-    templateUses(db, id),
+    templateUses(db, id, viewer),
   ])
-  return { kind: 'venue', name: row.name, layouts: uses, images: Number(images?.n ?? 0), revisions: Number(revisions?.n ?? 0) }
+  return {
+    kind: 'venue',
+    name: row.name,
+    layouts: uses.layouts,
+    hiddenLayouts: uses.hiddenLayouts,
+    images: Number(images?.n ?? 0),
+    revisions: Number(revisions?.n ?? 0),
+  }
 }
 
 /** The template's revisions, newest first, and which one "Undo import" restores. Null when the template is not live. */
@@ -263,29 +357,41 @@ async function undoImportRevisionId(db: Db, templateId: string): Promise<string 
 /**
  * Every live layout in a live wedding that uses the template, with the tables
  * a wall of the saved template runs through (src/domain/walls.ts). Layouts
- * with no such table are listed with an empty list.
+ * with no such table are listed with an empty list. Only layouts in weddings
+ * the viewer belongs to (every wedding for an admin) are listed; the rest are
+ * counted in hiddenLayouts and their canvases are never read.
  */
-export async function templateWallCheck(db: Db, id: string): Promise<VenueWallCheck | null> {
+export async function templateWallCheck(db: Db, id: string, viewer: Viewer): Promise<VenueWallCheck | null> {
   const [template] = await db
     .select({ version: venueTemplates.version, fixedItems: venueTemplates.fixedItems })
     .from(venueTemplates)
     .where(liveTemplate(id))
   if (!template) return null
   const items = storedItems(template.fixedItems)
-  const rows = await db
-    .select({
-      weddingId: weddings.id,
-      weddingName: weddings.name,
-      layoutId: layouts.id,
-      layoutName: layouts.name,
-      canvas: layouts.canvas,
-    })
-    .from(layouts)
-    .innerJoin(weddings, eq(weddings.id, layouts.weddingId))
-    .where(and(eq(layouts.venueTemplateId, id), isNull(layouts.deletedAt), isNull(weddings.deletedAt)))
-    .orderBy(asc(sql`lower(${weddings.name})`), asc(weddings.id), asc(sql`lower(${layouts.name})`), asc(layouts.id))
+  const live = and(eq(layouts.venueTemplateId, id), isNull(layouts.deletedAt), isNull(weddings.deletedAt))
+  const visible = viewerBelongsTo(viewer, sql`"weddings"."id"`)
+  const [rows, [hidden]] = await Promise.all([
+    db
+      .select({
+        weddingId: weddings.id,
+        weddingName: weddings.name,
+        layoutId: layouts.id,
+        layoutName: layouts.name,
+        canvas: layouts.canvas,
+      })
+      .from(layouts)
+      .innerJoin(weddings, eq(weddings.id, layouts.weddingId))
+      .where(and(live, visible))
+      .orderBy(asc(sql`lower(${weddings.name})`), asc(weddings.id), asc(sql`lower(${layouts.name})`), asc(layouts.id)),
+    db
+      .select({ n: count() })
+      .from(layouts)
+      .innerJoin(weddings, eq(weddings.id, layouts.weddingId))
+      .where(and(live, sql`not ${visible}`)),
+  ])
   return {
     templateVersion: template.version,
+    hiddenLayouts: Number(hidden?.n ?? 0),
     layouts: rows.map(({ canvas, ...use }) => {
       const tables = new Map(canvas.items.filter((i): i is Table => i.kind === 'table').map((t) => [t.id, t]))
       return {
@@ -303,35 +409,58 @@ export async function templateWallCheck(db: Db, id: string): Promise<VenueWallCh
 
 export type CreateTemplateResult = { status: 'created'; venue: VenueDetail; existed: boolean } | { status: 'id-taken' }
 
-/** A new, empty template with its first revision. A retry with the same id gives the same template back. */
-export async function createTemplate(db: Db, body: CreateVenueBody): Promise<CreateTemplateResult> {
-  const id = body.id ?? randomUUID()
+/**
+ * The outcome of an insert that met an existing row with the chosen id: a
+ * retry of the viewer's own create ('existed'), or an id they may not have
+ * ('id-taken', telling nothing about the template that holds it).
+ */
+async function retriedCreate(tx: Tx, id: string, viewer: Viewer): Promise<'existed' | 'id-taken'> {
+  const [existing] = await tx
+    .select({ deletedAt: venueTemplates.deletedAt, ownerUserId: venueTemplates.ownerUserId })
+    .from(venueTemplates)
+    .where(eq(venueTemplates.id, id))
+  return existing && existing.deletedAt === null && existing.ownerUserId === viewer.userId ? 'existed' : 'id-taken'
+}
+
+/**
+ * A new, empty template with its first revision, owned by the viewer and
+ * private (not in the library). A retry with the same id gives the viewer's
+ * own template back; an id that belongs to anyone else's is 'id-taken'.
+ */
+export async function createTemplate(db: Db, body: CreateVenueBody, viewer: Viewer, editor: Editor): Promise<CreateTemplateResult> {
+  const id = (body.id ?? randomUUID()).toLowerCase()
   const outcome = await db.transaction(async (tx): Promise<'created' | 'existed' | 'id-taken'> => {
     const inserted = await tx
       .insert(venueTemplates)
-      .values({ id, name: body.name, fixedItems: [], importedBy: 'hand', editedBy: body.editedBy ?? null })
+      .values({
+        id,
+        name: body.name,
+        fixedItems: [],
+        importedBy: 'hand',
+        editedByName: editor.name,
+        editedByUserId: editor.userId,
+        ownerUserId: viewer.userId,
+        isLibrary: false,
+      })
       .onConflictDoNothing({ target: venueTemplates.id })
       .returning({ id: venueTemplates.id })
-    if (inserted.length === 0) {
-      const [existing] = await tx.select({ deletedAt: venueTemplates.deletedAt }).from(venueTemplates).where(eq(venueTemplates.id, id))
-      return existing && existing.deletedAt === null ? 'existed' : 'id-taken'
-    }
+    if (inserted.length === 0) return retriedCreate(tx, id, viewer)
     await addRevision(tx, id, { fixedItems: [], referenceImageId: null, reference: null }, 'save')
     return 'created'
   })
   if (outcome === 'id-taken') return { status: 'id-taken' }
-  const venue = await getTemplate(db, id)
+  const venue = await getTemplate(db, id, viewer)
   return venue ? { status: 'created', venue, existed: outcome === 'existed' } : { status: 'id-taken' }
 }
 
 /** Renames a live template. The version, editor and last edited time stay as they are. Null when not live. */
-export async function renameTemplate(db: Db, id: string, name: string): Promise<VenueDetail | null> {
+export async function renameTemplate(db: Db, id: string, name: string, viewer: Viewer): Promise<VenueDetail | null> {
   const updated = await db
     .update(venueTemplates)
     .set({ name, updatedAt: sql`${venueTemplates.updatedAt}` })
     .where(liveTemplate(id))
     .returning({ id: venueTemplates.id })
-  return updated.length > 0 ? getTemplate(db, id) : null
+  return updated.length > 0 ? getTemplate(db, id, viewer) : null
 }
 
 export function copyName(name: string): string {
@@ -343,11 +472,19 @@ export type DuplicateTemplateResult = CreateTemplateResult | { status: 'not-foun
 
 /**
  * A new template with the same fixed items, reference meta, import source and
- * a copy of the current reference image row. Version 1, its own first
- * revision. Older images and revisions stay with the original.
+ * a copy of the current reference image row, owned by the viewer and private
+ * whatever the source was. Version 1, its own first revision. Older images
+ * and revisions stay with the original. The caller checks the viewer may read
+ * the source.
  */
-export async function duplicateTemplate(db: Db, sourceId: string, body: DuplicateVenueBody): Promise<DuplicateTemplateResult> {
-  const id = body.id ?? randomUUID()
+export async function duplicateTemplate(
+  db: Db,
+  sourceId: string,
+  body: DuplicateVenueBody,
+  viewer: Viewer,
+  editor: Editor,
+): Promise<DuplicateTemplateResult> {
+  const id = (body.id ?? randomUUID()).toLowerCase()
   const outcome = await db.transaction(async (tx): Promise<'created' | 'existed' | 'id-taken' | 'not-found'> => {
     const [source] = await tx
       .select({
@@ -368,14 +505,14 @@ export async function duplicateTemplate(db: Db, sourceId: string, body: Duplicat
         fixedItems: source.fixedItems,
         reference: source.reference,
         importedBy: source.importedBy,
-        editedBy: body.editedBy ?? null,
+        editedByName: editor.name,
+        editedByUserId: editor.userId,
+        ownerUserId: viewer.userId,
+        isLibrary: false,
       })
       .onConflictDoNothing({ target: venueTemplates.id })
       .returning({ id: venueTemplates.id })
-    if (inserted.length === 0) {
-      const [existing] = await tx.select({ deletedAt: venueTemplates.deletedAt }).from(venueTemplates).where(eq(venueTemplates.id, id))
-      return existing && existing.deletedAt === null ? 'existed' : 'id-taken'
-    }
+    if (inserted.length === 0) return retriedCreate(tx, id, viewer)
     // The image row points at its template and the template at its image, so
     // the copy is made after the template, then the template points at it.
     let referenceImageId: string | null = null
@@ -395,24 +532,28 @@ export async function duplicateTemplate(db: Db, sourceId: string, body: Duplicat
     return 'created'
   })
   if (outcome === 'not-found' || outcome === 'id-taken') return { status: outcome }
-  const venue = await getTemplate(db, id)
+  const venue = await getTemplate(db, id, viewer)
   return venue ? { status: 'created', venue, existed: outcome === 'existed' } : { status: 'not-found' }
 }
 
-export type SoftDeleteTemplateResult = { status: 'deleted' } | { status: 'in-use'; layouts: VenueUse[] } | { status: 'not-found' }
+export type SoftDeleteTemplateResult =
+  | { status: 'deleted' }
+  | { status: 'in-use'; layouts: VenueUse[]; hiddenLayouts: number }
+  | { status: 'not-found' }
 
 /**
  * Marks the template deleted, unless live layouts in live weddings still use
- * it: then nothing changes and those layouts come back (spec section 5).
- * Layouts in deleted weddings, and deleted layouts, keep pointing at it and
- * open with a notice if they come back (DECISIONS 29).
+ * it, in any wedding: then nothing changes and those layouts come back (spec
+ * section 5), named only when the viewer may see them. Layouts in deleted
+ * weddings, and deleted layouts, keep pointing at it and open with a notice
+ * if they come back (DECISIONS 29).
  */
-export async function softDeleteTemplate(db: Db, id: string): Promise<SoftDeleteTemplateResult> {
+export async function softDeleteTemplate(db: Db, id: string, viewer: Viewer): Promise<SoftDeleteTemplateResult> {
   return db.transaction(async (tx): Promise<SoftDeleteTemplateResult> => {
     const [row] = await tx.select({ id: venueTemplates.id }).from(venueTemplates).where(liveTemplate(id)).for('update')
     if (!row) return { status: 'not-found' }
-    const uses = await templateUses(tx, id)
-    if (uses.length > 0) return { status: 'in-use', layouts: uses }
+    const uses = await templateUses(tx, id, viewer)
+    if (uses.layouts.length > 0 || uses.hiddenLayouts > 0) return { status: 'in-use', ...uses }
     await tx
       .update(venueTemplates)
       .set({ deletedAt: sql`now()`, updatedAt: sql`${venueTemplates.updatedAt}` })
@@ -509,8 +650,8 @@ export async function templateImageHash(db: Db, templateId: string, imageId: str
 // ---------------------------------------------------------------- saves
 
 export type TemplateSaveResult =
-  | { status: 'saved' | 'already-saved'; version: number; updatedAt: Date; editedBy: 'Noa' | 'Aiden' | null }
-  | { status: 'conflict'; version: number; updatedAt: Date; editedBy: 'Noa' | 'Aiden' | null; lastSaveId: string | null }
+  | { status: 'saved' | 'already-saved'; version: number; updatedAt: Date; editedBy: string | null; editedById: string | null }
+  | { status: 'conflict'; version: number; updatedAt: Date; editedBy: string | null; editedById: string | null; lastSaveId: string | null }
   /** The template is missing or deleted. */
   | { status: 'gone' }
 
@@ -520,7 +661,8 @@ type LockedTemplate = TemplateState & {
   version: number
   lastSaveId: string | null
   recentSaves: RecentSave[]
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   updatedAt: Date
   importedBy: VenueImportedBy
 }
@@ -531,7 +673,8 @@ async function lockTemplate(tx: Tx, id: string): Promise<LockedTemplate | null> 
       version: venueTemplates.version,
       lastSaveId: venueTemplates.lastSaveId,
       recentSaves: venueTemplates.recentSaves,
-      editedBy: venueTemplates.editedBy,
+      editedBy: editorName(venueTemplates),
+      editedById: venueTemplates.editedByUserId,
       updatedAt: venueTemplates.updatedAt,
       importedBy: venueTemplates.importedBy,
       fixedItems: venueTemplates.fixedItems,
@@ -583,7 +726,8 @@ async function redrawLayoutThumbs(tx: Tx, templateId: string, items: readonly Fi
   }
 }
 
-type WriteArgs = { baseVersion: number; saveId: string; editedBy: 'Noa' | 'Aiden' }
+/** The request's version and save id, and the signed-in user who makes the write. */
+type WriteArgs = { baseVersion: number; saveId: string; editor: Editor }
 
 /**
  * The shared body of a save, an accepted import and a restore: lock, check
@@ -608,10 +752,18 @@ async function writeTemplate<Refusal extends { status: string }>(
     const current = await lockTemplate(tx, id)
     if (!current) return { status: 'gone' }
     if (current.version !== args.baseVersion) {
-      const state = { version: current.version, updatedAt: current.updatedAt, editedBy: current.editedBy }
+      const state = {
+        version: current.version,
+        updatedAt: current.updatedAt,
+        editedBy: current.editedBy,
+        editedById: current.editedById,
+      }
       const earlier = current.recentSaves.find((r) => r.saveId === args.saveId)
       // Only ids and versions are kept, so the time is the template's last save.
-      if (earlier && earlier.version !== current.version) return { status: 'already-saved', version: earlier.version, updatedAt: current.updatedAt, editedBy: args.editedBy }
+      if (earlier && earlier.version !== current.version) {
+        // That save was this same editor's (the tab that made it sends the retry).
+        return { status: 'already-saved', version: earlier.version, updatedAt: current.updatedAt, editedBy: args.editor.name, editedById: args.editor.userId }
+      }
       if (earlier || current.lastSaveId === args.saveId) return { status: 'already-saved', ...state }
       return { status: 'conflict', ...state, lastSaveId: current.lastSaveId }
     }
@@ -632,11 +784,19 @@ async function writeTemplate<Refusal extends { status: string }>(
         version: sql`${venueTemplates.version} + 1`,
         lastSaveId: args.saveId,
         recentSaves,
-        editedBy: args.editedBy,
+        // The old Noa / Aiden column is no longer written; readers fall back to it only for older rows.
+        editedBy: null,
+        editedByName: args.editor.name,
+        editedByUserId: args.editor.userId,
         updatedAt: sql`now()`,
       })
       .where(eq(venueTemplates.id, id))
-      .returning({ version: venueTemplates.version, updatedAt: venueTemplates.updatedAt, editedBy: venueTemplates.editedBy })
+      .returning({
+        version: venueTemplates.version,
+        updatedAt: venueTemplates.updatedAt,
+        editedBy: editorName(venueTemplates),
+        editedById: venueTemplates.editedByUserId,
+      })
     await addRevision(tx, id, state, reason)
     await redrawLayoutThumbs(tx, id, state.fixedItems)
     return { status: 'saved', ...row! }
@@ -644,8 +804,8 @@ async function writeTemplate<Refusal extends { status: string }>(
 }
 
 /** The template editor's save: fixed items and reference meta. The reference image stays as it is. */
-export function saveTemplate(db: Db, id: string, body: SaveVenueBody): Promise<TemplateSaveResult> {
-  return writeTemplate<never>(db, id, body, 'save', async (_tx, current) => ({
+export function saveTemplate(db: Db, id: string, body: SaveVenueBody, editor: Editor): Promise<TemplateSaveResult> {
+  return writeTemplate<never>(db, id, { ...body, editor }, 'save', async (_tx, current) => ({
     fixedItems: body.fixedItems,
     reference: body.reference,
     referenceImageId: current.referenceImageId,
@@ -658,8 +818,8 @@ export function saveTemplate(db: Db, id: string, body: SaveVenueBody): Promise<T
  * this template), its placement and where the items came from, saved as one
  * revision with reason 'import'. The revision before it is the "Undo import" point.
  */
-export function acceptImport(db: Db, id: string, body: AcceptImportBody): Promise<TemplateSaveResult | { status: 'bad-image' }> {
-  return writeTemplate<{ status: 'bad-image' }>(db, id, body, 'import', async (tx) => {
+export function acceptImport(db: Db, id: string, body: AcceptImportBody, editor: Editor): Promise<TemplateSaveResult | { status: 'bad-image' }> {
+  return writeTemplate<{ status: 'bad-image' }>(db, id, { ...body, editor }, 'import', async (tx) => {
     const [image] = await tx
       .select({ id: venueImages.id })
       .from(venueImages)
@@ -682,8 +842,9 @@ export function restoreRevision(
   id: string,
   revisionId: string,
   body: RestoreRevisionBody,
+  editor: Editor,
 ): Promise<TemplateSaveResult | RestoreRefusal> {
-  return writeTemplate<RestoreRefusal>(db, id, body, 'save', async (tx, current) => {
+  return writeTemplate<RestoreRefusal>(db, id, { ...body, editor }, 'save', async (tx, current) => {
     const [revision] = await tx
       .select({
         fixedItems: venueTemplateRevisions.fixedItems,

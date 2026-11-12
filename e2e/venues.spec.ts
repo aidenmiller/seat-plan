@@ -15,21 +15,17 @@ import { expect, test } from '@playwright/test'
 import { expectHydrated } from './guest-list'
 import { openProperties } from './canvas'
 import { dbMarkTemplateDeleted } from './db'
-import { apiCreateLayout, apiCreateWedding, apiGetLayout, editorPath, presetAuthor, signIn, uniqueName, waitForEditor } from './helpers'
+import { apiCreateLayout, apiCreateWedding, apiGetLayout, editorPath, signIn, uniqueName, waitForEditor } from './helpers'
 import { apiCreateVenue, apiGetVenue, apiSaveVenue, setTemplateMode, venueCard, wallItem } from './venues'
 import type { VenueSummary } from '../src/shared/api'
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
-
 test('New venue makes an empty template and opens it; the name renames in place on the Venues tab', async ({ page }, testInfo) => {
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Venues', testInfo))
   await page.goto(`/w/${wedding.id}/venues`)
-  await expect(page.getByRole('heading', { name: 'Venues', level: 2 })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Venues', exact: true, level: 2 })).toBeVisible()
   // The seeded template is there for every wedding, and stays empty until its floor plan is sent (spec section 5).
   await expect(page.getByTestId('venue-list')).toContainText('Toronto Beach Club')
   const listed = (await (await page.request.get('/api/venues')).json()) as VenueSummary[]
@@ -207,7 +203,7 @@ test('a layout whose venue was deleted says so and picks another venue; Properti
   const old = await apiCreateVenue(page.request, oldName)
   const nextName = uniqueName('New Barn', testInfo)
   const next = await apiCreateVenue(page.request, nextName)
-  await apiSaveVenue(page.request, next, [wallItem({ x: -300, y: -200 }, { x: 300, y: -200 })], 'Aiden')
+  await apiSaveVenue(page.request, next, [wallItem({ x: -300, y: -200 }, { x: 300, y: -200 })])
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Supper', venueTemplateId: old.id })
   // As a wedding restored from the database can leave it (DECISIONS 29).
   await dbMarkTemplateDeleted(old.id)

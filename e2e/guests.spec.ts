@@ -32,13 +32,9 @@ import {
   shownNames,
   waitForGuestList,
 } from './guest-list'
-import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiAddTables, apiCreateLayout, apiCreateWedding, apiGetLayout, signIn, uniqueName } from './helpers'
 
 type TextField = 'firstName' | 'lastName' | 'nickname' | 'meal'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 /** Opens a guest's text field for editing and returns its input. */
 async function openField(page: Page, guestId: string, field: TextField): Promise<Locator> {
@@ -79,7 +75,7 @@ test('add a guest, then edit in place: Enter saves, Esc cancels, an empty name i
   await expect(page.getByTestId('guest-count')).toHaveText('1 guest')
   await expect(page.getByTestId('add-guest-first')).toHaveValue('')
   const [ava] = await apiListGuests(page.request, wedding.id)
-  expect(ava).toMatchObject({ firstName: 'Ava', lastName: 'Cohen', side: 'Both', rsvp: 'pending' })
+  expect(ava).toMatchObject({ firstName: 'Ava', lastName: 'Cohen', side: 'both', rsvp: 'pending' })
   await expect(guestEntry(page, ava.id)).toBeVisible()
 
   // A name without a last name is refused before it reaches the server.
@@ -147,11 +143,11 @@ test('sort by a column, filter by side and RSVP, and search by name or nickname 
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Guests sort', testInfo))
   const guests = await apiAddGuests(page.request, wedding.id, [
-    { firstName: 'Zoë', lastName: 'Adler', side: 'Noa', rsvp: 'yes' },
-    { firstName: 'Bruno', lastName: 'Zimmer', side: 'Aiden', rsvp: 'pending' },
-    { firstName: 'Chloé', lastName: 'Martin', side: 'Both', rsvp: 'no' },
-    { firstName: 'Dan', lastName: 'Brooks', side: 'Aiden', rsvp: 'yes', nickname: 'Danny' },
-    { firstName: 'Élodie', lastName: 'Fournier', side: 'Noa', rsvp: 'yes' },
+    { firstName: 'Zoë', lastName: 'Adler', side: 'partner1', rsvp: 'yes' },
+    { firstName: 'Bruno', lastName: 'Zimmer', side: 'partner2', rsvp: 'pending' },
+    { firstName: 'Chloé', lastName: 'Martin', side: 'both', rsvp: 'no' },
+    { firstName: 'Dan', lastName: 'Brooks', side: 'partner2', rsvp: 'yes', nickname: 'Danny' },
+    { firstName: 'Élodie', lastName: 'Fournier', side: 'partner1', rsvp: 'yes' },
   ])
   await page.goto(guestsPath(wedding.id))
   await waitForGuestList(page)
@@ -375,9 +371,9 @@ test('export the guest list as CSV, with a byte order mark and a guest_id column
   const name = uniqueName('Guests export', testInfo)
   const wedding = await apiCreateWedding(page.request, name)
   const [zoe, lukasz] = await apiAddGuests(page.request, wedding.id, [
-    { firstName: 'Zoë', lastName: 'Kowalczyk', side: 'Noa', rsvp: 'yes', meal: 'Fish', notes: 'Nut allergy' },
-    { firstName: 'Łukasz', lastName: 'Kowalczyk', side: 'Noa', rsvp: 'yes', household: 'Kowalczyk' },
-    { firstName: 'Theo', lastName: 'Lee', side: 'Aiden', isChild: true },
+    { firstName: 'Zoë', lastName: 'Kowalczyk', side: 'partner1', rsvp: 'yes', meal: 'Fish', notes: 'Nut allergy' },
+    { firstName: 'Łukasz', lastName: 'Kowalczyk', side: 'partner1', rsvp: 'yes', household: 'Kowalczyk' },
+    { firstName: 'Theo', lastName: 'Lee', side: 'partner2', isChild: true },
   ])
   await apiLinkPartners(page.request, zoe.id, lukasz.id)
   await apiCreateGroup(page.request, wedding.id, 'Noa Family', [zoe.id, lukasz.id])

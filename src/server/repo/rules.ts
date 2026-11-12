@@ -77,18 +77,21 @@ async function guestIdsByRule(conn: Conn, weddingId: string, ruleIds: readonly s
   return out
 }
 
-/** A rule in a live wedding. */
-async function liveRule(conn: Conn, ruleId: string): Promise<RuleRow | null> {
+/**
+ * A rule of this live wedding. The routes pass the wedding their guard
+ * resolved, so a rule of any other wedding reads as missing.
+ */
+async function liveRule(conn: Conn, weddingId: string, ruleId: string): Promise<RuleRow | null> {
   const [row] = await conn
     .select({ rule: rules })
     .from(rules)
     .innerJoin(weddings, eq(weddings.id, rules.weddingId))
-    .where(and(eq(rules.id, ruleId), isNull(weddings.deletedAt)))
+    .where(and(eq(rules.id, ruleId), eq(rules.weddingId, weddingId), isNull(weddings.deletedAt)))
   return row?.rule ?? null
 }
 
-async function getRule(conn: Conn, ruleId: string): Promise<StoredRule | null> {
-  const row = await liveRule(conn, ruleId)
+async function getRule(conn: Conn, weddingId: string, ruleId: string): Promise<StoredRule | null> {
+  const row = await liveRule(conn, weddingId, ruleId)
   if (!row) return null
   const ids = await guestIdsByRule(conn, row.weddingId, [row.id])
   return toRule(row, ids.get(row.id) ?? [])
@@ -147,7 +150,7 @@ export async function createRule(db: Db, weddingId: string, body: CreateRuleInpu
       const [existing] = await tx.select({ weddingId: rules.weddingId }).from(rules).where(eq(rules.id, id))
       if (existing) {
         if (existing.weddingId !== weddingId) return { status: 'id-taken' }
-        return { status: 'created', rule: (await getRule(tx, id))! }
+        return { status: 'created', rule: (await getRule(tx, weddingId, id))! }
       }
     }
     if (!(await allLiveGuests(tx, weddingId, body.guestIds))) return { status: 'invalid', issues: [RULE_GUESTS_ISSUE] }
@@ -161,19 +164,21 @@ export async function createRule(db: Db, weddingId: string, body: CreateRuleInpu
       note: body.note ?? null,
     })
     await setRuleGuests(tx, weddingId, id, body.guestIds)
-    return { status: 'created', rule: (await getRule(tx, id))! }
+    return { status: 'created', rule: (await getRule(tx, weddingId, id))! }
   })
 }
 
 export type UpdateRuleResult = { status: 'updated'; rule: StoredRule } | { status: 'not-found' } | { status: 'invalid'; issues: string[] }
 
-/** Saves the fields sent. Turning a rule into an apart rule turns next to each other off. */
-export async function updateRule(db: Db, ruleId: string, body: UpdateRuleInput): Promise<UpdateRuleResult> {
-  const first = await liveRule(db, ruleId)
-  if (!first) return { status: 'not-found' }
+/**
+ * Saves the fields sent. Turning a rule into an apart rule turns next to each
+ * other off. 'not-found' for a rule of another wedding.
+ */
+export async function updateRule(db: Db, weddingId: string, ruleId: string, body: UpdateRuleInput): Promise<UpdateRuleResult> {
+  if (!(await liveRule(db, weddingId, ruleId))) return { status: 'not-found' }
   return db.transaction(async (tx): Promise<UpdateRuleResult> => {
-    await weddingLock(tx, first.weddingId, 'shared')
-    const row = await liveRule(tx, ruleId)
+    await weddingLock(tx, weddingId, 'shared')
+    const row = await liveRule(tx, weddingId, ruleId)
     if (!row) return { status: 'not-found' }
     const kind = body.kind ?? row.kind
     if (kind === 'apart' && body.nextToEachOther === true) return { status: 'invalid', issues: [NEXT_TO_APART_ISSUE] }
@@ -187,17 +192,20 @@ export async function updateRule(db: Db, ruleId: string, body: UpdateRuleInput):
     if (body.appliesTo !== undefined) set.appliesTo = body.appliesTo
     if (body.enabled !== undefined) set.enabled = body.enabled
     if (body.note !== undefined) set.note = body.note
-    await tx.update(rules).set(set).where(eq(rules.id, row.id))
-    if (body.guestIds) await setRuleGuests(tx, row.weddingId, row.id, body.guestIds)
-    return { status: 'updated', rule: (await getRule(tx, row.id))! }
+    await tx.update(rules).set(set).where(and(eq(rules.id, row.id), eq(rules.weddingId, weddingId)))
+    if (body.guestIds) await setRuleGuests(tx, weddingId, row.id, body.guestIds)
+    return { status: 'updated', rule: (await getRule(tx, weddingId, row.id))! }
   })
 }
 
-/** Deletes the rule outright. False when missing or in a deleted wedding. */
-export async function deleteRule(db: Db, ruleId: string): Promise<boolean> {
-  const row = await liveRule(db, ruleId)
+/** Deletes the rule outright. False when missing, of another wedding, or in a deleted wedding. */
+export async function deleteRule(db: Db, weddingId: string, ruleId: string): Promise<boolean> {
+  const row = await liveRule(db, weddingId, ruleId)
   if (!row) return false
-  const deleted = await db.delete(rules).where(eq(rules.id, row.id)).returning({ id: rules.id })
+  const deleted = await db
+    .delete(rules)
+    .where(and(eq(rules.id, row.id), eq(rules.weddingId, weddingId)))
+    .returning({ id: rules.id })
   return deleted.length > 0
 }
 
@@ -211,16 +219,21 @@ export type CoupleRuleResult =
  * Switches a couple rule on or off (PLAN change 8): the switch is set on both
  * partners in one transaction, under the wedding lock held exclusive, as for
  * a partner change. The two must still be live partners of each other.
+ *
+ * `weddingId` is the wedding the route's guard resolved from the first
+ * guest. Both guests must belong to it, or the answer is 'not-found' and
+ * nothing is read or changed: the guard only looked at the first. (A second
+ * guest of this wedding who was removed still gets 'conflict' below.)
  */
-export async function setCoupleRule(db: Db, pair: readonly [string, string], enabled: boolean): Promise<CoupleRuleResult> {
+export async function setCoupleRule(db: Db, weddingId: string, pair: readonly [string, string], enabled: boolean): Promise<CoupleRuleResult> {
   const [a, b] = pair
-  const [owner] = await db
-    .select({ weddingId: guests.weddingId })
+  const found = await db
+    .select({ id: guests.id, deletedAt: guests.deletedAt })
     .from(guests)
     .innerJoin(weddings, eq(weddings.id, guests.weddingId))
-    .where(and(eq(guests.id, a), isNull(guests.deletedAt), isNull(weddings.deletedAt)))
-  if (!owner) return { status: 'not-found' }
-  const weddingId = owner.weddingId
+    .where(and(eq(guests.weddingId, weddingId), inArray(guests.id, [a, b]), isNull(weddings.deletedAt)))
+  const first = found.find((g) => g.id === a)
+  if (!first || first.deletedAt !== null || !found.some((g) => g.id === b)) return { status: 'not-found' }
   return db.transaction(async (tx): Promise<CoupleRuleResult> => {
     await weddingLock(tx, weddingId, 'exclusive')
     const locked = await tx

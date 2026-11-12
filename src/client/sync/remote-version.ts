@@ -5,6 +5,7 @@
  * version when it has no unsaved edits and no gesture in progress).
  */
 import type { LayoutVersionInfo } from '@/shared/api'
+import { appFetch } from '../http'
 
 export type WatchRemoteVersionOptions = {
   layoutId: string
@@ -36,23 +37,30 @@ export function isLayoutVersionInfo(value: unknown): value is LayoutVersionInfo 
   return (
     typeof v.version === 'number' &&
     typeof v.updatedAt === 'string' &&
-    (v.editedBy === null || v.editedBy === 'Noa' || v.editedBy === 'Aiden') &&
+    (v.editedBy === null || typeof v.editedBy === 'string') &&
+    (v.editedById === null || typeof v.editedById === 'string') &&
     (v.lastSaveId === null || typeof v.lastSaveId === 'string') &&
     Array.isArray(v.recentSaveIds) &&
     v.recentSaveIds.every((id) => typeof id === 'string')
   )
 }
 
-/** The reply as LayoutVersionInfo. A server from before recentSaveIds existed (mid-deploy) reads as an empty list. */
+/**
+ * The reply as LayoutVersionInfo. A server from before recentSaveIds existed
+ * (mid-deploy) reads as an empty list, and one from before editedById existed
+ * as no id.
+ */
 export function readLayoutVersionInfo(value: unknown): LayoutVersionInfo | null {
-  if (value && typeof value === 'object' && (value as Record<string, unknown>).recentSaveIds === undefined) {
-    value = { ...value, recentSaveIds: [] }
+  if (value && typeof value === 'object') {
+    const v = value as Record<string, unknown>
+    if (v.recentSaveIds === undefined) value = { ...v, recentSaveIds: [] }
+    if (v.editedById === undefined) value = { ...(value as object), editedById: null }
   }
   return isLayoutVersionInfo(value) ? value : null
 }
 
 export function watchRemoteVersion(options: WatchRemoteVersionOptions): RemoteVersionWatch {
-  const fetchFn: typeof fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
+  const fetchFn: typeof fetch = options.fetch ?? appFetch
   const minIntervalMs = options.minIntervalMs ?? 2000
   const win =
     options.windowTarget !== undefined ? options.windowTarget : typeof window === 'undefined' ? null : window

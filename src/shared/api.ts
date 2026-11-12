@@ -4,19 +4,24 @@
  * this file, so a change here shows up as a type error on both.
  *
  * Dates travel as ISO strings. Lengths are centimeters.
+ *
+ * No body names who made a change: the server takes the editor from the
+ * session (the signed-in user). Bodies are z.object, which drops keys it does
+ * not know, so a tab left open from before still sends `editedBy` and is
+ * read as if it had not.
  */
 import { z } from 'zod'
-import { authors, canvasSchema, wellFormedText, type Canvas } from '@/domain/canvas-schema'
+import { canvasSchema, wellFormedText, type Canvas } from '@/domain/canvas-schema'
 import { cleanNotes, cleanOneLine } from '@/domain/csv/columns'
 import type { ImportPlan } from '@/domain/csv/import-diff'
 import { HEX_COLOR_RE } from '@/domain/group-colors'
 import type { FloorplanDraft } from '@/domain/floorplan/draft-schema'
+import { guestSides, PARTNER_NAME_MAX, type GuestSide } from '@/domain/partners'
 import { fixedItemsSchema, importedByValues, referenceMetaSchema, type FixedItem, type ReferenceMeta } from '@/domain/venue-schema'
 
 export const uuid = z.uuid()
 /** Cleaned like the canvas text (no NUL, no lone surrogates), then trimmed. */
 const name = z.string().overwrite(wellFormedText).trim().min(1, 'Names cannot be empty').max(200)
-const author = z.enum(authors)
 
 // ---------- Weddings ----------
 
@@ -27,10 +32,21 @@ export type WeddingSummary = {
   date: string | null
   unit: 'ft' | 'm'
   minGapCm: number
+  /** The couple's names, which guest sides show. Null reads "Partner 1" / "Partner 2". */
+  partner1Name: string | null
+  partner2Name: string | null
   guestCount: number
   layoutCount: number
   updatedAt: string
 }
+
+/** A partner's name: one line, spaces collapsed and trimmed, at most 60 characters. Blank becomes null ("Partner 1"). */
+const partnerNameText = z
+  .string()
+  .overwrite(cleanOneLine)
+  .max(PARTNER_NAME_MAX)
+  .nullable()
+  .transform((v) => (v === '' ? null : v))
 
 export const createWeddingBody = z.object({
   /** The browser may choose the id, so a retried create is harmless. */
@@ -38,6 +54,8 @@ export const createWeddingBody = z.object({
   name,
   date: z.iso.date().nullable().optional(),
   unit: z.enum(['ft', 'm']).optional(),
+  partner1Name: partnerNameText.optional(),
+  partner2Name: partnerNameText.optional(),
 })
 export type CreateWeddingBody = z.infer<typeof createWeddingBody>
 
@@ -47,6 +65,8 @@ export const updateWeddingBody = z
     date: z.iso.date().nullable().optional(),
     unit: z.enum(['ft', 'm']).optional(),
     minGapCm: z.number().finite().positive().max(10_000).optional(),
+    partner1Name: partnerNameText.optional(),
+    partner2Name: partnerNameText.optional(),
   })
   .refine((b) => Object.keys(b).length > 0, 'Nothing to change')
 export type UpdateWeddingBody = z.infer<typeof updateWeddingBody>
@@ -78,7 +98,8 @@ export type LayoutSummary = {
   /** True when the layout's venue template was deleted (the name is then the old one). */
   venueDeleted: boolean
   version: number
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   updatedAt: string
   /** Small vector preview drawn by the server (an SVG document, no scripts). */
   thumbSvg: string
@@ -109,7 +130,6 @@ export const createLayoutBody = z.object({
   name,
   kind: z.enum(['reception', 'ceremony']),
   venueTemplateId: uuid.nullable(),
-  editedBy: author,
 })
 export type CreateLayoutBody = z.infer<typeof createLayoutBody>
 
@@ -123,7 +143,6 @@ export const saveLayoutBody = z.object({
   baseVersion: z.int().min(1),
   /** The same id on every retry of the same snapshot. */
   saveId: uuid,
-  editedBy: author,
   tabId: z.string().min(1).max(64),
   canvas: canvasSchema,
 })
@@ -142,7 +161,8 @@ export type SaveLayoutOk = {
   status: 'saved' | 'already-saved'
   version: number
   updatedAt: string
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   /** Seats the server emptied. The editor applies the same change on screen. */
   droppedSeats: DroppedSeat[]
 }
@@ -152,7 +172,8 @@ export type SaveLayoutConflict = {
   error: 'conflict'
   version: number
   updatedAt: string
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   lastSaveId: string | null
   /** As in LayoutDetail. */
   recentSaveIds: string[]
@@ -164,7 +185,8 @@ export type SaveLayoutFailure = { error: 'gone' } | { error: 'invalid'; issues: 
 export type LayoutVersionInfo = {
   version: number
   updatedAt: string
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   lastSaveId: string | null
   /** As in LayoutDetail. */
   recentSaveIds: string[]
@@ -175,7 +197,6 @@ export const duplicateLayoutBody = z.object({
   id: uuid.optional(),
   name: name.optional(),
   canvas: canvasSchema.optional(),
-  editedBy: author,
 })
 export type DuplicateLayoutBody = z.infer<typeof duplicateLayoutBody>
 
@@ -190,25 +211,40 @@ export type LayoutDeleteSummary = {
 
 // ---------- Venues ----------
 //
-// Venue templates are shared by all weddings (PLAN change 5). A template's
-// fixed items, reference meta and reference image change only through a save,
-// an accepted import or a restored revision; each raises the version, uses the
-// same conflict check as layouts (DECISIONS 28) and writes a revision row.
-// Renames leave the version alone.
+// Venue templates belong to a planner, sit in the shared library, or (from
+// before accounts) belong to no one; who may see, change and use each is set
+// out in src/server/auth/venue-access.ts. A template's fixed items, reference
+// meta and reference image change only through a save, an accepted import or
+// a restored revision; each raises the version, uses the same conflict check
+// as layouts (DECISIONS 28) and writes a revision row. Renames leave the
+// version alone.
 
 export type VenueImportedBy = (typeof importedByValues)[number]
+
+/**
+ * Whose template it is, as the person asking sees it: in the shared library,
+ * their own, someone else's (readable because a wedding they belong to uses
+ * it), or one from before accounts that belongs to no one.
+ */
+export type VenueAccess = 'library' | 'mine' | 'shared' | 'unowned'
 
 export type VenueSummary = {
   id: string
   name: string
   updatedAt: string
-  /** Live layouts in live weddings that use this template. */
+  /** Live layouts that use this template, in live weddings the person asking belongs to (every wedding for an admin). */
   usedBy: number
   version: number
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   importedBy: VenueImportedBy
   fixedItemCount: number
   hasReferenceImage: boolean
+  access: VenueAccess
+  /** The owner's display name; null for a template that belongs to no one. */
+  ownerName: string | null
+  /** True when the person asking may change it (their own, or any template for an admin). */
+  canEdit: boolean
 }
 
 /** The largest floor plan image the server stores (PLAN change 6: the browser aims for about 3 MB). */
@@ -216,7 +252,7 @@ export const MAX_VENUE_IMAGE_BYTES = 3.5 * 1024 * 1024
 /** The largest side of a stored image, in pixels (the model's own hard limit). */
 export const MAX_VENUE_IMAGE_SIDE = 8000
 
-/** A stored floor plan image. `url` serves it behind the site cookie. */
+/** A stored floor plan image. `url` serves it only to a signed-in person who may read the venue. */
 export type VenueImageInfo = {
   id: string
   templateId: string
@@ -234,7 +270,8 @@ export type VenueDetail = {
   name: string
   version: number
   lastSaveId: string | null
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   updatedAt: string
   importedBy: VenueImportedBy
   fixedItems: FixedItem[]
@@ -242,12 +279,17 @@ export type VenueDetail = {
   reference: ReferenceMeta | null
   /** The original plan the template points at (set on Accept), or null. */
   referenceImage: VenueImageInfo | null
-  /** Live layouts in live weddings that use this template. */
+  /** Live layouts that use this template, in live weddings the person asking belongs to (every wedding for an admin). */
   usedBy: number
+  access: VenueAccess
+  /** The owner's display name; null for a template that belongs to no one. */
+  ownerName: string | null
+  /** True when the person asking may change it (their own, or any template for an admin). */
+  canEdit: boolean
 }
 
 /** POST /api/venues. 201 VenueDetail. A retry with the same id gives the same template back. */
-export const createVenueBody = z.object({ id: uuid.optional(), name, editedBy: author.optional() })
+export const createVenueBody = z.object({ id: uuid.optional(), name })
 export type CreateVenueBody = z.infer<typeof createVenueBody>
 
 /** PATCH /api/venues/:id: rename only. The version stays as it is. */
@@ -255,14 +297,13 @@ export const renameVenueBody = z.object({ name })
 export type RenameVenueBody = z.infer<typeof renameVenueBody>
 
 /** POST /api/venues/:id/duplicate. 201 VenueDetail. The default name is "<name> copy". */
-export const duplicateVenueBody = z.object({ id: uuid.optional(), name: name.optional(), editedBy: author.optional() })
+export const duplicateVenueBody = z.object({ id: uuid.optional(), name: name.optional() })
 export type DuplicateVenueBody = z.infer<typeof duplicateVenueBody>
 
 const venueSaveFields = {
   baseVersion: z.int().min(1),
   /** The same id on every retry of the same save. */
   saveId: uuid,
-  editedBy: author,
 }
 
 /** PUT /api/venues/:id: the template editor's save. */
@@ -294,7 +335,8 @@ export type SaveVenueOk = {
   status: 'saved' | 'already-saved'
   version: number
   updatedAt: string
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
 }
 
 /** 409: someone saved the template since baseVersion. */
@@ -304,7 +346,8 @@ export type SaveVenueConflict = {
   message: string
   version: number
   updatedAt: string
-  editedBy: 'Noa' | 'Aiden' | null
+  editedBy: string | null
+  editedById: string | null
   lastSaveId: string | null
 }
 
@@ -329,25 +372,36 @@ export type VenueRevisionList = {
 }
 export const MAX_LISTED_REVISIONS = 200
 
-/** A live layout in a live wedding that uses a template. */
+/**
+ * A live layout in a live wedding that uses a template. Replies list only
+ * layouts in weddings the person asking belongs to (every wedding for an
+ * admin); the rest are only counted, in `hiddenLayouts`, never named.
+ */
 export type VenueUse = { weddingId: string; weddingName: string; layoutId: string; layoutName: string }
 
-/** 409 reply to DELETE /api/venues/:id while layouts use the template. */
-export type VenueInUse = { error: 'in_use'; message: string; layouts: VenueUse[] }
+/** 409 reply to DELETE /api/venues/:id while layouts use the template (listed or hidden). */
+export type VenueInUse = { error: 'in_use'; message: string; layouts: VenueUse[]; hiddenLayouts: number }
 
-/** GET /api/venues/:id/delete-summary. Delete is blocked while `layouts` is not empty. */
+/** GET /api/venues/:id/delete-summary. Delete is blocked while `layouts` is not empty or `hiddenLayouts` is above 0. */
 export type VenueDeleteSummary = {
   kind: 'venue'
   name: string
   layouts: VenueUse[]
+  /** Layouts in weddings the person asking does not belong to that use the template too. */
+  hiddenLayouts: number
   images: number
   revisions: number
 }
 
-/** GET /api/venues/:id/wall-check: every live layout using the template, with the tables a wall runs through. */
+/**
+ * GET /api/venues/:id/wall-check: every live layout using the template that
+ * the person asking may see, with the tables a wall runs through, and how
+ * many others there are.
+ */
 export type VenueWallCheck = {
   templateVersion: number
   layouts: (VenueUse & { tables: { tableId: string; label: string; wallIds: string[] }[] })[]
+  hiddenLayouts: number
 }
 
 // ---------- Floor plan import ----------
@@ -441,11 +495,14 @@ export type FloorplanImportErrorCode =
 export type ImportNotConfigured = { error: 'not_configured'; message: string }
 export const IMPORT_NOT_CONFIGURED_MESSAGE = 'The floor plan import needs ANTHROPIC_API_KEY set on the server.'
 
+/** 429 from the import route when the planner has used their AI imports for the last 30 days (AI_IMPORT_MONTHLY_LIMIT). */
+export type ImportLimitReached = { error: 'import_limit'; message: string; used: number; limit: number }
+
 // ---------- Guests ----------
 
-export const guestSides = ['Noa', 'Aiden', 'Both'] as const
+/** Sides are positions ('partner1', 'partner2', 'both'); the wedding's names label them (domain/partners). */
+export { guestSides, type GuestSide }
 export const guestRsvps = ['yes', 'no', 'pending'] as const
-export type GuestSide = (typeof guestSides)[number]
 export type GuestRsvp = (typeof guestRsvps)[number]
 
 /**

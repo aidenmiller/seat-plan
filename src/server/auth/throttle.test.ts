@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addressKey, clientAddress } from './throttle'
+import { addressKey, clientAddress, loginScope } from './throttle'
 
 describe('clientAddress', () => {
   it('prefers x-real-ip, then the first x-forwarded-for address', () => {
@@ -24,5 +24,23 @@ describe('addressKey', () => {
     expect(addressKey('2001:db8:abcd:12:ffff:ffff:ffff:ffff', secret)).toBe(a)
     expect(addressKey('2001:0db8:abcd:0012::9', secret)).toBe(a)
     expect(addressKey('2001:db8:abcd:13::1', secret)).not.toBe(a)
+  })
+})
+
+describe('loginScope', () => {
+  const secret = 'y'.repeat(32)
+
+  it('keys the normalized email, so the table never holds it', () => {
+    const scope = loginScope('Pat@Example.com ', secret)
+    expect(scope).toMatch(/^login:[0-9a-f]{32}$/)
+    expect(scope).not.toContain('pat')
+    expect(loginScope('pat@example.com', secret)).toBe(scope)
+    expect(loginScope('sam@example.com', secret)).not.toBe(scope)
+    expect(loginScope('pat@example.com', 'z'.repeat(32))).not.toBe(scope)
+  })
+
+  it('refuses to work without a real secret', () => {
+    expect(() => loginScope('pat@example.com', '')).toThrow(/AUTH_SECRET/)
+    expect(() => loginScope('pat@example.com', 'short')).toThrow(/AUTH_SECRET/)
   })
 })

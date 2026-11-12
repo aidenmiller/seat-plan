@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import { PartnerNamesProvider } from '@/client/guests/partners-context'
 import { emptyCanvas, type Item, type Table } from '@/domain/canvas-schema'
 import { makeItem } from '@/domain/presets'
 import type { Group, Guest } from '@/shared/api'
@@ -31,7 +32,7 @@ function guest(first: string, last: string, over: Partial<Guest> = {}): Guest {
     partnerId: null,
     coupleRuleEnabled: true,
     household: null,
-    side: 'Both',
+    side: 'both',
     rsvp: 'yes',
     meal: null,
     isChild: false,
@@ -71,7 +72,7 @@ const ui: EditorUi = {
   showDetails: () => undefined,
 }
 
-function render(guests: Guest[], items: Item[], phone = false): string {
+function render(guests: Guest[], items: Item[], phone = false, partners = { partner1: 'Noa', partner2: 'Aiden' }): string {
   const editor = createEditorState({
     layoutId: 'L1',
     store: createDocStore({ ...emptyCanvas(), items }),
@@ -82,9 +83,11 @@ function render(guests: Guest[], items: Item[], phone = false): string {
   return renderToStaticMarkup(
     <EditorStateProvider state={editor}>
       <EditorUiProvider value={{ ...ui, phone }}>
-        <EditorGuestsProvider value={{ weddingId: W, guests, groups: [group] }}>
-          <GuestsPanel />
-        </EditorGuestsProvider>
+        <PartnerNamesProvider {...partners}>
+          <EditorGuestsProvider value={{ weddingId: W, guests, groups: [group] }}>
+            <GuestsPanel />
+          </EditorGuestsProvider>
+        </PartnerNamesProvider>
       </EditorUiProvider>
     </EditorStateProvider>,
   )
@@ -130,10 +133,17 @@ describe('the editor Guests tab', () => {
     const html = render(guests, items)
     for (const id of ['side-list-search', 'side-list-group', 'side-list-side', 'side-list-rsvp']) expect(html).toContain(`data-testid="${id}"`)
     expect(html).toContain('>Aiden Family</option>')
+    expect(html).toMatch(/data-testid="side-list-side"[^>]*><option value="__any__" selected="">Any side<\/option><option value="partner1">Noa<\/option><option value="partner2">Aiden<\/option><option value="both">Both<\/option>/)
     const phone = render(guests, items, true)
     expect(phone).toContain('data-testid="side-list-search"')
     expect(phone).not.toContain('data-testid="side-list-filters"')
     expect(phone).toMatch(/aria-expanded="false"[^>]*>Filters</)
+  })
+
+  it("names the side filter's choices after the wedding's partners", () => {
+    const html = render(guests, items, false, { partner1: 'Sam', partner2: 'Alex' })
+    expect(html).toContain('<option value="partner1">Sam</option><option value="partner2">Alex</option><option value="both">Both</option>')
+    expect(html).not.toContain('>Noa</option>')
   })
 
   it('points to the Guests tab when there are no guests', () => {

@@ -22,6 +22,8 @@ import {
 
 const BOM = '﻿'
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+/** The side labels the seating block dialog offers for Noa and Aiden. */
+const SIDES = { leftLabel: "Noa's side", rightLabel: "Aiden's side" }
 
 const guests: ListGuest[] = [
   { id: id(1), firstName: 'Zoë', lastName: 'Shapiro', meal: 'Fish' },
@@ -134,7 +136,7 @@ describe('escort cards', () => {
   })
 
   it('gives row and chair in a ceremony layout', () => {
-    const rows = generateSeatingBlock({ rows: 2, chairsPerRow: 4, origin: { x: 0, y: 0 } }, (() => {
+    const rows = generateSeatingBlock({ rows: 2, chairsPerRow: 4, ...SIDES, origin: { x: 0, y: 0 } }, (() => {
       let i = 0
       return () => `r${++i}`
     })())
@@ -155,7 +157,7 @@ describe('escort cards', () => {
 
 describe('ceremony list', () => {
   it('gives reserved rows and named seats, front row first, and skips empty rows', () => {
-    const rows = generateSeatingBlock({ rows: 3, chairsPerRow: 4, origin: { x: 0, y: 0 } }, (() => {
+    const rows = generateSeatingBlock({ rows: 3, chairsPerRow: 4, ...SIDES, origin: { x: 0, y: 0 } }, (() => {
       let i = 0
       return () => `c${++i}`
     })())

@@ -3,7 +3,7 @@
  * The editor talks only to this interface; the engine owns IndexedDB, the
  * debounce, retries, the one-save-in-flight rule and conflict detection.
  */
-import type { Author, Canvas } from '@/domain/canvas-schema'
+import type { Canvas } from '@/domain/canvas-schema'
 import type { DroppedSeat, LayoutVersionInfo } from '@/shared/api'
 
 export type SaveStatus =
@@ -19,15 +19,22 @@ export type SaveStatus =
   | { kind: 'retrying'; attempt: number; nextTryAt: string; reason: string; storedLocally: boolean }
   /** The browser is offline. storedLocally tells whether the edit is safe in this device's storage. */
   | { kind: 'offline'; storedLocally: boolean }
-  /** The other person (or another tab) saved first. The editor shows the dialog. */
+  /** Someone else (or another tab) saved first. The editor shows the dialog. */
   | { kind: 'conflict'; server: LayoutVersionInfo }
   /**
    * Retrying stops. 'invalid': the server will not take this canvas (422).
    * 'gone': the layout or its wedding was deleted (410). 'signed-out': the
-   * site cookie expired (401); the draft stays on this device, and the next
-   * try after signing in (or the next load) sends it.
+   * session ended (401); the draft stays on this device, and the next try
+   * after the same person signs in again (or the next load) sends it.
+   * 'other-user': someone else signed in on this browser (401 stale_page).
+   * Nothing is sent again from this tab unless its own user signs in again
+   * on this browser (resume()); the draft stays in this user's storage, and
+   * opening the layout after signing in again sends it too.
+   * 'forbidden': the person may no longer change it (403); nothing is retried.
    */
-  | { kind: 'failed'; reason: 'invalid' | 'gone' | 'signed-out'; message: string }
+  | { kind: 'failed'; reason: FailedReason; message: string }
+
+export type FailedReason = 'invalid' | 'gone' | 'signed-out' | 'other-user' | 'forbidden'
 
 /**
  * T is the document the engine saves: a layout's canvas by default. The venue
@@ -40,7 +47,11 @@ export type DraftSnapshot<T = Canvas> = {
   /** The version the latest local canvas starts from. */
   baseVersion: number
   canvas: T
-  editedBy: Author
+  /**
+   * The signed-in user whose edit this is. Each user's drafts live in their
+   * own database (outbox.ts), and a store refuses a draft of anyone else.
+   */
+  userId: string
   /** The snapshot and save id currently sent (or about to be resent), if any. */
   inFlight: { saveId: string; baseVersion: number; canvas: T } | null
   /** True while the canvas has edits the server has not confirmed. */
@@ -52,7 +63,6 @@ export type DraftSnapshot<T = Canvas> = {
 export type SaveRequest<T = Canvas> = {
   baseVersion: number
   saveId: string
-  editedBy: Author
   tabId: string
   doc: T
 }
@@ -62,6 +72,10 @@ export type SaverMessages = {
   gone: string
   invalid: string
   signedOut: string
+  /** The person may no longer change it (403). */
+  forbidden: string
+  /** Someone else signed in on this browser (401 stale_page). */
+  otherUser: string
   network: string
   timeout: string
   unreadable: string
@@ -72,16 +86,20 @@ export type LayoutSaverOptions<T = Canvas> = {
   tabId: string
   /** The server's version and last save id when the editor loaded the layout. */
   baseVersion: number
-  editedBy: () => Author
+  /**
+   * The signed-in user the page was opened for. Every request carries this id
+   * (never whoever is signed in later), and drafts are stamped with it.
+   */
+  userId: string
   onStatus: (status: SaveStatus) => void
   /** The server emptied seats (removed guests etc.); apply the same on screen, outside undo. */
   onDroppedSeats: (dropped: DroppedSeat[]) => void
-  /** Injected for tests. Defaults to window.fetch. */
+  /** Injected for tests. Defaults to appFetchAs(userId). */
   fetch?: typeof fetch
   /** Debounce after the last edit, default 1000 ms; a save goes out at least every maxWaitMs while editing. */
   debounceMs?: number
   maxWaitMs?: number
-  /** Where drafts live. Defaults to the IndexedDB outbox (outbox.ts). */
+  /** Where drafts live. Defaults to this user's IndexedDB outbox (outbox.ts). */
   drafts?: DraftStore<T>
   /** Jitter source for retry delays. Defaults to Math.random. */
   random?: () => number
@@ -129,6 +147,12 @@ export interface LayoutSaver<T = Canvas> {
   flush(options?: FlushOptions): Promise<void>
   /** True while there are edits the server has not confirmed (drives the beforeunload warning). */
   hasUnsavedChanges(): boolean
+  /**
+   * The user this saver sends as signed in again on this browser: after a
+   * stop for 'other-user' or 'signed-out', send what is kept (the save that
+   * was out first, unchanged). Nothing for any other state.
+   */
+  resume(): void
   /** After "Load their version": forget local edits and start from the server's copy. */
   resetTo(version: number): Promise<void>
   /** Stop timers and listeners. Leaves the draft in IndexedDB if it is still dirty. */

@@ -2,16 +2,14 @@
 
 import { useState } from 'react'
 import { getLayout, getWedding, listGuests } from '@/client/api'
+import { BrandIcon } from '@/client/ui/icons/brand'
 import { secondaryButton } from '@/client/ui/styles'
 import type { LayoutSummary } from '@/shared/api'
 import { ExportDialog, type ExportSource } from './ExportDialog'
 
 function ExportIcon() {
   return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.6">
-      <path d="M10 3v9M6 8.5l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M4 13.5V16h12v-2.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <BrandIcon name="export" />
   )
 }
 

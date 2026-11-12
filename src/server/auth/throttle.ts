@@ -9,6 +9,7 @@
 import { createHmac } from 'node:crypto'
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { normalizeEmail } from '@/domain/accounts'
 
 export const PER_ADDRESS_LIMIT = 10
 export const PER_ADDRESS_WINDOW_MINUTES = 15
@@ -53,6 +54,22 @@ function ipv6Prefix64(address: string): string {
     .join(':')
 }
 
+/**
+ * The throttle scope for signing in to one account: `login:` and the
+ * normalized email keyed with AUTH_SECRET, so the table never holds an
+ * address. Any email gets a scope, whether or not it has an account, so a
+ * block says nothing about which accounts exist. Throws without AUTH_SECRET:
+ * an unkeyed hash of an email can be undone by guessing.
+ */
+export function loginScope(email: string, secret: string = process.env.AUTH_SECRET ?? ''): string {
+  if (secret.length < 32) throw new Error('AUTH_SECRET (32+ characters) must be set')
+  const key = createHmac('sha256', secret).update(`login email:${normalizeEmail(email)}`).digest('hex').slice(0, 32)
+  return `login:${key}`
+}
+
+/** The scope that counts one address's sign-in tries across every account. */
+export const LOGIN_ADDRESS_SCOPE = 'login-ip'
+
 export type AttemptVerdict = { allowed: true } | { allowed: false; retryAfterSeconds: number }
 
 async function countAttempt(db: AnyDb, scope: string, ipKey: string, windowMinutes: number, limit: number) {
@@ -93,10 +110,26 @@ async function countAttempt(db: AnyDb, scope: string, ipKey: string, windowMinut
   return { blocked: false, retryAfterSeconds: 0 }
 }
 
-/** Counts this attempt and says whether it may go ahead. Call before comparing. */
-export async function beginAttempt(db: AnyDb, scope: string, ipKey: string): Promise<AttemptVerdict> {
+/**
+ * Counts this attempt and says whether it may go ahead. Call before comparing.
+ *
+ * `scopeWide: false` skips the all-addresses count for that scope. Sign-in uses
+ * it for the per-address counter (`login-ip`), which already spans every
+ * account. The per-account counter keeps the all-addresses count on purpose:
+ * it limits password guessing spread across many addresses. The cost is that
+ * about SCOPE_LIMIT wrong tries an hour, from anywhere, against a known email
+ * block new sign-ins to that account for BLOCK_MINUTES (existing sessions keep
+ * working). DECISIONS.md 140 records the trade-off.
+ */
+export async function beginAttempt(
+  db: AnyDb,
+  scope: string,
+  ipKey: string,
+  { scopeWide = true }: { scopeWide?: boolean } = {},
+): Promise<AttemptVerdict> {
   const perAddress = await countAttempt(db, scope, ipKey, PER_ADDRESS_WINDOW_MINUTES, PER_ADDRESS_LIMIT)
   if (perAddress.blocked) return { allowed: false, retryAfterSeconds: perAddress.retryAfterSeconds }
+  if (!scopeWide) return { allowed: true }
   const perScope = await countAttempt(db, scope, ALL_ADDRESSES, SCOPE_WINDOW_MINUTES, SCOPE_LIMIT)
   if (perScope.blocked) return { allowed: false, retryAfterSeconds: perScope.retryAfterSeconds }
   return { allowed: true }

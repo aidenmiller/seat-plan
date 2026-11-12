@@ -1,17 +1,18 @@
 'use client'
 
 /**
- * "Aiden changed this layout at 3:42 pm." (PLAN section 5, "Answers"). The
- * person must choose: load their version (which drops the changes at stake),
- * or keep them as a new copy. Esc and clicks outside do nothing.
+ * "Dayna changed this layout at 3:42 pm." (PLAN section 5, "Answers"), or
+ * "You changed this layout in another tab or on another device…" when the
+ * save was the reader's own account. The person must choose: load their
+ * version (which drops the changes at stake), or keep them as a new copy.
+ * Esc and clicks outside do nothing.
  */
 import { useState } from 'react'
 import { errorMessage } from '@/client/api'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { useNow } from '@/client/ui/clock'
 import { errorClass, primaryButton, secondaryButton } from '@/client/ui/styles'
-import type { Author } from '@/domain/canvas-schema'
-import { conflictChoiceMessage, conflictMessage, type ConflictSource } from '@/domain/wording'
+import { conflictChoiceMessage, conflictMessage, editorRef, type ConflictSource } from '@/domain/wording'
 import type { ConflictInfo } from './layout-session'
 
 /** Which wording the dialog uses for this conflict. */
@@ -22,12 +23,13 @@ export function conflictSource(conflict: Pick<ConflictInfo, 'source' | 'partlySa
 
 export function ConflictDialog({
   conflict,
-  me,
+  meId,
   onLoadTheirs,
   onKeepMine,
 }: {
   conflict: ConflictInfo | null
-  me: Author | null
+  /** The signed-in user's id: a save by the same account reads "You changed…". */
+  meId: string | null
   onLoadTheirs: () => Promise<void>
   onKeepMine: () => Promise<void>
 }) {
@@ -36,7 +38,7 @@ export function ConflictDialog({
   const [error, setError] = useState<string | null>(null)
 
   const message = conflict
-    ? conflictMessage(conflict.server.editedBy, conflict.server.updatedAt, me, new Date(now ?? Date.parse(conflict.server.updatedAt)))
+    ? conflictMessage(editorRef(conflict.server), conflict.server.updatedAt, meId, new Date(now ?? Date.parse(conflict.server.updatedAt)))
     : ''
 
   async function run(which: 'theirs' | 'mine') {

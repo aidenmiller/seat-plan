@@ -1,8 +1,8 @@
 /**
  * Plain sentences for the Venues tab and the template editor. Pure.
  */
-import type { VenueDeleteSummary, VenueRevision } from '@/shared/api'
-import { plural } from './wording'
+import type { VenueDeleteSummary, VenueDetail, VenueRevision, VenueSummary } from '@/shared/api'
+import { isOwnEdit, plural, type EditorRef } from './wording'
 
 /** "Used by 3 layouts" or "Not used yet". */
 export function venueUsedBy(count: number): string {
@@ -14,14 +14,60 @@ export function venueItemCount(count: number): string {
   return count === 0 ? 'Empty' : plural(count, 'item')
 }
 
-/** What the delete dialog says. Layouts that still use the venue block the delete (spec section 5). */
+/**
+ * What the delete dialog says. Layouts that still use the venue block the
+ * delete (spec section 5), those in weddings you are not part of too: those
+ * are only counted, never named.
+ */
 export function venueDeleteMessage(s: VenueDeleteSummary): string {
+  const hidden = s.hiddenLayouts
   if (s.layouts.length > 0) {
     const n = s.layouts.length
-    return `${n === 1 ? 'One layout still uses' : `${n} layouts still use`} “${s.name}”. Pick another venue for ${n === 1 ? 'it' : 'them'} before you delete this one.`
+    const mine = `${n === 1 ? 'One layout still uses' : `${n} layouts still use`} “${s.name}”. Pick another venue for ${n === 1 ? 'it' : 'them'} before you delete this one.`
+    return hidden > 0 ? `${mine} Also used by ${plural(hidden, 'layout')} in weddings you are not part of.` : mine
+  }
+  if (hidden > 0) {
+    return `“${s.name}” is used by ${plural(hidden, 'layout')} in weddings you are not part of, so it cannot be deleted for now.`
   }
   const parts = [plural(s.revisions, 'saved version'), plural(s.images, 'floor plan image')]
   return `This deletes “${s.name}” with its ${parts.join(' and ')}. No layout uses it.`
+}
+
+/** The small label on a venue card: who the venue belongs to. Null when there is nothing to say. */
+export function venueBadge(v: Pick<VenueSummary, 'access' | 'ownerName'>, isAdmin: boolean): string | null {
+  switch (v.access) {
+    case 'library':
+      return 'Library'
+    case 'mine':
+      return 'Yours'
+    case 'shared':
+      return v.ownerName ? `Shared by ${v.ownerName}` : 'Shared'
+    case 'unowned':
+      return isAdmin ? 'No owner' : 'Shared'
+  }
+}
+
+export type VenueGroup = { key: 'library' | 'mine' | 'used'; title: string; venues: VenueSummary[] }
+
+/**
+ * The venues in the order the Venues tab and the pickers show them: the
+ * library, then your own, then the ones this wedding uses that belong to
+ * someone else. Empty groups are left out; names keep their order inside a group.
+ */
+export function venueGroups(venues: readonly VenueSummary[]): VenueGroup[] {
+  const groups: VenueGroup[] = [
+    { key: 'library', title: 'Library', venues: venues.filter((v) => v.access === 'library') },
+    { key: 'mine', title: 'Your venues', venues: venues.filter((v) => v.access === 'mine') },
+    { key: 'used', title: 'Used in this wedding', venues: venues.filter((v) => v.access === 'shared' || v.access === 'unowned') },
+  ]
+  return groups.filter((g) => g.venues.length > 0)
+}
+
+/** The banner over a venue you cannot change. */
+export function venueReadOnlyText(v: Pick<VenueDetail, 'access' | 'ownerName'>): string {
+  if (v.access === 'library') return 'This is a library venue. Only the admin can change it.'
+  if (v.ownerName) return `This venue belongs to ${v.ownerName}. You can view it.`
+  return 'This venue has no owner. You can view it.'
 }
 
 /** "Import" or "Save", for the Revisions list. */
@@ -35,19 +81,29 @@ export function revisionDetail(r: Pick<VenueRevision, 'fixedItemCount' | 'refere
   return r.referenceImageId ? `${items}, with the floor plan image` : items
 }
 
-type Who = 'Noa' | 'Aiden' | null
+/** Who saved the venue (account id and name), or null when nobody is named. */
+type Who = EditorRef | null
 
-/** "Loaded Aiden's changes.", after this tab took a newer save of the venue. */
-export function loadedChangesText(who: Who): string {
-  return who ? `Loaded ${who}’s changes.` : 'Loaded the latest version of this venue.'
+/** "Loaded Dayna’s changes.", after this tab took a newer save of the venue; your own from another tab say so. */
+export function loadedChangesText(who: Who, meId: string | null): string {
+  if (!who) return 'Loaded the latest version of this venue.'
+  return isOwnEdit(who, meId) ? 'Loaded your changes from another tab or device.' : `Loaded ${who.name}’s changes.`
 }
 
 /** Shown over an import draft when someone saved the venue after this tab opened it. Accept then goes over their save. */
-export function acceptOverText(who: Who): string {
-  return `${who ?? 'Someone'} changed this venue after you opened it. Accept your draft over it?`
+export function acceptOverText(who: Who, meId: string | null): string {
+  if (isOwnEdit(who, meId)) return 'You changed this venue in another tab or on another device after you opened it. Accept your draft over it?'
+  return `${who?.name ?? 'Someone'} changed this venue after you opened it. Accept your draft over it?`
+}
+
+/** The template conflict banner's first sentence: who saved the venue after this tab opened it. */
+export function venueConflictText(who: Who, meId: string | null): string {
+  if (!who) return 'This venue was saved somewhere else after you opened it.'
+  if (isOwnEdit(who, meId)) return 'You saved this venue in another tab or on another device after you opened it.'
+  return `${who.name} saved this venue after you opened it.`
 }
 
 /** After Undo import (or Put back) met someone else's save: their version is loaded, and the person tries again. */
-export function restoreReloadedText(who: Who, undoImport: boolean): string {
-  return `${loadedChangesText(who)} Try ${undoImport ? 'Undo import' : 'Put back'} again.`
+export function restoreReloadedText(who: Who, meId: string | null, undoImport: boolean): string {
+  return `${loadedChangesText(who, meId)} Try ${undoImport ? 'Undo import' : 'Put back'} again.`
 }

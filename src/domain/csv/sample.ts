@@ -11,23 +11,23 @@ import { SAMPLE_COLUMNS } from './columns'
 import { CSV_BOM, csvLines } from './export'
 
 export const SAMPLE_CSV_FILE_NAME = 'guests-sample.csv'
-/** Where the app serves the sample file (behind the password gate). */
+/** Where the app serves the sample file (behind sign-in). */
 export const SAMPLE_CSV_URL = `/samples/${SAMPLE_CSV_FILE_NAME}`
 
 const EXTRA_COLUMN = 'Table wish'
 
 const ROWS: readonly (readonly string[])[] = [
   [...SAMPLE_COLUMNS, EXTRA_COLUMN],
-  ['Zoë', 'Kowalczyk', 'Łukasz Kowalczyk', 'Kowalczyk', 'Noa', 'Noa Family; Noa Cousins', 'yes', 'Fish', 'no', 'Allergic to nuts', 'Near the dance floor'],
-  ['Łukasz', 'Kowalczyk', 'Zoë Kowalczyk', 'Kowalczyk', 'Noa', 'Noa Family', 'yes', 'Beef', 'no', '', ''],
-  ['Mia', 'Kowalczyk', '', 'Kowalczyk', 'Noa', 'Noa Family', 'yes', 'Kids meal', 'yes', 'Needs a booster seat', ''],
-  ['Daniel', "O'Connor", 'Priya Raman', "O'Connor and Raman", 'Aiden', 'Aiden HS Friends', 'yes', 'Chicken', 'no', '', 'Away from the speakers'],
-  ['Priya', 'Raman', "Daniel O'Connor", "O'Connor and Raman", 'Aiden', 'Aiden HS Friends; Book Club', 'pending', 'Vegetarian', 'no', '', ''],
+  ['Zoë', 'Kowalczyk', 'Łukasz Kowalczyk', 'Kowalczyk', 'Partner 1', 'Partner 1 family; Partner 1 cousins', 'yes', 'Fish', 'no', 'Allergic to nuts', 'Near the dance floor'],
+  ['Łukasz', 'Kowalczyk', 'Zoë Kowalczyk', 'Kowalczyk', 'Partner 1', 'Partner 1 family', 'yes', 'Beef', 'no', '', ''],
+  ['Mia', 'Kowalczyk', '', 'Kowalczyk', 'Partner 1', 'Partner 1 family', 'yes', 'Kids meal', 'yes', 'Needs a booster seat', ''],
+  ['Daniel', "O'Connor", 'Priya Raman', "O'Connor and Raman", 'Partner 2', 'College friends', 'yes', 'Chicken', 'no', '', 'Away from the speakers'],
+  ['Priya', 'Raman', "Daniel O'Connor", "O'Connor and Raman", 'Partner 2', 'College friends; Book Club', 'pending', 'Vegetarian', 'no', '', ''],
   ['José', 'García', '', '', 'Both', 'Work Friends', 'yes', 'Vegetarian', 'no', 'Arrives after the ceremony', ''],
-  ['Anna', 'van der Berg', '', '', 'Aiden', 'Aiden Family', 'no', '', 'no', 'Sends her regrets', ''],
-  ['Renée', 'Dubois', '', '', 'Noa', 'Noa College', 'pending', '', 'no', '', 'Near Zoë'],
-  ['Sam', 'Lee', '', 'Lee', 'Aiden', 'Aiden Family; Aiden Cousins', 'yes', 'Fish', 'no', '', ''],
-  ['Theo', 'Lee', '', 'Lee', 'Aiden', 'Aiden Family', 'yes', 'Kids meal', 'yes', '', ''],
+  ['Anna', 'van der Berg', '', '', 'Partner 2', 'Partner 2 family', 'no', '', 'no', 'Sends her regrets', ''],
+  ['Renée', 'Dubois', '', '', 'Partner 1', 'Partner 1 college', 'pending', '', 'no', '', 'Near Zoë'],
+  ['Sam', 'Lee', '', 'Lee', 'Partner 2', 'Partner 2 family; Partner 2 cousins', 'yes', 'Fish', 'no', '', ''],
+  ['Theo', 'Lee', '', 'Lee', 'Partner 2', 'Partner 2 family', 'yes', 'Kids meal', 'yes', '', ''],
 ]
 
 /** The sample as text, CRLF line ends, without a byte order mark. */

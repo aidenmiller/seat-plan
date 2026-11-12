@@ -1,9 +1,86 @@
 @import "tailwindcss";
 
+/*
+ * The Something Blueprint. brand (brand pack tokens.css, light values only;
+ * the app has no dark mode, and the pack's dark values wait for one). New
+ * work can use these directly.
+ */
+:root {
+  color-scheme: light;
+  --sb-bg: #fff9f0;
+  --sb-surface: #ffffff;
+  --sb-surface-muted: #f3f6fb;
+  --sb-text: #13264b;
+  --sb-text-muted: #41546e;
+  --sb-text-link: #1e3a8a;
+  --sb-text-on-brand: #ffffff;
+  --sb-border: #d8e1ed;
+  --sb-brand: #1e3a8a;
+  --sb-brand-accent: #3b82f6;
+  --sb-seat-filled: #1e3a8a;
+  --sb-seat-empty: #7b879a;
+  --sb-rule-problem: #aa2037;
+  --sb-rule-problem-bg: #fbe7ea;
+  --sb-selection: #1d4eb5;
+  --sb-selection-bg: #dcebfe;
+  --sb-focus-ring: #2563eb;
+  --sb-botanical: #7e9b90;
+  --sb-flower: #9ec8f8;
+  --sb-flower-center: #f5d992;
+  --sb-font-ui: var(--font-inter-ext), var(--font-inter), system-ui, sans-serif;
+  --sb-font-editorial: var(--font-noto-serif-display), Georgia, serif;
+  --sb-radius-sm: 8px;
+  --sb-radius-card: 16px;
+  --sb-radius-icon: 22%;
+  --sb-stroke-icon: 1.75px;
+}
+
+/*
+ * The app's colors are Tailwind palette classes, so the brand lands here
+ * rather than in each component. Stone becomes navy-tinted neutrals pinned
+ * to the brand's ivory (50), muted surface (100), border (200), muted text
+ * (600) and text (900), with the steps between chosen so every text step
+ * from 400 up reads at 4.5:1 or more on white, ivory and stone-100. The blue
+ * and red steps the app uses land on the brand's navy, selection, focus ring
+ * and rule-problem colors. Amber, green and the rest keep Tailwind's values.
+ * The canvas does not use these: the plan's colors are fixed in
+ * src/client/editor/render/style.ts, and the grid below keeps literal colors.
+ */
 @theme {
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --color-stone-50: #fff9f0;
+  --color-stone-100: #f3f6fb;
+  --color-stone-200: #d8e1ed;
+  --color-stone-300: #b6c3d4;
+  --color-stone-400: #5f6e84;
+  --color-stone-500: #536279;
+  --color-stone-600: #41546e;
+  --color-stone-700: #2f4262;
+  --color-stone-800: #1f3256;
+  --color-stone-900: #13264b;
+  --color-stone-950: #0b1a38;
+
+  --color-blue-100: #dcebfe;
+  --color-blue-700: #2563eb;
+  --color-blue-800: #1d4eb5;
+  --color-blue-900: #1e3a8a;
+
+  --color-red-50: #fbe7ea;
+  --color-red-100: #f6d4da;
+  --color-red-200: #edbbc4;
+  --color-red-600: #c02a43;
+  --color-red-700: #aa2037;
+  --color-red-800: #8d1b2e;
+  --color-red-900: #6f1525;
+
+  /* Must match SEAT_TAKEN_COLOR and SEAT_EMPTY_COLOR in src/domain/seats.ts. */
   --color-seat-taken: #1e3a8a;
-  --color-seat-empty: #9ca3af;
+  --color-seat-empty: #7b879a;
+}
+
+/* Inter for the interface and Noto Serif Display for editorial lines (src/app/fonts/brand-fonts.ts). */
+@theme inline {
+  --font-sans: var(--font-inter-ext), var(--font-inter), system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-editorial: var(--font-noto-serif-display), Georgia, serif;
 }
 
 html {
@@ -12,6 +89,78 @@ html {
 
 body {
   font-family: var(--font-sans);
+  background-color: var(--sb-bg);
+  color: var(--sb-text);
+}
+
+/*
+ * The editors' chrome is plain: cool neutrals beside the canvas, not the
+ * ivory. The root of the layout and venue editors (src/app/(editor)/layout.tsx)
+ * carries data-surface="plain", which re-points stone-50 (Tailwind's classes
+ * read the variable) to the brand's muted surface for everything inside it,
+ * and through <body> for the dialogs and menus they open, which render in a
+ * portal on <body>; so that root must stay a child of <body>. The rest of the
+ * app keeps the ivory. The canvas is not affected: its colors are literal.
+ */
+[data-surface="plain"],
+body:has(> [data-surface="plain"]) {
+  --color-stone-50: #f3f6fb;
+}
+
+/*
+ * Blueprint paper, under the signed-out pages (src/client/ui/SignedOutShell.tsx):
+ * heritage navy ruled like drafting paper in forget-me-not, a fine line every
+ * 24 px and a firmer one every fifth, centered on the page, darkening a little
+ * towards the edges. Text placed straight on it must be white (10.36:1).
+ */
+.blueprint-paper {
+  background-color: #1e3a8a;
+  background-image:
+    radial-gradient(ellipse at center, transparent 35%, rgb(10 24 66 / 0.45) 100%),
+    linear-gradient(to right, rgb(158 200 248 / 0.13) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(158 200 248 / 0.13) 1px, transparent 1px),
+    linear-gradient(to right, rgb(158 200 248 / 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(158 200 248 / 0.06) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    120px 120px,
+    120px 120px,
+    24px 24px,
+    24px 24px;
+  background-position: center;
+}
+
+/*
+ * Crop marks at the corners of the card on blueprint paper, in line with its
+ * edges, as on a drawing sheet. Wide screens only: on a phone the card nearly
+ * meets the screen's edges, with no room round it for them.
+ */
+@media (min-width: 40rem) {
+  .blueprint-marks {
+    position: relative;
+  }
+
+  .blueprint-marks::before {
+    --mark: rgb(158 200 248 / 0.5);
+    content: "";
+    position: absolute;
+    inset: -24px;
+    pointer-events: none;
+    background:
+      linear-gradient(var(--mark) 0 0) left 0 top 24px / 16px 1px no-repeat,
+      linear-gradient(var(--mark) 0 0) left 24px top 0 / 1px 16px no-repeat,
+      linear-gradient(var(--mark) 0 0) right 0 top 24px / 16px 1px no-repeat,
+      linear-gradient(var(--mark) 0 0) right 24px top 0 / 1px 16px no-repeat,
+      linear-gradient(var(--mark) 0 0) left 0 bottom 24px / 16px 1px no-repeat,
+      linear-gradient(var(--mark) 0 0) left 24px bottom 0 / 1px 16px no-repeat,
+      linear-gradient(var(--mark) 0 0) right 0 bottom 24px / 16px 1px no-repeat,
+      linear-gradient(var(--mark) 0 0) right 24px bottom 0 / 1px 16px no-repeat;
+  }
+}
+
+/* Past the page's ends (a phone's rubber banding) the navy carries on. */
+html:has(> body > [data-signed-out]) {
+  background-color: #1e3a8a;
 }
 
 @layer base {
@@ -28,6 +177,11 @@ body {
   input,
   label {
     touch-action: manipulation;
+  }
+
+  /* Placeholders at 4.5:1 or more (Tailwind's default, half the text color, is about 3:1). */
+  ::placeholder {
+    color: var(--color-stone-400);
   }
 }
 
@@ -61,6 +215,11 @@ body {
   initial-value: 0px;
 }
 
+/*
+ * Literal colors on purpose, not palette variables: the plan's surface and
+ * grid look the same as before the brand (stone-50 and stone-500 at 16%, as
+ * Tailwind 3 had them), whatever the theme above does to stone.
+ */
 .editor-grid {
   background-color: #fafaf9;
   background-image:

@@ -10,7 +10,7 @@
  *   const [editor] = useState(() => createEditorState({
  *     layoutId: layout.id,
  *     store,
- *     canEdit: () => canEditRef.current,          // saver ready, author picked, no conflict
+ *     canEdit: () => canEditRef.current,          // saver ready, no conflict
  *     onCommit: (canvas) => sessionRef.current?.noteEdit(canvas),
  *     settings: () => ({ unit: wedding.unit, minGapCm: wedding.minGapCm }),
  *     venueItems: () => template?.fixedItems ?? [],  // fit to content takes the venue in
@@ -52,8 +52,8 @@
  * note tool (the next click or tap places that note, a drag draws it: an
  * arrow or line from start to end, ends attaching to the tables and fixtures
  * they land on unless Alt is held; false when refused, as in View mode);
- * actions.addNote(type, at?) adds one at a point or the viewport's center. New notes take the device's author (the
- * author option, getAuthor() by default) and ui noteColor (actions.
+ * actions.addNote(type, at?) adds one at a point or the viewport's center. New notes take the signed-in user (the
+ * author option: name and account id) and ui noteColor (actions.
  * setNoteColor(color) colors the selected notes and remembers the color).
  * setNoteText, setNoteDone, toggleNoteDone, attachArrowEnd and
  * detachArrowEnd change a note; focusNote(id) is the Notes tab's click
@@ -161,11 +161,11 @@
  * a finished click or tap that seating did not take. onGuestDrag: a seated
  * guest dragged (seating handles the drop). onRefused(reason?): a change
  * refused in View mode or while the page cannot edit (no reason), or for a
- * reason: 'notesHidden', 'notesLocked', 'layerLocked' or 'noAuthor'.
+ * reason: 'notesHidden', 'notesLocked' or 'layerLocked'.
  * onNotice(text): a short message such as "Table 4 is full".
  */
-import type { Author, Canvas } from '@/domain/canvas-schema'
-import { getAuthor } from '@/client/author'
+import type { Canvas } from '@/domain/canvas-schema'
+import type { NoteAuthor } from '@/domain/notes'
 import { randomId } from '@/client/sync/random-id'
 import type { LengthUnit } from '@/domain/units'
 import type { FixedItem } from '@/domain/venue-schema'
@@ -187,7 +187,7 @@ import { createInteractionStore, createUiStore, type EditorMode, type Interactio
 export type EditorStateOptions = {
   layoutId: string
   store: DocStore
-  /** The page's own gate: the save engine is ready, an author is picked, no conflict is open. Default: always. */
+  /** The page's own gate: the save engine is ready and no conflict is open. Default: always. */
   canEdit?: () => boolean
   /** A finished change: hand it to the save engine (session.noteEdit). */
   onCommit: (canvas: Canvas) => void
@@ -212,8 +212,11 @@ export type EditorStateOptions = {
   listWindow?: ListWindow | null
   /** Text widths for the names at close level (the browser's canvas by default). */
   measureText?: MeasureText
-  /** Who is using this device, for new notes. Default: the Noa / Aiden switch (getAuthor). */
-  author?: () => Author | null
+  /**
+   * Who makes new notes: the signed-in user (name and account id). Without
+   * it the note tools are refused, as in the share viewer, which never edits.
+   */
+  author?: () => NoteAuthor
   /** The wall clock in ms, for a new note's createdAt. Default: Date.now. */
   wallClock?: () => number
 }
@@ -310,7 +313,7 @@ export function createEditorState(options: EditorStateOptions): EditorState {
     setTimer: options.setTimer,
     venueItems: () => mountedVenue ?? options.venueItems?.() ?? [],
     seating,
-    author: options.author ?? getAuthor,
+    author: options.author,
     wallClock: options.wallClock,
   })
 

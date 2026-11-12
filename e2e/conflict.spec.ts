@@ -5,11 +5,12 @@
  * mine as a new copy".
  *
  * Both pages share one browser context, as two tabs of one browser do, so
- * they share the Noa / Aiden choice and the message reads "from another tab
- * or device".
+ * both are signed in as the same person, and the message reads "You changed
+ * this layout in another tab or on another device".
  */
 import { expect, test, type BrowserContext, type Page, type TestInfo } from '@playwright/test'
 import {
+  E2E_USERS,
   addRoundTable,
   apiCreateLayout,
   apiCreateWedding,
@@ -18,7 +19,6 @@ import {
   editorPath,
   expectSaved,
   holdLayoutSaves,
-  presetAuthor,
   saveStatus,
   signIn,
   tableIds,
@@ -27,12 +27,13 @@ import {
 } from './helpers'
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+/** Who both tabs are signed in as (e2e/users.ts). */
+const ME = E2E_USERS.a.displayName
 
 async function twoTabsInConflict(context: BrowserContext, page: Page, testInfo: TestInfo) {
-  await presetAuthor(context, 'Aiden')
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Conflict', testInfo))
-  const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan', editedBy: 'Noa' })
+  const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })
 
   const first = page
   const second = await context.newPage()
@@ -66,7 +67,7 @@ async function twoTabsInConflict(context: BrowserContext, page: Page, testInfo: 
   const dialog = second.getByRole('dialog', { name: 'This layout changed' })
   await expect(dialog).toBeVisible()
   await expect(dialog.getByTestId('conflict-message')).toHaveText(
-    /^Aiden changed this layout from another tab or device at \d{1,2}:\d{2} (am|pm)\.$/,
+    /^You changed this layout in another tab or on another device at \d{1,2}:\d{2} (am|pm)\.$/,
   )
   // The text says plainly what each button does with the changes at stake.
   await expect(dialog.getByTestId('conflict-choice')).toHaveText(
@@ -81,7 +82,7 @@ async function twoTabsInConflict(context: BrowserContext, page: Page, testInfo: 
   // The server holds the first tab's version.
   const stored = await apiGetLayout(second.request, layout.id)
   expect(stored.version).toBe(2)
-  expect(stored.editedBy).toBe('Aiden')
+  expect(stored.editedBy).toBe(ME)
   expect(stored.canvas.items.map((item) => item.id)).toEqual(firstIds)
 
   return { wedding, layout, first, second, firstIds, secondIds, dialog }
@@ -94,7 +95,7 @@ test('the second save warns, and "Keep mine as a new copy" opens a copy with my 
   await expect(second).toHaveURL(new RegExp(`/w/${wedding.id}/layouts/(?!${layout.id})${UUID}$`))
   await expect(dialog).toBeHidden()
   const copyId = new URL(second.url()).pathname.split('/')[4]
-  await expect(second.getByTestId('layout-title')).toHaveText("Plan (Aiden's copy)")
+  await expect(second.getByTestId('layout-title')).toHaveText(`Plan (${ME}'s copy)`)
   await waitForEditor(second)
   await expectSaved(second)
   await expect(canvasTables(second)).toHaveCount(1)
@@ -102,7 +103,7 @@ test('the second save warns, and "Keep mine as a new copy" opens a copy with my 
 
   // The copy is stored with my table; the original keeps theirs.
   const copy = await apiGetLayout(second.request, copyId)
-  expect(copy.name).toBe("Plan (Aiden's copy)")
+  expect(copy.name).toBe(`Plan (${ME}'s copy)`)
   expect(copy.canvas.items.map((item) => item.id)).toEqual(secondIds)
   const original = await apiGetLayout(second.request, layout.id)
   expect(original.version).toBe(2)
@@ -111,9 +112,7 @@ test('the second save warns, and "Keep mine as a new copy" opens a copy with my 
   // Both show on the layouts list.
   await second.goto(`/w/${wedding.id}/layouts`)
   await expect(second.getByTestId('layout-card')).toHaveCount(2)
-  await expect(second.locator(`[data-layout-id="${copyId}"]`).getByTestId('layout-name')).toHaveText(
-    "Plan (Aiden's copy)",
-  )
+  await expect(second.locator(`[data-layout-id="${copyId}"]`).getByTestId('layout-name')).toHaveText(`Plan (${ME}'s copy)`)
   await expect(second.locator(`[data-layout-id="${layout.id}"]`).getByTestId('layout-name')).toHaveText('Plan')
 })
 

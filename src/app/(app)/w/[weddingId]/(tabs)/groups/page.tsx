@@ -1,19 +1,19 @@
 import { notFound } from 'next/navigation'
 import { GroupsScreen } from '@/client/groups/GroupsScreen'
 import { RowSaveStatusText } from '@/client/guests/RowSaveStatusText'
-import { requireSiteSession } from '@/server/auth/require'
+import { requireWeddingPage } from '@/server/auth/pages'
 import { getDb } from '@/server/db/client'
 import { listGroups } from '@/server/repo/groups'
 import { listGuests } from '@/server/repo/guests'
 import { uuid } from '@/shared/api'
 import { TabPage } from '../../_components/TabPage'
 
-export const metadata = { title: 'Groups · Seat Plan' }
+export const metadata = { title: 'Groups' }
 
 /** The wedding's groups with their members; the guest list feeds the member search. */
 export default async function GroupsPage({ params }: PageProps<'/w/[weddingId]/groups'>) {
   const { weddingId } = await params
-  await requireSiteSession(`/w/${weddingId}/groups`)
+  await requireWeddingPage(weddingId, `/w/${weddingId}/groups`)
   if (!uuid.safeParse(weddingId).success) notFound()
   const id = weddingId.toLowerCase()
   const db = getDb()

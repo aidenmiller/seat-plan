@@ -1,7 +1,7 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  // Cache Components stays off: every page sits behind the password and reads
+  // Cache Components stays off: every page sits behind sign-in and reads
   // fresh data, so there is nothing to cache (DECISIONS.md).
   poweredByHeader: false,
   turbopack: {
@@ -26,6 +26,11 @@ const nextConfig: NextConfig = {
       {
         // The share token is in the URL; never send it to another site.
         source: '/share/:path*',
+        headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
+      },
+      {
+        // Invite and reset pages carry a one-time token: never pass their address on either.
+        source: '/:page(invite|reset)/:path*',
         headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
       },
     ]

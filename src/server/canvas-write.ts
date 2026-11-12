@@ -1,13 +1,14 @@
 import 'server-only'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { z } from 'zod'
-import { canvasSchema, type Author, type Canvas } from '@/domain/canvas-schema'
+import { canvasSchema, type Canvas } from '@/domain/canvas-schema'
 import { itemLabel } from '@/domain/item-labels'
 import { cleanSeats, seatedGuestIds } from '@/domain/seat-cleanup'
 import { renderThumbnailSvg } from '@/domain/thumbnail'
 import { fixedItemsSchema, type FixedItem } from '@/domain/venue-schema'
 import type { DroppedSeat, LayoutKind } from '@/shared/api'
 import { guests, layoutSeats, layouts, venueTemplates, weddings, type RecentSave } from './db/schema'
+import { editorName, type Editor, type NamedEditor } from './editor-name'
 import { weddingLock, type Tx } from './locks'
 
 /**
@@ -36,7 +37,7 @@ import { weddingLock, type Tx } from './locks'
  *  - 'insert': a new layout (create, duplicate, keep mine as a copy). Version 1,
  *    no recent saves.
  *  - 'rewrite': guest removal and the like. Keeps version, last_save_id,
- *    recent_saves, edited_by and updated_at, so nobody with the layout open gets a conflict
+ *    recent_saves, the editor and updated_at, so nobody with the layout open gets a conflict
  *    (PLAN change 7). Works on deleted layouts too, so restoring one never brings
  *    back a removed guest's seat.
  */
@@ -49,7 +50,8 @@ export type WriteCanvasArgs =
       canvas: unknown
       baseVersion: number
       saveId: string
-      editedBy: Author
+      /** The signed-in user (the route's session), never a name from the request body. */
+      editor: Editor
     }
   | {
       mode: 'insert'
@@ -59,14 +61,15 @@ export type WriteCanvasArgs =
       name: string
       kind: LayoutKind
       venueTemplateId: string | null
-      editedBy: Author | null
+      /** The signed-in user; a restored backup gives the file's name with no user. */
+      editor: Editor | NamedEditor
     }
   | { mode: 'rewrite'; weddingId: string; layoutId: string; canvas: unknown }
 
 /** A dropped seat plus the name of its table or row, for summaries. */
 export type DroppedSeatDetail = DroppedSeat & { itemLabel: string }
 
-export type SavedState = { version: number; updatedAt: Date; editedBy: Author | null }
+export type SavedState = { version: number; updatedAt: Date; editedBy: string | null; editedById: string | null }
 
 /** How many recent saves a layout remembers (layouts.recent_saves). */
 export const MAX_RECENT_SAVES = 20
@@ -132,7 +135,10 @@ async function save(
       version: sql`${layouts.version} + 1`,
       lastSaveId: args.saveId,
       recentSaves,
-      editedBy: args.editedBy,
+      // The old Noa / Aiden column is no longer written; readers fall back to it only for older rows.
+      editedBy: null,
+      editedByName: args.editor.name,
+      editedByUserId: args.editor.userId,
       updatedAt: sql`now()`,
       thumbSvg,
     })
@@ -145,7 +151,12 @@ async function save(
         sql`exists (select 1 from "weddings" w where w."id" = "layouts"."wedding_id" and w."deleted_at" is null)`,
       ),
     )
-    .returning({ version: layouts.version, updatedAt: layouts.updatedAt, editedBy: layouts.editedBy })
+    .returning({
+      version: layouts.version,
+      updatedAt: layouts.updatedAt,
+      editedBy: editorName(layouts),
+      editedById: layouts.editedByUserId,
+    })
 
   if (!row) {
     // Cannot happen while the row is locked; kept so a mistake answers safely.
@@ -180,7 +191,9 @@ async function insert(
       venueTemplateId: args.venueTemplateId,
       version: 1,
       lastSaveId: null,
-      editedBy: args.editedBy,
+      editedBy: null,
+      editedByName: args.editor.name,
+      editedByUserId: args.editor.userId,
       canvas: clean,
       thumbSvg,
     })
@@ -243,7 +256,8 @@ async function lockCurrentState(tx: Tx, layoutId: string, weddingId: string): Pr
     .select({
       version: layouts.version,
       updatedAt: layouts.updatedAt,
-      editedBy: layouts.editedBy,
+      editedBy: editorName(layouts),
+      editedById: layouts.editedByUserId,
       lastSaveId: layouts.lastSaveId,
       recentSaves: layouts.recentSaves,
       venueTemplateId: layouts.venueTemplateId,
@@ -276,7 +290,12 @@ function mismatch(
   args: Extract<WriteCanvasArgs, { mode: 'save' }>,
   dropped: DroppedSeatDetail[],
 ): WriteCanvasResult {
-  const state = { version: current.version, updatedAt: current.updatedAt, editedBy: current.editedBy }
+  const state = {
+    version: current.version,
+    updatedAt: current.updatedAt,
+    editedBy: current.editedBy,
+    editedById: current.editedById,
+  }
   // The same save landed before and its reply was lost, maybe with other saves
   // since. Answer with the version that save made, so the tab's next save
   // starts from there and meets any later save as a conflict. The seats it
@@ -284,7 +303,8 @@ function mismatch(
   const earlier = current.recentSaves.find((r) => r.saveId === args.saveId)
   if (earlier && earlier.version !== current.version) {
     // Only ids and versions are kept, so the time is the layout's last save.
-    return { status: 'already-saved', version: earlier.version, updatedAt: current.updatedAt, editedBy: args.editedBy, dropped }
+    // That save was this same editor's (the tab that made it sends the retry).
+    return { status: 'already-saved', version: earlier.version, updatedAt: current.updatedAt, editedBy: args.editor.name, editedById: args.editor.userId, dropped }
   }
   if (earlier || current.lastSaveId === args.saveId) return { status: 'already-saved', ...state, dropped }
   return {

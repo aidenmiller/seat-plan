@@ -28,6 +28,9 @@ import { makeNote } from './notes'
 import { makeItem } from './presets'
 import { CHAIR_DEPTH_CM } from './seats'
 
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
+
 const NOW = Date.UTC(2026, 10, 10, 12, 0, 0)
 
 function canvasOf(items: Item[]): Canvas {
@@ -40,7 +43,7 @@ const head = (id: string, x = 0, y = 0): Table => makeItem('head', { x, y }, id,
 const bar = (id: string, x = 0, y = 0, rotation = 0): Fixture => ({ ...(makeItem('bar', { x, y }, id, emptyCanvas()) as Fixture), rotation })
 
 function arrow(id: string, start: Point, end: Point, attachedTo: Note['attachedTo'] = { start: null, end: null }): Note {
-  const note = makeNote('arrow', { x: 0, y: 0 }, 'Noa', 'blue', NOW, id)
+  const note = makeNote('arrow', { x: 0, y: 0 }, NOA, 'blue', NOW, id)
   return withEnds({ ...note, attachedTo }, start, end)
 }
 
@@ -74,14 +77,14 @@ function expectOnRay(item: Item, towards: Point, p: Point) {
 
 describe('kinds', () => {
   it('knows arrows, lines and what they attach to', () => {
-    expect(isArrowNote(makeNote('arrow', { x: 0, y: 0 }, 'Noa', 'blue', NOW, 'a'))).toBe(true)
-    expect(isArrowNote(makeNote('line', { x: 0, y: 0 }, 'Noa', 'blue', NOW, 'a'))).toBe(true)
-    expect(isArrowNote(makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'blue', NOW, 'a'))).toBe(false)
+    expect(isArrowNote(makeNote('arrow', { x: 0, y: 0 }, NOA, 'blue', NOW, 'a'))).toBe(true)
+    expect(isArrowNote(makeNote('line', { x: 0, y: 0 }, NOA, 'blue', NOW, 'a'))).toBe(true)
+    expect(isArrowNote(makeNote('sticky', { x: 0, y: 0 }, NOA, 'blue', NOW, 'a'))).toBe(false)
     expect(isArrowNote(undefined)).toBe(false)
     expect(isAttachable(round('t'))).toBe(true)
     expect(isAttachable(bar('b'))).toBe(true)
     expect(isAttachable(makeItem('box', { x: 0, y: 0 }, 's', emptyCanvas()))).toBe(false)
-    expect(isAttachable(makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'blue', NOW, 'n'))).toBe(false)
+    expect(isAttachable(makeNote('sticky', { x: 0, y: 0 }, NOA, 'blue', NOW, 'n'))).toBe(false)
     expect(otherEnd('start')).toBe('end')
     expect(otherEnd('end')).toBe('start')
   })
@@ -339,12 +342,12 @@ describe('letting go', () => {
     const [, copied] = detachOutside([t, a], canvas) as [Table, Note]
     expect(copied.attachedTo).toEqual({ start: 't', end: null })
     expectPoint(storedEnds(copied).end, resolveArrow(a, canvas).end.x, 0)
-    const sticky = makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'n')
+    const sticky = makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 'n')
     expect(detachOutside([sticky], canvas)[0]).toBe(sticky)
   })
 
   it('releases ends of a non-arrow note without moving it', () => {
-    const sticky = { ...makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'n'), attachedTo: { start: 't', end: null } }
+    const sticky = { ...makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 'n'), attachedTo: { start: 't', end: null } }
     const out = releaseEnds(sticky, canvasOf([sticky]), () => true)
     expect(out).toMatchObject({ x: 0, y: 0, attachedTo: { start: null, end: null } })
   })
@@ -395,7 +398,7 @@ describe('attachTargetAt', () => {
   const t = round('t')
   const b = bar('b', 600, 0)
   const top = round('top', 650, 0)
-  const canvas = canvasOf([t, b, top, makeNote('sticky', { x: 0, y: 0 }, 'Noa', 'yellow', NOW, 'n')])
+  const canvas = canvasOf([t, b, top, makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', NOW, 'n')])
 
   it('finds the topmost table or fixture, chairs included', () => {
     expect(attachTargetAt(canvas, { x: 0, y: 0 })?.id).toBe('t')

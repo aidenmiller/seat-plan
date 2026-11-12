@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createRowSaver,
   createRowStore,
+  rowDbName,
   isRetryableStatus,
   mergePatches,
   ROW_LOCK_PREFIX,
@@ -114,13 +115,100 @@ describe('merging edits', () => {
     expect(mergePatches(first, second)).toEqual({ partnerId: C, expectedPartners: { [A]: null, [B]: null, [C]: null } })
   })
 
+  it('stops for good on 401 stale_page (someone else signed in): keeps the edits stored, sends nothing more', async () => {
+    const store = memoryStore()
+    const net = fakeFetch()
+    const replies: Response[] = [Response.json({ error: 'stale_page' }, { status: 401 })]
+    const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const next = replies.shift()
+      if (next) {
+        net.calls.push({ path: String(input), method: init?.method ?? 'GET', body: JSON.parse(String(init?.body)), keepalive: false })
+        return next
+      }
+      return net.fn(input, init)
+    }) as unknown as typeof fetch
+    const win = new EventTarget()
+    const { saver, events } = saverWith({ store, fetch: fetchFn, windowTarget: win })
+    saver.queue('guest', A, { meal: 'Fish' })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(net.calls).toHaveLength(1)
+    expect(saver.getStatus()).toMatchObject({ kind: 'other-user' })
+    expect(saver.hasUnsavedChanges()).toBe(true)
+    expect(saver.pendingFor('guest', A)).toEqual({ meal: 'Fish' })
+    expect(events).toEqual([])
+    // Nothing brings it back: time, the browser online again, a flush, more edits.
+    saver.queue('guest', A, { rsvp: 'yes' })
+    win.dispatchEvent(new Event('online'))
+    await saver.flush()
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(net.calls).toHaveLength(1)
+    // Both edits stay stored for this user, for when they sign in again.
+    await saver.whenStored()
+    expect([...store.rows.values()].map((r) => r.patch)).toEqual([{ meal: 'Fish', rsvp: 'yes' }])
+  })
+
+  it('resume() after stale_page (the same person signed in again) sends the kept edits and clears them', async () => {
+    const store = memoryStore()
+    const replies = [Response.json({ error: 'stale_page' }, { status: 401 })]
+    const sent: unknown[] = []
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(JSON.parse(String(init?.body)))
+      return replies.shift() ?? Response.json({ ok: true })
+    }) as unknown as typeof fetch
+    const { saver, events } = saverWith({ store, fetch: fetchFn })
+    saver.queue('guest', A, { meal: 'Fish' })
+    await vi.advanceTimersByTimeAsync(300)
+    saver.queue('guest', A, { rsvp: 'yes' })
+    expect(saver.getStatus()).toMatchObject({ kind: 'other-user' })
+
+    saver.resume()
+    await vi.advanceTimersByTimeAsync(0)
+    await saver.flush()
+    expect(sent).toEqual([{ meal: 'Fish' }, { meal: 'Fish', rsvp: 'yes' }])
+    expect(saver.getStatus()).toEqual({ kind: 'saved' })
+    expect(saver.hasUnsavedChanges()).toBe(false)
+    expect(events.map((e) => e.type)).toEqual(['saved'])
+    await saver.whenStored()
+    expect([...store.rows.values()]).toEqual([])
+  })
+
+  it('resume() does nothing to a queue that was not stopped', async () => {
+    const { saver, net } = saverWith()
+    saver.resume()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(net.calls).toHaveLength(0)
+    expect(saver.getStatus()).toEqual({ kind: 'saved' })
+  })
+
+  it('keeps retrying a plain 401 (the session ran out), so the edits go once the same person signs in again', async () => {
+    const replies = [401, 200]
+    const calls: number[] = []
+    const fetchFn = vi.fn(async () => {
+      const status = replies.shift() ?? 200
+      calls.push(status)
+      return Response.json(status === 401 ? { error: 'unauthorized' } : { ok: true }, { status })
+    }) as unknown as typeof fetch
+    const { saver } = saverWith({ fetch: fetchFn })
+    saver.queue('guest', A, { meal: 'Fish' })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(saver.getStatus()).toMatchObject({ kind: 'retrying', reason: 'You were signed out. Reload the page to sign in again.' })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(calls).toEqual([401, 200])
+    expect(saver.getStatus()).toEqual({ kind: 'saved' })
+  })
+
   it('knows which replies are worth trying again', () => {
     for (const s of [0, 401, 408, 429, 500, 503]) expect(isRetryableStatus(s)).toBe(true)
     for (const s of [400, 404, 409, 410, 413, 422]) expect(isRetryableStatus(s)).toBe(false)
   })
 
   it('has the header words', () => {
-    expect(ROW_STATUS_TEXT).toEqual({ saved: 'Saved', saving: 'Saving…', retrying: 'Not saved, retrying' })
+    expect(ROW_STATUS_TEXT).toEqual({
+      saved: 'Saved',
+      saving: 'Saving…',
+      retrying: 'Not saved, retrying',
+      'other-user': 'Not saved: someone else signed in',
+    })
   })
 })
 
@@ -354,13 +442,27 @@ describe('keeping the queue on this device', () => {
     expect(net.calls).toHaveLength(0)
   })
 
-  it('stores rows in IndexedDB and reads them back', async () => {
+  it('stores rows in IndexedDB, stamped with the user, and reads them back', async () => {
     vi.useRealTimers()
-    const store = createRowStore(`rows-test-${Math.random()}`)
+    const store = createRowStore({ userId: 'user-1', dbName: `rows-test-${Math.random()}` })
     const row: StoredRow = { queueId: 'q1', kind: 'guest', id: A, patch: { meal: 'Fish' }, queuedAt: '2026-11-09T10:00:00.000Z' }
     expect(await store.put(row)).toBe(true)
-    expect(await store.list()).toEqual([row])
+    expect(await store.list()).toEqual([{ ...row, userId: 'user-1' }])
     expect(await store.remove('q1', 'guest', A)).toBe(true)
     expect(await store.list()).toEqual([])
+  })
+
+  it('keeps each user’s queue apart: a row of someone else is refused and never handed back', async () => {
+    vi.useRealTimers()
+    expect(rowDbName('user-1')).toBe('seat-plan-rows-u-user-1')
+    const dbName = `rows-test-${Math.random()}`
+    const mine = createRowStore({ userId: 'user-1', dbName })
+    const theirs = createRowStore({ userId: 'user-2', dbName })
+    const row: StoredRow = { queueId: 'q1', kind: 'guest', id: A, patch: { meal: 'Fish' }, queuedAt: '2026-11-09T10:00:00.000Z' }
+    expect(await mine.put({ ...row, userId: 'user-2' })).toBe(false)
+    expect(await theirs.put({ ...row, id: B })).toBe(true)
+    expect(await mine.put(row)).toBe(true)
+    expect((await mine.list()).map((r) => r.id)).toEqual([A])
+    expect((await theirs.list()).map((r) => r.id)).toEqual([B])
   })
 })

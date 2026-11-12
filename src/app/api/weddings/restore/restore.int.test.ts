@@ -4,28 +4,53 @@
  * guests, partners, groups, rules and seats under new ids. Also: every step
  * can be sent again without making anything twice, and a template follows
  * PLAN change 5 (reused with the same walls, else "Name (restored)" with its
- * floor plan image).
+ * floor plan image). Who restores: the restorer is the new wedding's only
+ * member (its owner), the later steps are theirs alone, and a template is
+ * reused only when it is the library's or the restorer's own; anyone else's
+ * comes back as the restorer's private copy, and a file naming someone
+ * else's template never attaches it.
  */
 import { randomBytes, randomUUID } from 'node:crypto'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { NextRequest } from 'next/server'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { TEST_DATABASE_URL } from '../../../../../test/db'
+import { makeMember, makeUser, sessionCookie } from '../../../../../test/auth'
 import { backupFileSchema, type BackupFile } from '@/domain/backup/schema'
 import type { Canvas, Note } from '@/domain/canvas-schema'
 import { DEFAULT_LEFT_LABEL, generateSeatingBlock } from '@/domain/ceremony'
 import { makeGridPng } from '@/domain/floorplan/__fixtures__/plans'
 import type { FixedItem } from '@/domain/venue-schema'
-import { SITE_COOKIE, createSiteToken } from '@/server/auth/tokens'
-import { groupMembers, groups, guests, layouts, layoutSeats, ruleGuests, rules, shareLinks, venueImages, venueTemplates, weddings } from '@/server/db/schema'
+import {
+  activityEvents,
+  groupMembers,
+  groups,
+  guests,
+  layouts,
+  layoutSeats,
+  ruleGuests,
+  rules,
+  shareLinks,
+  users,
+  venueImages,
+  venueTemplates,
+  weddingMembers,
+  weddings,
+} from '@/server/db/schema'
 import { addTemplateImage } from '@/server/repo/venues'
 import { canvasOf, chairRow, makeGuest, makeLayout, makeTemplate, makeWedding, roundTable } from '@/server/repo/test-fixtures'
 import type { RestoredLayout, RestoredTemplate, RestoreStarted } from '@/shared/api'
 
-beforeAll(() => {
+/** The cookie of the user every test acts as: the owner of each wedding it makes. */
+let signedIn = ''
+let me = ''
+
+beforeAll(async () => {
   vi.stubEnv('AUTH_SECRET', 'restore-int-test-secret-of-32-chars-plus')
-  vi.stubEnv('SITE_PASSWORD', 'restore-int-made-up-password')
   vi.stubEnv('DATABASE_URL', TEST_DATABASE_URL)
+  const database = await db()
+  me = (await makeUser(database)).id
+  signedIn = await sessionCookie(database, me)
 })
 afterAll(() => {
   vi.unstubAllEnvs()
@@ -38,8 +63,10 @@ async function db() {
 type Params = Record<string, string>
 type Handler = (req: NextRequest, ctx: { params: Promise<Params> }) => Promise<Response>
 
-async function send(mod: Record<string, unknown>, method: string, params: Params, opts: { body?: unknown; raw?: Uint8Array } = {}) {
-  const headers: Record<string, string> = { cookie: `${SITE_COOKIE}=${createSiteToken()}` }
+type SendOptions = { body?: unknown; raw?: Uint8Array; cookie?: string }
+
+async function send(mod: Record<string, unknown>, method: string, params: Params, opts: SendOptions = {}) {
+  const headers: Record<string, string> = { cookie: opts.cookie ?? signedIn }
   let body: BodyInit | undefined = opts.raw ? new Uint8Array(opts.raw) : undefined
   if (opts.body !== undefined) {
     headers['content-type'] = 'application/json'
@@ -51,7 +78,7 @@ async function send(mod: Record<string, unknown>, method: string, params: Params
   return res
 }
 
-async function call(mod: Record<string, unknown>, method: string, params: Params, opts: { body?: unknown; raw?: Uint8Array } = {}) {
+async function call(mod: Record<string, unknown>, method: string, params: Params, opts: SendOptions = {}) {
   const res = await send(mod, method, params, opts)
   const text = await res.text()
   return { status: res.status, headers: res.headers, body: text ? JSON.parse(text) : null }
@@ -66,14 +93,18 @@ const routes = async () => ({
 })
 
 /**
- * A wedding with partners, groups, rules, a removed guest, a template with a
- * floor plan image, a reception layout with seats and a note, and a ceremony
- * layout with a named chair.
+ * A wedding the signed-in user owns, with partners, groups, rules, a removed
+ * guest, a template of theirs with a floor plan image, a reception layout
+ * with seats and a note, and a ceremony layout with a named chair.
  */
 async function makeSource() {
   const database = await db()
   const weddingId = await makeWedding(database, 'Noa & Aiden')
-  await database.update(weddings).set({ unit: 'm', minGapCm: 120, date: '2027-06-12' }).where(eq(weddings.id, weddingId))
+  await makeMember(database, weddingId, me, 'owner')
+  await database
+    .update(weddings)
+    .set({ unit: 'm', minGapCm: 120, date: '2027-06-12', partner1Name: 'Noa', partner2Name: 'Aiden' })
+    .where(eq(weddings.id, weddingId))
   const ann = await makeGuest(database, weddingId, 'Ann', 'Lee')
   const ben = await makeGuest(database, weddingId, 'Ben', 'Lee')
   const cat = await makeGuest(database, weddingId, 'Cat', 'Ray')
@@ -81,7 +112,7 @@ async function makeSource() {
   const eve = await makeGuest(database, weddingId, 'Eve', 'Gone')
   await database.update(guests).set({ partnerId: ben, coupleRuleEnabled: false }).where(eq(guests.id, ann))
   await database.update(guests).set({ partnerId: ann, coupleRuleEnabled: false }).where(eq(guests.id, ben))
-  await database.update(guests).set({ isChild: true, meal: 'Kids pasta', notes: 'Needs a high chair', side: 'Aiden', rsvp: 'yes' }).where(eq(guests.id, dan))
+  await database.update(guests).set({ isChild: true, meal: 'Kids pasta', notes: 'Needs a high chair', side: 'partner2', rsvp: 'yes' }).where(eq(guests.id, dan))
 
   const [friends] = await database.insert(groups).values({ weddingId, name: 'Friends', color: '#2563EB' }).returning({ id: groups.id })
   const [family] = await database.insert(groups).values({ weddingId, name: 'Family', color: '#C2410C' }).returning({ id: groups.id })
@@ -105,6 +136,7 @@ async function makeSource() {
   ])
 
   const templateId = await makeTemplate(database, `Hall ${randomUUID().slice(0, 8)}`)
+  await database.update(venueTemplates).set({ ownerUserId: me }).where(eq(venueTemplates.id, templateId))
   const png = makeGridPng(120, 80)
   const image = await addTemplateImage(database, templateId, png)
   if (image.status !== 'created') throw new Error(image.status)
@@ -246,10 +278,11 @@ async function downloadBackup(weddingId: string): Promise<BackupFile> {
   return backupFileSchema.parse(JSON.parse(await res.text()))
 }
 
-/** The browser's steps, in order (src/client/backup/restore.ts). */
-async function restore(file: BackupFile, jobId = randomUUID()) {
+/** The browser's steps, in order (src/client/backup/restore.ts), as the signed-in user unless `cookie` says otherwise. */
+async function restore(file: BackupFile, jobId = randomUUID(), cookie = signedIn) {
   const r = await routes()
   const start = await call(r.start, 'POST', {}, {
+    cookie,
     body: {
       format: file.format,
       version: file.version,
@@ -266,18 +299,18 @@ async function restore(file: BackupFile, jobId = randomUUID()) {
   const started = start.body as RestoreStarted
   const templates: RestoredTemplate[] = []
   for (const template of file.templates) {
-    const res = await call(r.template, 'POST', { jobId }, { body: template })
+    const res = await call(r.template, 'POST', { jobId }, { cookie, body: template })
     expect(res.status).toBe(200)
     templates.push(res.body)
     const image = file.images.find((i) => i.id === template.imageId)
     if (res.body.needsImage && image) {
-      const put = await call(r.image, 'PUT', { jobId, templateId: template.id }, { raw: Buffer.from(image.data, 'base64') })
+      const put = await call(r.image, 'PUT', { jobId, templateId: template.id }, { cookie, raw: Buffer.from(image.data, 'base64') })
       expect(put.status).toBe(200)
     }
   }
   const layoutReplies: RestoredLayout[] = []
   for (const layout of file.layouts) {
-    const res = await call(r.layout, 'POST', { jobId }, { body: layout })
+    const res = await call(r.layout, 'POST', { jobId }, { cookie, body: layout })
     expect(res.status).toBe(201)
     layoutReplies.push(res.body)
   }
@@ -340,9 +373,104 @@ describe('backup and restore', () => {
     expect(after.ids.filter((id) => old.has(id))).toEqual([])
 
     const [wedding] = await (await db()).select().from(weddings).where(eq(weddings.id, restored.started.weddingId))
-    expect(wedding).toMatchObject({ name: 'Noa & Aiden (restored)', unit: 'm', minGapCm: 120, date: '2027-06-12' })
+    expect(wedding).toMatchObject({ name: 'Noa & Aiden (restored)', unit: 'm', minGapCm: 120, date: '2027-06-12', partner1Name: 'Noa', partner2Name: 'Aiden' })
     const links = await (await db()).select().from(shareLinks).where(eq(shareLinks.weddingId, restored.started.weddingId))
     expect(links).toEqual([])
+  })
+
+  it("writes version 2: the partners' names, sides as codes, and the members", async () => {
+    const source = await makeSource()
+    const database = await db()
+    const [owner] = await database
+      .insert(users)
+      .values({ email: `owner-${randomUUID().slice(0, 8)}@example.com`, displayName: 'Noa', passwordHash: 'x' })
+      .returning({ id: users.id, email: users.email })
+    await database.insert(weddingMembers).values({ weddingId: source.weddingId, userId: owner!.id, role: 'owner' })
+    const file = await downloadBackup(source.weddingId)
+    expect(file.version).toBe(2)
+    expect(file.wedding).toMatchObject({ partner1Name: 'Noa', partner2Name: 'Aiden' })
+    expect(Object.fromEntries(file.guests.map((g) => [g.firstName, g.side]))).toEqual({ Ann: 'both', Ben: 'both', Cat: 'both', Dan: 'partner2' })
+    expect(file.members).toEqual([
+      { userId: me, email: expect.any(String), displayName: 'Pat', role: 'owner' },
+      { userId: owner!.id, email: owner!.email, displayName: 'Noa', role: 'owner' },
+    ])
+
+    // A restore never trusts the members: only the restorer is added, as the owner, even when the step names someone.
+    const restored = await restore(file)
+    const r = await routes()
+    const forged = await call(r.start, 'POST', {}, {
+      body: { ...file, jobId: randomUUID(), layouts: undefined, templates: undefined, images: undefined, exportedAt: undefined },
+    })
+    expect(forged.status).toBe(201)
+    for (const weddingId of [restored.started.weddingId, forged.body.weddingId as string]) {
+      expect(await database.select({ userId: weddingMembers.userId, role: weddingMembers.role }).from(weddingMembers).where(eq(weddingMembers.weddingId, weddingId))).toEqual([
+        { userId: me, role: 'owner' },
+      ])
+      const logged = await database.select({ kind: activityEvents.kind, userId: activityEvents.userId }).from(activityEvents).where(eq(activityEvents.weddingId, weddingId))
+      expect(logged).toEqual([{ kind: 'wedding_restored', userId: me }])
+    }
+  })
+
+  it('restores a version 1 file as Noa and Aiden, with sides by place', async () => {
+    const source = await makeSource()
+    const v2 = await downloadBackup(source.weddingId)
+    // The same file as version 1 wrote it: no partner names, sides as names, no members.
+    const words = { partner1: 'Noa', partner2: 'Aiden', both: 'Both' } as const
+    const wedding = { id: v2.wedding.id, name: v2.wedding.name, date: v2.wedding.date, unit: v2.wedding.unit, minGapCm: v2.wedding.minGapCm }
+    const oldGuests = v2.guests.map((g) => ({ ...g, side: words[g.side] }))
+    const v1: Record<string, unknown> = { ...v2, version: 1, wedding, guests: oldGuests }
+    delete v1.members
+
+    // A browser still running the page from before version 2 sends its first step as version 1.
+    const r = await routes()
+    const jobId = randomUUID()
+    const start = await call(r.start, 'POST', {}, {
+      body: { format: v2.format, version: 1, jobId, wedding, guests: oldGuests, groups: v2.groups, groupMembers: v2.groupMembers, rules: v2.rules, ruleGuests: v2.ruleGuests },
+    })
+    expect(start.status).toBe(201)
+    const database = await db()
+    const [old] = await database.select().from(weddings).where(eq(weddings.id, start.body.weddingId))
+    expect(old).toMatchObject({ partner1Name: 'Noa', partner2Name: 'Aiden' })
+    expect((await snapshot(start.body.weddingId)).guests).toEqual((await snapshot(source.weddingId)).guests)
+
+    // A version 1 file read by today's page restores the same way.
+    const restored = await restore(backupFileSchema.parse(v1))
+    const [wed] = await database.select().from(weddings).where(eq(weddings.id, restored.started.weddingId))
+    expect(wed).toMatchObject({ partner1Name: 'Noa', partner2Name: 'Aiden' })
+    const after = await snapshot(restored.started.weddingId)
+    expect(after.guests.map((g) => [g.name, g.side])).toEqual([
+      ['Ann Lee', 'both'],
+      ['Ben Lee', 'both'],
+      ['Cat Ray', 'both'],
+      ['Dan Ray', 'partner2'],
+    ])
+    expect(after.seats).toEqual((await snapshot(source.weddingId)).seats)
+  })
+
+  it('exports the editor name and restores another person’s name into edited_by_name only', async () => {
+    const source = await makeSource()
+    const database = await db()
+    // A layout last saved by someone besides Noa and Aiden: only the new column holds the name.
+    await database
+      .update(layouts)
+      .set({ editedBy: null, editedByName: 'Dayna K.' })
+      .where(and(eq(layouts.weddingId, source.weddingId), eq(layouts.name, 'Ceremony')))
+    const file = await downloadBackup(source.weddingId)
+    expect(file.layouts.map((l) => [l.name, l.editedBy])).toEqual([
+      ['Dinner', 'Noa'],
+      ['Ceremony', 'Dayna K.'],
+    ])
+
+    const restored = await restore(file)
+    const rows = await database
+      .select({ name: layouts.name, editedBy: layouts.editedBy, editedByName: layouts.editedByName, editedByUserId: layouts.editedByUserId })
+      .from(layouts)
+      .where(eq(layouts.weddingId, restored.started.weddingId))
+    expect(rows.sort((x, y) => x.name.localeCompare(y.name))).toEqual([
+      { name: 'Ceremony', editedBy: null, editedByName: 'Dayna K.', editedByUserId: null },
+      // The old Noa / Aiden column is no longer written; the name the file gives goes into edited_by_name.
+      { name: 'Dinner', editedBy: null, editedByName: 'Noa', editedByUserId: null },
+    ])
   })
 
   it('can send every step again without making anything twice', async () => {
@@ -398,6 +526,68 @@ describe('backup and restore', () => {
     const r = await routes()
     const again = await call(r.template, 'POST', { jobId: restored.jobId }, { body: file.templates[0] })
     expect(again.body).toEqual({ templateId: copy!.templateId, reused: false, needsImage: false })
+  })
+
+  it('makes someone else restoring the file a private copy of a template that is not theirs, and keeps every step of a job to its own restorer', async () => {
+    const source = await makeSource()
+    const file = await downloadBackup(source.weddingId)
+    const database = await db()
+    const bea = await makeUser(database, { displayName: 'Bea' })
+    const beaCookie = await sessionCookie(database, bea.id)
+
+    // The walls still match, but the template is not Bea's (nor the library's): she gets her own copy.
+    const restored = await restore(file, randomUUID(), beaCookie)
+    const [copy] = restored.templates
+    expect(copy).toMatchObject({ reused: false, needsImage: true })
+    expect(copy!.templateId).not.toBe(source.templateId)
+    const [row] = await database.select().from(venueTemplates).where(eq(venueTemplates.id, copy!.templateId))
+    expect(row).toMatchObject({ ownerUserId: bea.id, isLibrary: false, referenceImageId: expect.any(String) })
+    const restoredLayouts = await database
+      .select({ venueTemplateId: layouts.venueTemplateId })
+      .from(layouts)
+      .where(eq(layouts.weddingId, restored.started.weddingId))
+    expect(restoredLayouts.map((l) => l.venueTemplateId)).not.toContain(source.templateId)
+    expect(await database.select({ userId: weddingMembers.userId }).from(weddingMembers).where(eq(weddingMembers.weddingId, restored.started.weddingId))).toEqual([
+      { userId: bea.id },
+    ])
+
+    // Her job is hers: every later step of it is 404 to me, and its id cannot start a wedding for me.
+    const r = await routes()
+    expect((await call(r.template, 'POST', { jobId: restored.jobId }, { body: file.templates[0] })).status).toBe(404)
+    expect((await call(r.image, 'PUT', { jobId: restored.jobId, templateId: file.templates[0]!.id }, { raw: Buffer.from(file.images[0]!.data, 'base64') })).status).toBe(404)
+    expect((await call(r.layout, 'POST', { jobId: restored.jobId }, { body: file.layouts[0] })).status).toBe(404)
+    const again = await call(r.start, 'POST', {}, { body: { ...file, jobId: restored.jobId, layouts: undefined, templates: undefined, images: undefined, exportedAt: undefined } })
+    expect(again).toMatchObject({ status: 409, body: { error: 'id_taken' } })
+    expect(JSON.stringify(again.body)).not.toContain(restored.started.weddingId)
+    expect(await database.select({ userId: weddingMembers.userId }).from(weddingMembers).where(eq(weddingMembers.weddingId, restored.started.weddingId))).toEqual([
+      { userId: bea.id },
+    ])
+  })
+
+  it('never attaches someone else’s private template named in a crafted file: the layout gets a blank canvas', async () => {
+    const source = await makeSource()
+    const file = await downloadBackup(source.weddingId)
+    const database = await db()
+    const bea = await makeUser(database)
+    const beaCookie = await sessionCookie(database, bea.id)
+    const r = await routes()
+    const jobId = randomUUID()
+    const start = await call(r.start, 'POST', {}, {
+      cookie: beaCookie,
+      body: { ...file, jobId, layouts: undefined, templates: undefined, images: undefined, exportedAt: undefined },
+    })
+    expect(start.status).toBe(201)
+    // Bea skips the template step and sends a layout naming my template (and one naming a made-up id).
+    const dinner = file.layouts.find((l) => l.name === 'Dinner')!
+    expect(dinner.venueTemplateId).toBe(source.templateId)
+    const sent = await call(r.layout, 'POST', { jobId }, { cookie: beaCookie, body: dinner })
+    expect(sent.status).toBe(201)
+    const [layout] = await database.select({ venueTemplateId: layouts.venueTemplateId }).from(layouts).where(eq(layouts.id, sent.body.layoutId))
+    expect(layout!.venueTemplateId).toBeNull()
+    // Nor does a template step that names it with walls that match: she gets her own copy.
+    const step = await call(r.template, 'POST', { jobId }, { cookie: beaCookie, body: file.templates[0] })
+    expect(step.body).toMatchObject({ reused: false })
+    expect(step.body.templateId).not.toBe(source.templateId)
   })
 
   it('refuses a file that does not fit, and a deleted wedding', async () => {

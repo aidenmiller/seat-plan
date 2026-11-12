@@ -8,6 +8,7 @@
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { errorMessage } from '@/client/api'
+import { BrandIcon } from '@/client/ui/icons/brand'
 
 export type InlineNameProps = {
   value: string
@@ -158,15 +159,6 @@ export function InlineName({
 
 function PencilIcon() {
   return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      className="h-4 w-4 shrink-0 text-stone-400 opacity-60 group-hover:opacity-100"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-    >
-      <path d="M13.5 3.5l3 3L7 16H4v-3l9.5-9.5z" strokeLinejoin="round" />
-    </svg>
+    <BrandIcon name="rename" className="h-4 w-4 shrink-0 text-stone-400 opacity-60 group-hover:opacity-100" />
   )
 }

@@ -1,7 +1,7 @@
 /**
  * End-to-end tests run against a production build (next build && next start)
- * and a fresh local database. Every run makes up its own site password and
- * secret, so the real password never appears in a test.
+ * and a fresh local database. Every run makes up its own site password,
+ * secret and account passwords, so no real password ever appears in a test.
  *
  * Projects (spec section 4: check every milestone at 390 px and 1440 px):
  *   desktop  1440 x 900
@@ -14,6 +14,8 @@
  * ANTHROPIC_BASE_URL and the app must never reach the real API from a test.
  */
 import { randomBytes } from 'node:crypto'
+import os from 'node:os'
+import path from 'node:path'
 import { defineConfig, devices } from '@playwright/test'
 
 const PORT = Number(process.env.E2E_PORT ?? 3100)
@@ -22,13 +24,21 @@ const SUFFIX = (process.env.TEST_DB_SUFFIX ?? '').replace(/[^a-z0-9_]/gi, '')
 const E2E_DATABASE_URL = process.env.E2E_DATABASE_URL ?? `postgres://seating:seating@127.0.0.1:5432/seating_e2e${SUFFIX}`
 const STAND_IN_PORT = Number(process.env.E2E_STAND_IN_PORT ?? 4210)
 
-// Set once in the runner; worker processes inherit these.
+// Set once in the runner; worker processes inherit these. The site password
+// now only opens /setup, which stays closed because global setup makes the
+// run's accounts (e2e/users.ts) with the passwords below.
 process.env.E2E_SITE_PASSWORD ??= `e2e-${randomBytes(12).toString('hex')}`
+process.env.E2E_PASSWORD_A ??= `e2e-a-${randomBytes(12).toString('hex')}`
+process.env.E2E_PASSWORD_B ??= `e2e-b-${randomBytes(12).toString('hex')}`
+process.env.E2E_PASSWORD_C ??= `e2e-c-${randomBytes(12).toString('hex')}`
 process.env.E2E_AUTH_SECRET ??= randomBytes(32).toString('base64')
 process.env.E2E_DATABASE_URL = E2E_DATABASE_URL
 process.env.E2E_BASE_URL = `http://localhost:${PORT}`
 process.env.E2E_STAND_IN_PORT = String(STAND_IN_PORT)
 process.env.E2E_STAND_IN_URL = `http://127.0.0.1:${STAND_IN_PORT}`
+// Stored backups: the run's own cron secret, and a fresh folder for the backup store (global setup makes it).
+process.env.E2E_CRON_SECRET ??= randomBytes(24).toString('hex')
+process.env.E2E_BACKUP_STORE_DIR ??= path.join(os.tmpdir(), `seat-plan-e2e-backups-${randomBytes(6).toString('hex')}`)
 
 export default defineConfig({
   testDir: 'e2e',
@@ -64,7 +74,9 @@ export default defineConfig({
   ],
   webServer: {
     command: process.env.E2E_SKIP_BUILD ? `npx next start -p ${PORT}` : `npx next build && npx next start -p ${PORT}`,
-    url: `http://localhost:${PORT}/login`,
+    // Ready when a page that needs no database answers. The sign-in page reads the accounts table, which a
+    // brand-new database (CI) does not have until global setup has migrated it, and that runs after this check.
+    url: `http://localhost:${PORT}/robots.txt`,
     timeout: 300_000,
     reuseExistingServer: false,
     stdout: 'ignore',
@@ -78,6 +90,10 @@ export default defineConfig({
       ANTHROPIC_BASE_URL: process.env.E2E_STAND_IN_URL,
       ANTHROPIC_API_KEY: 'stand-in-dummy-key',
       FLOORPLAN_MODEL: '',
+      CRON_SECRET: process.env.E2E_CRON_SECRET,
+      BACKUP_STORE_DIR: process.env.E2E_BACKUP_STORE_DIR,
+      // The tests import many plans as the same planners; the cap itself is tested in import-quota.int.test.ts.
+      AI_IMPORT_MONTHLY_LIMIT: '1000',
     },
   },
 })

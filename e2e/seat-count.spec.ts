@@ -43,17 +43,15 @@ import {
   canvasTables,
   editorPath,
   expectSaved,
-  presetAuthor,
   signIn,
   tableIds,
   uniqueName,
   waitForEditor,
 } from './helpers'
 
-const EMPTY_SEAT = '#9ca3af'
+const EMPTY_SEAT = '#7b879a'
 
-test('+ on an 8-seat round table gives 9 evenly spaced seats, and a count of 12 spaces 12 evenly', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('+ on an 8-seat round table gives 9 evenly spaced seats, and a count of 12 spaces 12 evenly', async ({ page }, testInfo) => {
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Seat count', testInfo))
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })
@@ -123,8 +121,7 @@ async function selectTable(page: Page, id: string): Promise<void> {
   expect(await selectedIds(page)).toEqual([id])
 }
 
-test('− on an 8-seat round table with one empty seat takes that seat and keeps every guest on their side, in order', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('− on an 8-seat round table with one empty seat takes that seat and keeps every guest on their side, in order', async ({ page }, testInfo) => {
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Minus', testInfo))
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })
@@ -197,9 +194,8 @@ test('− on an 8-seat round table with one empty seat takes that seat and keeps
   }
 })
 
-test('on a phone, + and − beside a table near the bottom of the canvas sit above the bottom sheet and work', async ({ context, page }, testInfo) => {
+test('on a phone, + and − beside a table near the bottom of the canvas sit above the bottom sheet and work', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'phone', 'The bottom sheet is the phone layout.')
-  await presetAuthor(context, 'Noa')
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Seat buttons', testInfo))
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })
@@ -273,8 +269,7 @@ test('on a phone, + and − beside a table near the bottom of the canvas sit abo
   expect(stored.seatCount).toBe(count)
 })
 
-test('a table of 12 with 10 guests seated, set to 8 seats, asks first and names the 2 guests who would lose their seats (check 12)', async ({ context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('a table of 12 with 10 guests seated, set to 8 seats, asks first and names the 2 guests who would lose their seats (check 12)', async ({ page }, testInfo) => {
   const people: [string, string][] = [
     ['Ava', 'Cohen'],
     ['Ben', 'Levi'],

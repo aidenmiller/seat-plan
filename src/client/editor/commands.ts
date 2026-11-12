@@ -32,7 +32,6 @@ import {
   MIN_TABLE_CM,
   noteColors,
   wellFormedText,
-  type Author,
   type Canvas,
   type ChairRow,
   type Item,
@@ -62,7 +61,7 @@ import {
   type ArrowEnd,
 } from '@/domain/arrows'
 import { boxCenter, distance, itemBox, itemsBox, normalizeDegrees, type Point } from '@/domain/geometry'
-import { makeNote, NOTE_SIZES, type NoteColor, type NoteType } from '@/domain/notes'
+import { makeNote, NOTE_SIZES, type NoteAuthor, type NoteColor, type NoteType } from '@/domain/notes'
 import { copyItems, defaultTableName, makeItem, type PresetId } from '@/domain/presets'
 import {
   isResizable,
@@ -603,7 +602,8 @@ export type NewNote = {
   type: NoteType
   /** The center. */
   at: Point
-  author: Author
+  /** The signed-in user who makes it: their name and account id. */
+  author: NoteAuthor
   color: NoteColor
   now: Date | number
   /** A drawn size instead of the default (not for arrows and lines), at least 10 cm a side. */
@@ -628,7 +628,8 @@ export type NewArrow = {
   /** The table or fixture each end holds, if any. Ends on anything else stay free. */
   startOn?: string | null
   endOn?: string | null
-  author: Author
+  /** The signed-in user who makes it: their name and account id. */
+  author: NoteAuthor
   color: NoteColor
   now: Date | number
 }

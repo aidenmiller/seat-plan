@@ -20,13 +20,9 @@
 import { expect, test } from '@playwright/test'
 import { makeCcittScanPdf, makeRoomPdf, PAGE_PT, PT_PER_M, ROOM } from '../src/domain/floorplan/__fixtures__/plans'
 import type { FixedItem } from '../src/domain/venue-schema'
-import { presetAuthor, signIn, uniqueName } from './helpers'
+import { signIn, uniqueName } from './helpers'
 import { standInCallsFor, type SeenSegment } from './stand-in-anthropic'
 import { apiCreateVenue, apiGetVenue, expectTemplateSaved, fixedOnCanvas, openTemplateEditor, startImport, templateStatus } from './venues'
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 type Wall = Extract<FixedItem, { type: 'wall' }>
 
@@ -128,7 +124,7 @@ test('a black and white scan (CCITT fax) renders its picture: pdf.js loads its d
   const venue = await apiCreateVenue(page.request, name)
   await openTemplateEditor(page, venue.id)
 
-  // The decoders are served behind the site cookie, from the pinned pdfjs-dist.
+  // The decoders are served behind the sign-in, from the pinned pdfjs-dist.
   const wasm = await page.request.get('/pdfjs-wasm/jbig2.wasm')
   expect(wasm.status()).toBe(200)
   expect((await wasm.body()).subarray(0, 4).toString('latin1')).toBe('\0asm')

@@ -27,16 +27,14 @@ import {
   canvasTables,
   editorPath,
   expectSaved,
-  presetAuthor,
   signIn,
   tableIds,
   uniqueName,
   waitForEditor,
 } from './helpers'
 
-test('a phone opens in View, a drag pans and moves nothing, and Edit allows adding and moving', async ({ context, page }, testInfo) => {
+test('a phone opens in View, a drag pans and moves nothing, and Edit allows adding and moving', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'phone', 'Phone behavior; the laptop test is below.')
-  await presetAuthor(context, 'Aiden')
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Modes', testInfo))
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })
@@ -112,9 +110,8 @@ test('a phone opens in View, a drag pans and moves nothing, and Edit allows addi
   await expect(modeSwitch).toHaveAttribute('aria-checked', 'false')
 })
 
-test('a laptop opens in Edit; View hides the tools, pans on drag and refuses changes; the choice is remembered', async ({ context, page }, testInfo) => {
+test('a laptop opens in Edit; View hides the tools, pans on drag and refuses changes; the choice is remembered', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Laptop behavior; the phone test is above.')
-  await presetAuthor(context, 'Noa')
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Modes', testInfo))
   const layout = await apiCreateLayout(page.request, wedding.id, { name: 'Plan' })

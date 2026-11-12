@@ -6,6 +6,7 @@ import { Switch } from '@/client/editor/panels/controls'
 import { randomId } from '@/client/sync/random-id'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { TextField } from '@/client/ui/fields'
+import { BrandIcon } from '@/client/ui/icons/brand'
 import { errorClass, hintClass, primaryButton, secondaryButton } from '@/client/ui/styles'
 import { SHARE_PASSWORD_MIN, type ShareLink } from '@/shared/api'
 import { CopyLinkButton, LinkBox } from './CopyLink'
@@ -26,12 +27,7 @@ export function ShareButton({ layoutId, compact }: { layoutId: string; compact: 
         className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-sm font-medium text-stone-700 hover:bg-stone-100"
         data-testid="share-button"
       >
-        <svg aria-hidden="true" viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.6">
-          <circle cx="5" cy="10" r="2.2" />
-          <circle cx="15" cy="5" r="2.2" />
-          <circle cx="15" cy="15" r="2.2" />
-          <path d="M7 9l6-3M7 11l6 3" strokeLinecap="round" />
-        </svg>
+        <BrandIcon name="share-link" />
         {!compact && <span>Share</span>}
       </button>
       <Dialog open={open} onClose={() => setOpen(false)} title="Share this layout" testId="share-dialog">
@@ -103,7 +99,7 @@ function ShareForm({ layoutId, onClose }: { layoutId: string; onClose: () => voi
           setPasswordError(null)
         }}
         error={passwordError}
-        hint={`At least ${SHARE_PASSWORD_MIN} characters. Not the site password.`}
+        hint={`At least ${SHARE_PASSWORD_MIN} characters. Not your own password.`}
         autoComplete="new-password"
         maxLength={200}
       />

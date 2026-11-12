@@ -3,23 +3,34 @@
  * route handlers (both Node). No 'server-only' import so Vitest can load it;
  * it holds no secrets itself and reads them from the environment at call time.
  *
- * Two keys (PLAN change 23):
- *  - the site key comes from AUTH_SECRET and SITE_PASSWORD, so a new site
- *    password makes every old site cookie fail;
- *  - the share key comes from AUTH_SECRET alone, so changing the site password
- *    leaves venue viewers signed in.
- * Every payload names its type, so a share cookie can never pass as a site cookie.
+ * Two keys, both from AUTH_SECRET alone (PLAN change 23):
+ *  - the share key, for a share link's own cookie;
+ *  - the user session key. A session cookie only carries a random secret; the
+ *    sessions table decides whether it is still good (src/server/repo/sessions.ts).
+ * Every payload names its type, so one kind of cookie can never pass as another.
+ *
+ * The site cookie (sp_site) from the shared-password days is gone: nothing
+ * makes or accepts one. Only its name is kept, so the proxy and the sign-in
+ * routes can clear one a browser still holds.
  */
-import { createHash, createHmac, hkdfSync, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto'
 
+/** The old site-password cookie's name, kept only to clear it. */
 export const SITE_COOKIE = 'sp_site'
 export const COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 export function shareCookieName(linkId: string): string {
   return `sp_share_${linkId}`
 }
 
-type SitePayload = { typ: 'site'; exp: number }
+export const SESSION_COOKIE = 'sp_session'
+/** How long the browser keeps the session cookie after it was last set. */
+export const SESSION_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 3600
+
+/** Session, invite and reset tokens: 32 random bytes in base64url. */
+export const OPAQUE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/
+
 type SharePayload = { typ: 'share'; linkId: string; cv: number; exp: number }
+type SessionPayload = { typ: 'user'; s: string; exp: number }
 
 function sha256(value: string): Buffer {
   return createHash('sha256').update(value, 'utf8').digest()
@@ -30,24 +41,24 @@ function authSecret(): string | null {
   return secret && secret.length >= 32 ? secret : null
 }
 
-function siteKey(): Buffer | null {
-  const secret = authSecret()
-  const password = process.env.SITE_PASSWORD
-  if (!secret || !password) return null
-  return Buffer.from(hkdfSync('sha256', secret, sha256(password), 'seat-plan site cookie v1', 32))
-}
-
 function shareKey(): Buffer | null {
   const secret = authSecret()
   if (!secret) return null
   return Buffer.from(hkdfSync('sha256', secret, Buffer.alloc(0), 'seat-plan share cookie v1', 32))
 }
 
+/** Does not depend on SITE_PASSWORD, which only first-run setup still reads. */
+function sessionKey(): Buffer | null {
+  const secret = authSecret()
+  if (!secret) return null
+  return Buffer.from(hkdfSync('sha256', secret, Buffer.alloc(0), 'seat-plan user session v1', 32))
+}
+
 function mac(key: Buffer, body: string): Buffer {
   return createHmac('sha256', key).update(body, 'utf8').digest()
 }
 
-function sign(payload: SitePayload | SharePayload, key: Buffer): string {
+function sign(payload: SharePayload | SessionPayload, key: Buffer): string {
   const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
   return `${body}.${mac(key, body).toString('base64url')}`
 }
@@ -72,21 +83,6 @@ function open(token: string, key: Buffer, now: number): Record<string, unknown> 
   return payload as Record<string, unknown>
 }
 
-export function createSiteToken(now: number = Date.now()): string {
-  const key = siteKey()
-  if (!key) throw new Error('AUTH_SECRET (32+ characters) and SITE_PASSWORD must be set')
-  return sign({ typ: 'site', exp: now + COOKIE_MAX_AGE_SECONDS * 1000 }, key)
-}
-
-/** True only for an unexpired site token signed with the current key. Fails closed. */
-export function verifySiteToken(token: string | undefined | null, now: number = Date.now()): boolean {
-  if (!token) return false
-  const key = siteKey()
-  if (!key) return false
-  const payload = open(token, key, now)
-  return payload?.typ === 'site'
-}
-
 export function createShareToken(linkId: string, credentialVersion: number, now: number = Date.now()): string {
   const key = shareKey()
   if (!key) throw new Error('AUTH_SECRET (32+ characters) must be set')
@@ -107,16 +103,50 @@ export function verifyShareToken(
   return { linkId: payload.linkId, credentialVersion: payload.cv }
 }
 
+/** 32 random bytes in base64url: 43 characters. Only its hash is ever stored. */
+export function newOpaqueToken(): string {
+  return randomBytes(32).toString('base64url')
+}
+
+/** SHA-256 in hex (64 characters): what the database keeps in place of a token. */
+export function hashOpaqueToken(token: string): string {
+  return createHash('sha256').update(token, 'utf8').digest('hex')
+}
+
+/**
+ * The session cookie's value: the session's random secret, signed. `expMs` is
+ * the latest the cookie can be any good (the session's hard cap); the
+ * sessions table decides the real expiry.
+ */
+export function signSessionCookie(secret: string, expMs: number): string {
+  const key = sessionKey()
+  if (!key) throw new Error('AUTH_SECRET (32+ characters) must be set')
+  if (!OPAQUE_TOKEN_PATTERN.test(secret)) throw new Error('A session secret is 43 base64url characters')
+  return sign({ typ: 'user', s: secret, exp: expMs }, key)
+}
+
+/**
+ * The secret inside a validly signed, unexpired session cookie, or null.
+ * Proves only that this server signed it: the caller must still find the
+ * session in the database.
+ */
+export function openSessionCookie(
+  value: string | null | undefined,
+  now: number = Date.now(),
+): { secret: string; exp: number } | null {
+  if (!value) return null
+  const key = sessionKey()
+  if (!key) return null
+  const payload = open(value, key, now)
+  if (!payload || payload.typ !== 'user') return null
+  if (typeof payload.s !== 'string' || !OPAQUE_TOKEN_PATTERN.test(payload.s)) return null
+  return { secret: payload.s, exp: payload.exp as number }
+}
+
 /**
  * Compares a typed password with the expected one in constant time. Hashing
  * both first gives equal-length buffers, so the time does not depend on length.
  */
 export function passwordsMatch(input: string, expected: string): boolean {
   return timingSafeEqual(sha256(input), sha256(expected))
-}
-
-export function sitePasswordMatches(input: string): boolean {
-  const expected = process.env.SITE_PASSWORD
-  if (!expected) return false
-  return passwordsMatch(input, expected)
 }

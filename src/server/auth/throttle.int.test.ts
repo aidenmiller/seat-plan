@@ -71,6 +71,18 @@ describe('login throttle', () => {
     expect(rows.rows[0]?.failures).toBe(0)
   })
 
+  it('can skip the all-addresses count, so guessing from many addresses locks nobody else out', async () => {
+    for (let i = 0; i < SCOPE_LIMIT + 10; i++) {
+      expect((await beginAttempt(db, 'login', `spray-${i}`, { scopeWide: false })).allowed).toBe(true)
+    }
+    expect((await beginAttempt(db, 'login', 'the-real-user', { scopeWide: false })).allowed).toBe(true)
+    const rows = await db.execute<{ n: number }>(sql`select count(*)::int as n from login_attempts where ip_key = '*'`)
+    expect(rows.rows[0]?.n).toBe(0)
+    // The per-address limit still holds.
+    for (let i = 0; i < PER_ADDRESS_LIMIT - 1; i++) await beginAttempt(db, 'login', 'the-real-user', { scopeWide: false })
+    expect((await beginAttempt(db, 'login', 'the-real-user', { scopeWide: false })).allowed).toBe(false)
+  })
+
   it('starts a fresh window once the old one has passed', async () => {
     for (let i = 0; i < PER_ADDRESS_LIMIT; i++) await beginAttempt(db, 'site', 'addr-e')
     await db.execute(sql`update login_attempts set window_start = now() - interval '16 minutes' where ip_key = 'addr-e'`)

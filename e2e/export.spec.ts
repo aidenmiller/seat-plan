@@ -18,7 +18,7 @@ import { generateSeatingBlock } from '../src/domain/ceremony'
 import { makeItem } from '../src/domain/presets'
 import type { Guest } from '../src/shared/api'
 import { apiAddGuests, BOM, csvTextLines, expectHydrated } from './guest-list'
-import { apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, expectSaved, presetAuthor, signIn, uniqueName } from './helpers'
+import { apiCreateLayout, apiCreateWedding, apiGetLayout, apiPutCanvas, editorPath, expectSaved, signIn, uniqueName } from './helpers'
 
 type PdfText = { str: string; size: number; fontName: string }
 
@@ -63,10 +63,6 @@ function roundTable(canvas: Canvas, at: { x: number; y: number }, number: number
   const t = makeItem('round', at, randomUUID(), canvas) as Table
   return { ...t, number, name: `Table ${number}`, seats: t.seats.map((s, i) => ({ ...s, guestId: guests[i] ?? null })) }
 }
-
-test.beforeEach(async ({ context }) => {
-  await presetAuthor(context, 'Noa')
-})
 
 test('exports the floor plan as PDF and SVG, and the table list and escort cards as CSV', async ({ page }, testInfo) => {
   test.setTimeout(90_000)
@@ -214,7 +210,7 @@ test('exports a ceremony layout: escort cards give row and chair, and the ceremo
     { firstName: 'Mila', lastName: `Brandt${tag}` },
     { firstName: 'Omar', lastName: `Aziz${tag}` },
   ])
-  const rows = generateSeatingBlock({ rows: 2, chairsPerRow: 4, origin: { x: 0, y: 0 } }, () => randomUUID())
+  const rows = generateSeatingBlock({ rows: 2, chairsPerRow: 4, leftLabel: "Noa's side", rightLabel: "Aiden's side", origin: { x: 0, y: 0 } }, () => randomUUID())
   const items = rows.map((r) => {
     if (r.rowNumber === 1 && r.blockLabel === "Noa's side") return { ...r, reservedFor: 'Family, row 1' }
     if (r.rowNumber === 2 && r.blockLabel === "Aiden's side") return { ...r, seats: r.seats.map((s, i) => (i < 2 ? { ...s, guestId: guests[i]!.id } : s)) }

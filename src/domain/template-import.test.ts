@@ -128,8 +128,8 @@ describe('wall checks', () => {
   })
 
   it('lists only crossings that are new since the editor opened', () => {
-    const before: VenueWallCheck = { templateVersion: 1, layouts: [use('a', ['1']), use('b', [])] }
-    const after: VenueWallCheck = { templateVersion: 2, layouts: [use('a', ['1', '2']), use('b', ['3'])] }
+    const before: VenueWallCheck = { templateVersion: 1, hiddenLayouts: 0, layouts: [use('a', ['1']), use('b', [])] }
+    const after: VenueWallCheck = { templateVersion: 2, hiddenLayouts: 0, layouts: [use('a', ['1', '2']), use('b', ['3'])] }
     const fresh = newWallCrossings(before, after)
     expect(fresh.map((l) => [l.layoutId, l.tables.map((t) => t.tableId)])).toEqual([
       ['a', ['2']],
@@ -139,23 +139,23 @@ describe('wall checks', () => {
   })
 
   it('compares each save with the one before, so an unrelated save says nothing again', () => {
-    const opened: VenueWallCheck = { templateVersion: 1, layouts: [use('a', [])] }
-    const first = advanceWallCheck(opened, { templateVersion: 2, layouts: [use('a', ['4'])] })
+    const opened: VenueWallCheck = { templateVersion: 1, hiddenLayouts: 0, layouts: [use('a', [])] }
+    const first = advanceWallCheck(opened, { templateVersion: 2, hiddenLayouts: 0, layouts: [use('a', ['4'])] })
     expect(wallCheckMessage(first.fresh)).toBe('This change puts a wall through 1 table in 1 layout')
     // A door width change: Table 4 is still crossed, but not by this change.
-    const second = advanceWallCheck(first.baseline, { templateVersion: 3, layouts: [use('a', ['4'])] })
+    const second = advanceWallCheck(first.baseline, { templateVersion: 3, hiddenLayouts: 0, layouts: [use('a', ['4'])] })
     expect(second.fresh).toEqual([])
     expect(second.baseline.templateVersion).toBe(3)
   })
 
   it('reports nothing while the check from when the editor opened is unknown', () => {
-    const step = advanceWallCheck(null, { templateVersion: 2, layouts: [use('a', ['1'])] })
+    const step = advanceWallCheck(null, { templateVersion: 2, hiddenLayouts: 0, layouts: [use('a', ['1'])] })
     expect(step.fresh).toEqual([])
     expect(step.baseline.templateVersion).toBe(2)
   })
 
   it('says nothing when no table is crossed', () => {
-    expect(wallCheckMessage(newWallCrossings(null, { templateVersion: 1, layouts: [use('a', [])] }))).toBeNull()
+    expect(wallCheckMessage(newWallCrossings(null, { templateVersion: 1, hiddenLayouts: 0, layouts: [use('a', [])] }))).toBeNull()
     expect(wallCheckMessage([use('a', ['1', '2'])])).toBe('This change puts a wall through 2 tables in 1 layout')
   })
 

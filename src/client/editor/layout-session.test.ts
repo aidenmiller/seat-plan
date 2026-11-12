@@ -3,6 +3,7 @@ import { ApiRequestError } from '@/client/api'
 import { createLayoutSaver } from '@/client/sync/layout-saver'
 import type { DraftSnapshot, DraftStore, LayoutSaver, LayoutSaverOptions, SaveStatus } from '@/client/sync/types'
 import type { WatchRemoteVersionOptions } from '@/client/sync/remote-version'
+import type { LiveSaver } from '@/client/sync/saver-registry'
 import { emptyCanvas, type Canvas } from '@/domain/canvas-schema'
 import { addRoundTable } from '@/domain/round-table'
 import type { LayoutDetail, SaveLayoutOk } from '@/shared/api'
@@ -13,6 +14,8 @@ import { createEditorDoc } from './state/editor-doc'
 
 const LAYOUT_ID = '33333333-3333-4333-8333-333333333333'
 const WEDDING_ID = '44444444-4444-4444-8444-444444444444'
+/** The signed-in user the page was opened for. */
+const ME = { id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a', displayName: 'Noa' }
 
 function detail(overrides: Partial<LayoutDetail> = {}): LayoutDetail {
   return {
@@ -25,6 +28,7 @@ function detail(overrides: Partial<LayoutDetail> = {}): LayoutDetail {
     venueDeleted: false,
     version: 3,
     editedBy: 'Noa',
+    editedById: null,
     updatedAt: '2026-11-09T15:42:00.000Z',
     thumbSvg: '<svg/>',
     canvas: emptyCanvas(),
@@ -41,7 +45,7 @@ function draft(overrides: Partial<DraftSnapshot>): DraftSnapshot {
     tabId: 'closed-tab',
     baseVersion: 3,
     canvas: addRoundTable(emptyCanvas(), 'from-draft'),
-    editedBy: 'Aiden',
+    userId: ME.id,
     inFlight: null,
     dirty: true,
     updatedAt: '2026-11-09T15:00:00.000Z',
@@ -93,6 +97,7 @@ function fakeSaver(options: LayoutSaverOptions): FakeSaver {
     },
     flush: vi.fn(async () => undefined),
     hasUnsavedChanges: () => saver.dirty,
+    resume: vi.fn(),
     resetTo: vi.fn(async (version: number) => {
       base = version
       saver.dirty = false
@@ -132,6 +137,7 @@ const saved = (version: number, status: SaveLayoutOk['status'] = 'saved'): SaveL
   version,
   updatedAt: '2026-11-09T15:50:00.000Z',
   editedBy: 'Noa',
+  editedById: null,
   droppedSeats: [],
 })
 
@@ -140,7 +146,6 @@ function setup(
     page?: LayoutDetail
     server?: LayoutDetail
     drafts?: DraftSnapshot[]
-    author?: 'Noa' | 'Aiden' | null
     /** Use the real save engine with this fetch (and the memory drafts), instead of the fake. */
     realFetch?: typeof fetch
     newIds?: string[]
@@ -194,11 +199,13 @@ function setup(
       return { check: async () => undefined, stop: vi.fn() }
     },
     newId: () => ids.shift() ?? '55555555-5555-4555-8555-555555555555',
+    waitForLegacyDrafts: async () => undefined,
+    registerSaver: () => () => undefined,
   }
   const session = openLayoutSession({
     layout: page,
     store,
-    getAuthor: () => (opts.author === undefined ? 'Noa' : opts.author),
+    user: ME,
     events,
     deps,
   })
@@ -268,6 +275,142 @@ describe('opening a layout', () => {
     expect(t.saver().edits).toHaveLength(0)
   })
 
+  it('saves as the signed-in user, with their name in the "someone else signed in" words', async () => {
+    const t = setup({ drafts: [draft({})] })
+    await t.session.ready
+    expect(t.events.onConflict).not.toHaveBeenCalledWith(expect.objectContaining({ source: 'recovery' }))
+    expect(t.saver().options.userId).toBe(ME.id)
+    expect(t.saver().options.messages?.otherUser).toMatch(/Sign in again as Noa/)
+  })
+
+  it('waits for drafts from before accounts to move in before it looks for drafts', async () => {
+    const order: string[] = []
+    const t = setup()
+    await t.session.ready
+    expect(order).toEqual([])
+    let release!: () => void
+    const moved = new Promise<void>((r) => {
+      release = r
+    })
+    const drafts = {
+      ...t.drafts,
+      listDrafts: async (layoutId: string) => {
+        order.push('list')
+        return t.drafts.listDrafts(layoutId)
+      },
+    }
+    const session = openLayoutSession({
+      layout: detail(),
+      store: createDocStore(emptyCanvas()),
+      user: ME,
+      events: t.events,
+      deps: {
+        ...t.deps,
+        drafts,
+        waitForLegacyDrafts: async () => {
+          order.push('legacy')
+          await moved
+          order.push('legacy done')
+        },
+      },
+    })
+    await new Promise((r) => setTimeout(r, 5))
+    expect(order).toEqual(['legacy'])
+    release()
+    await session.ready
+    expect(order).toEqual(['legacy', 'legacy done', 'list'])
+  })
+
+  it('puts its saver where signing out can reach it, and takes it out on close', async () => {
+    const registered: { hasUnsavedChanges(): boolean }[] = []
+    const unregister = vi.fn()
+    const t = setup()
+    await t.session.ready
+    const session = openLayoutSession({
+      layout: detail(),
+      store: createDocStore(emptyCanvas()),
+      user: ME,
+      events: t.events,
+      deps: {
+        ...t.deps,
+        registerSaver: (s) => {
+          registered.push(s)
+          return unregister
+        },
+      },
+    })
+    await session.ready
+    expect(registered).toHaveLength(1)
+    session.close()
+    expect(unregister).toHaveBeenCalledTimes(1)
+  })
+
+  it('its saver resumes when its user signs in again', async () => {
+    let registered: LiveSaver | null = null
+    const savers: FakeSaver[] = []
+    const t = setup()
+    await t.session.ready
+    const session = openLayoutSession({
+      layout: detail(),
+      store: createDocStore(emptyCanvas()),
+      user: ME,
+      events: t.events,
+      deps: {
+        ...t.deps,
+        createSaver: (options) => {
+          const s = fakeSaver(options)
+          savers.push(s)
+          return s
+        },
+        registerSaver: (s) => {
+          registered = s
+          return () => undefined
+        },
+      },
+    })
+    await session.ready
+    registered!.resume!()
+    expect(savers[0]!.resume).toHaveBeenCalledTimes(1)
+    session.close()
+  })
+
+  it('its flush, as signing out calls it, ends only once storage no longer holds what was saved', async () => {
+    // Signing out reads this user's storage right after the flush, and counts any draft left there as unsaved.
+    const left = draft({ baseVersion: 3 })
+    const drafts = memoryDrafts([left])
+    const deleteNow = drafts.deleteDraft
+    drafts.deleteDraft = (layoutId, tabId) => new Promise((resolve) => setTimeout(() => resolve(deleteNow(layoutId, tabId)), 30))
+    const f = fakeFetch()
+    let registered: LiveSaver | null = null
+    const t = setup()
+    await t.session.ready
+    const session = openLayoutSession({
+      layout: detail(),
+      store: createDocStore(emptyCanvas()),
+      user: ME,
+      events: t.events,
+      deps: {
+        ...t.deps,
+        drafts,
+        createSaver: (options) =>
+          createLayoutSaver({ ...options, fetch: f.fn, drafts, debounceMs: 1, maxWaitMs: 1, draftWaitMs: 50, isOnline: () => true, windowTarget: null, documentTarget: null }),
+        registerSaver: (s) => {
+          registered = s
+          return () => undefined
+        },
+      },
+    })
+    await session.ready
+    // The closed tab's draft is applied and sent.
+    await vi.waitFor(() => expect(f.calls).toHaveLength(1))
+    const flushing = registered!.flush()
+    f.calls[0].respond(200, saved(4))
+    await flushing
+    // Neither this tab's draft nor the closed tab's is left to count.
+    expect(drafts.all()).toEqual([])
+    session.close()
+  })
+
   it('reports a conflict for a draft made on an older version, and keeps it as a copy', async () => {
     const left = draft({ baseVersion: 2 })
     const t = setup({ drafts: [left] })
@@ -282,12 +425,11 @@ describe('opening a layout', () => {
     // The editor keeps showing the server's version.
     expect(t.store.getState().canvas).toEqual(emptyCanvas())
 
-    const copy = await t.session.keepMineAsCopy("Reception plan (Aiden's copy)", 'Aiden')
+    const copy = await t.session.keepMineAsCopy("Reception plan (Aiden's copy)")
     expect(t.deps.duplicateLayout).toHaveBeenCalledWith(LAYOUT_ID, {
       id: '55555555-5555-4555-8555-555555555555',
       name: "Reception plan (Aiden's copy)",
       canvas: left.canvas,
-      editedBy: 'Aiden',
     })
     expect(copy.canvas).toEqual(left.canvas)
     expect(t.drafts.all()).toHaveLength(0)
@@ -351,10 +493,19 @@ describe('while open', () => {
     await t.session.ready
     const theirs = detail({ version: 4, editedBy: 'Aiden', canvas: addRoundTable(emptyCanvas(), 'theirs') })
     t.setServer(theirs)
-    t.watch().onChange({ version: 4, updatedAt: theirs.updatedAt, editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] })
+    t.watch().onChange({ version: 4, updatedAt: theirs.updatedAt, editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] })
     await vi.waitFor(() => expect(t.events.onNotice).toHaveBeenCalledWith("Loaded Aiden's changes"))
     expect(t.store.getState().canvas).toEqual(theirs.canvas)
     expect(t.saver().resetTo).toHaveBeenCalledWith(4)
+  })
+
+  it('says "your changes" when the newer version is the signed-in user’s own, from another tab', async () => {
+    const t = setup()
+    await t.session.ready
+    const mine = detail({ version: 4, editedBy: 'Noa', editedById: ME.id, canvas: addRoundTable(emptyCanvas(), 'other-tab') })
+    t.setServer(mine)
+    t.watch().onChange({ version: 4, updatedAt: mine.updatedAt, editedBy: 'Noa', editedById: ME.id, lastSaveId: null, recentSaveIds: [] })
+    await vi.waitFor(() => expect(t.events.onNotice).toHaveBeenCalledWith('Loaded your changes from another tab or device'))
   })
 
   it('leaves a tab with unsaved edits alone, so the next save meets the conflict', async () => {
@@ -363,7 +514,7 @@ describe('while open', () => {
     const mine = t.store.edit('Add table', (c) => addRoundTable(c, 'mine'))!
     t.session.noteEdit(mine)
     t.setServer(detail({ version: 4, editedBy: 'Aiden', canvas: addRoundTable(emptyCanvas(), 'theirs') }))
-    t.watch().onChange({ version: 4, updatedAt: 'x', editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] })
+    t.watch().onChange({ version: 4, updatedAt: 'x', editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] })
     await new Promise((r) => setTimeout(r, 0))
     expect(t.store.getState().canvas).toBe(mine)
     expect(t.events.onNotice).not.toHaveBeenCalled()
@@ -375,12 +526,12 @@ describe('while open', () => {
     t.session.noteEdit(t.store.edit('Add table', (c) => addRoundTable(c, 'mine'))!)
     t.saver().setStatus({
       kind: 'conflict',
-      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] },
+      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] },
     })
     expect(t.events.onConflict).toHaveBeenLastCalledWith({
       source: 'save',
       partlySaved: false,
-      server: { version: 4, editedBy: 'Aiden', updatedAt: '2026-11-09T15:42:00.000Z' },
+      server: { version: 4, editedBy: 'Aiden', editedById: null, updatedAt: '2026-11-09T15:42:00.000Z' },
       draft: null,
     })
     const theirs = detail({ version: 4, editedBy: 'Aiden', canvas: addRoundTable(emptyCanvas(), 'theirs') })
@@ -399,7 +550,7 @@ describe('while open', () => {
     t.session.noteEdit(mine)
     t.saver().setStatus({
       kind: 'conflict',
-      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] },
+      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] },
     })
     const theirs = detail({ version: 4, editedBy: 'Aiden', canvas: addRoundTable(emptyCanvas(), 'theirs') })
     t.setServer(theirs)
@@ -409,10 +560,10 @@ describe('while open', () => {
       resetOrder.push('saver')
     })
 
-    await t.session.keepMineAsCopy("Reception plan (Noa's copy)", 'Noa')
+    await t.session.keepMineAsCopy("Reception plan (Noa's copy)")
     expect(t.deps.duplicateLayout).toHaveBeenCalledWith(
       LAYOUT_ID,
-      expect.objectContaining({ canvas: mine, name: "Reception plan (Noa's copy)", editedBy: 'Noa' }),
+      expect.objectContaining({ canvas: mine, name: "Reception plan (Noa's copy)" }),
     )
     // The original shows the other person's version, and Undo cannot bring "mine" back.
     expect(t.store.getState().canvas).toEqual(theirs.canvas)
@@ -429,10 +580,10 @@ describe('while open', () => {
     t.session.noteEdit(mine)
     t.saver().setStatus({
       kind: 'conflict',
-      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] },
+      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] },
     })
     t.setServer(detail({ version: 4, editedBy: 'Aiden', canvas: addRoundTable(emptyCanvas(), 'theirs') }))
-    await t.session.keepMineAsCopy("Reception plan (Noa's copy)", 'Noa')
+    await t.session.keepMineAsCopy("Reception plan (Noa's copy)")
     const editsBefore = t.saver().edits.length
 
     // Ctrl+Z has nothing to undo; a new edit is refused.
@@ -461,7 +612,7 @@ describe('while open', () => {
       recentSaveIds: [],
     })
     await vi.waitFor(() => expect(t.events.onConflict).toHaveBeenCalled())
-    await t.session.keepMineAsCopy("Reception plan (Noa's copy)", 'Noa')
+    await t.session.keepMineAsCopy("Reception plan (Noa's copy)")
     expect(t.realSaver().getBaseVersion()).toBe(4)
     t.session.noteEdit(t.store.edit('Add table', (c) => addRoundTable(c, 'late'))!)
     t.store.undo()
@@ -476,14 +627,14 @@ describe('while open', () => {
     t.session.noteEdit(t.store.edit('Add table', (c) => addRoundTable(c, 'mine'))!)
     t.saver().setStatus({
       kind: 'conflict',
-      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] },
+      server: { version: 4, updatedAt: '2026-11-09T15:42:00.000Z', editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] },
     })
     const made = detail({ id: '55555555-5555-4555-8555-555555555555', name: "Reception plan (Noa's copy)" })
     vi.mocked(t.deps.duplicateLayout!).mockRejectedValueOnce(
       new ApiRequestError(409, { error: 'id_taken' }, 'POST failed: id_taken'),
     )
     vi.mocked(t.deps.getLayout!).mockResolvedValueOnce(made)
-    const copy = await t.session.keepMineAsCopy("Reception plan (Noa's copy)", 'Noa')
+    const copy = await t.session.keepMineAsCopy("Reception plan (Noa's copy)")
     expect(copy).toBe(made)
     expect(t.deps.getLayout).toHaveBeenCalledWith(made.id)
   })
@@ -637,12 +788,11 @@ describe('Save as a copy (after a 422 or 410)', () => {
     await t.realSaver().whenStored()
     expect(t.drafts.all()).toHaveLength(1)
 
-    const copy = await t.session.saveAsCopy("Reception plan (Noa's copy)", 'Noa')
+    const copy = await t.session.saveAsCopy("Reception plan (Noa's copy)")
     expect(t.deps.duplicateLayout).toHaveBeenCalledWith(LAYOUT_ID, {
       id: '88888888-8888-4888-8888-888888888888',
       name: "Reception plan (Noa's copy)",
       canvas: mine,
-      editedBy: 'Noa',
     })
     expect(copy.id).toBe('88888888-8888-4888-8888-888888888888')
     expect(t.drafts.all()).toHaveLength(0)
@@ -658,7 +808,7 @@ describe('Save as a copy (after a 422 or 410)', () => {
     const mine = t.store.edit('Add table', (c) => addRoundTable(c, 'mine'))!
     t.session.noteEdit(mine)
     vi.mocked(t.deps.duplicateLayout!).mockRejectedValueOnce(new ApiRequestError(404, { error: 'not_found' }, 'gone'))
-    await expect(t.session.saveAsCopy("Reception plan (Noa's copy)", 'Noa')).rejects.toThrow()
+    await expect(t.session.saveAsCopy("Reception plan (Noa's copy)")).rejects.toThrow()
     expect(t.saver().dispose).not.toHaveBeenCalled()
     t.session.noteEdit(t.store.edit('Add table', (c) => addRoundTable(c, 'more'))!)
     expect(t.saver().edits).toHaveLength(2)

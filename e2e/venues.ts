@@ -12,12 +12,11 @@ import { expect, type APIRequestContext, type Locator, type Page } from '@playwr
 import type { FixedItem } from '../src/domain/venue-schema'
 import type { SaveVenueOk, VenueDetail, VenueImageInfo, VenueRevisionList } from '../src/shared/api'
 import { sheetAtRest, Touch, type Camera, type Point } from './canvas'
-import type { Author } from './helpers'
 
 // ---------- Venues through the API ----------
 
 export async function apiCreateVenue(request: APIRequestContext, name: string): Promise<VenueDetail> {
-  const res = await request.post('/api/venues', { data: { id: randomUUID(), name, editedBy: 'Noa' } })
+  const res = await request.post('/api/venues', { data: { id: randomUUID(), name } })
   expect(res.status(), await res.text()).toBe(201)
   return (await res.json()) as VenueDetail
 }
@@ -28,15 +27,14 @@ export async function apiGetVenue(request: APIRequestContext, id: string): Promi
   return (await res.json()) as VenueDetail
 }
 
-/** Saves fixed items onto a template with one PUT, as the template editor would. */
+/** Saves fixed items onto a template with one PUT, as the template editor would, as the request's signed-in user. */
 export async function apiSaveVenue(
   request: APIRequestContext,
   venue: Pick<VenueDetail, 'id' | 'version'>,
   fixedItems: FixedItem[],
-  editedBy: Author = 'Noa',
 ): Promise<SaveVenueOk> {
   const res = await request.put(`/api/venues/${venue.id}`, {
-    data: { baseVersion: venue.version, saveId: randomUUID(), editedBy, fixedItems, reference: null },
+    data: { baseVersion: venue.version, saveId: randomUUID(), fixedItems, reference: null },
   })
   expect(res.status(), await res.text()).toBe(200)
   return (await res.json()) as SaveVenueOk

@@ -5,9 +5,13 @@ import { addDemoNotes } from '../../../scripts/demo-notes'
 import { emptyCanvas, type Canvas, type ChairRow, type Item } from '../canvas-schema'
 import { generateSeatingBlock } from '../ceremony'
 import { labelsOverlap, type LabelName, type MeasureText } from '../labels'
+import { makeNote } from '../notes'
 import { makeItem } from '../presets'
 import { textWidthEm } from '../text-fit'
 import { escapeXml, MIN_PRINT_NAME_PT, PAPER, renderPrintPlan, type PrintPlanInput } from './print-svg'
+
+/** A note author: the signed-in user's name and account id. */
+const NOA = { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' }
 
 const measure: MeasureText = (text, size) => textWidthEm(text) * size
 
@@ -40,7 +44,7 @@ function seededTour(): { canvas: Canvas; names: Map<string, LabelName>; seated: 
       }
     }),
   }
-  canvas = addDemoNotes(canvas, idMaker(2), Date.UTC(2026, 10, 1))
+  canvas = addDemoNotes(canvas, idMaker(2), Date.UTC(2026, 10, 1), { name: 'Noa', id: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a' })
   return { canvas, names, seated }
 }
 
@@ -138,6 +142,17 @@ describe('renderPrintPlan', () => {
     expect(off).not.toContain('mic')
   })
 
+  it('draws the whole first character of a note author, even an emoji or an accent', () => {
+    const sticky = (author: string) => ({ ...makeNote('sticky', { x: 0, y: 0 }, NOA, 'yellow', Date.UTC(2026, 10, 1), 'n1'), author })
+    const initialOf = (author: string) => {
+      const svg = renderPrintPlan(input({ canvas: { ...emptyCanvas(), items: [sticky(author)] }, names: new Map() })).svg
+      return /font-weight="700"[^>]*text-anchor="end"[^>]*>([^<]*)</.exec(svg)?.[1]
+    }
+    expect(initialOf('Noa')).toBe('N')
+    expect(initialOf('🎂 Dayna')).toBe('🎂')
+    expect(initialOf('Émile')).toBe('É')
+  })
+
   it('escapes names and titles', () => {
     const t = makeItem('round', { x: 0, y: 0 }, 'tt', emptyCanvas())
     const table = { ...(t as Extract<Item, { kind: 'table' }>), seats: t.kind === 'table' ? t.seats.map((s, i) => (i === 0 ? { ...s, guestId: guestId(1) } : s)) : [] }
@@ -154,7 +169,7 @@ describe('renderPrintPlan', () => {
   })
 
   it('prints ceremony rows: names or initials beside each named chair, the reserved label, and the side label', () => {
-    const rows = generateSeatingBlock({ rows: 3, chairsPerRow: 6, origin: { x: 0, y: 0 } }, idMaker(3))
+    const rows = generateSeatingBlock({ rows: 3, chairsPerRow: 6, leftLabel: "Noa's side", rightLabel: "Aiden's side", origin: { x: 0, y: 0 } }, idMaker(3))
     const names = new Map<string, LabelName>([
       [guestId(1), { firstName: 'Zoë', lastName: 'Shapiro' }],
       [guestId(2), { firstName: 'Łukasz', lastName: 'Nowak' }],

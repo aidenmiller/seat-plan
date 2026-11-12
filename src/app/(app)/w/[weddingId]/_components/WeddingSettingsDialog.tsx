@@ -3,9 +3,12 @@
 import { useRouter } from 'next/navigation'
 import { useState, type FormEvent } from 'react'
 import { backupUrl, errorMessage, updateWedding } from '@/client/api'
+import { SavedBackups } from '@/client/backups/SavedBackups'
 import { Dialog, DialogActions } from '@/client/ui/Dialog'
 import { ChoiceGroup, TextField, UNIT_CHOICES } from '@/client/ui/fields'
-import { errorClass, hintClass, labelClass, primaryButton, secondaryButton } from '@/client/ui/styles'
+import { PartnerNameFields } from '@/client/ui/PartnerNameFields'
+import { useCanManageWedding } from '@/client/wedding-access'
+import { errorClass,hintClass, labelClass, primaryButton, secondaryButton } from '@/client/ui/styles'
 import { convertLengthText, formatLength, parseLength, type LengthUnit } from '@/domain/units'
 import type { UpdateWeddingBody, WeddingSummary } from '@/shared/api'
 
@@ -13,8 +16,9 @@ import type { UpdateWeddingBody, WeddingSummary } from '@/shared/api'
 const MAX_GAP_CM = 10_000
 
 /**
- * Wedding settings (PLAN section 7): name, date, unit, and the minimum gap
- * between tables, shown and typed in the wedding's unit and stored in cm.
+ * Wedding settings (PLAN section 7): name, date, the partners' names, unit,
+ * and the minimum gap between tables, shown and typed in the wedding's unit
+ * and stored in cm. Renaming a partner relabels every guest on that side.
  */
 export function WeddingSettingsDialog({
   wedding,
@@ -28,10 +32,28 @@ export function WeddingSettingsDialog({
   /** The wedding as the server stored it, before router.refresh() brings new props. */
   onSaved?: (wedding: WeddingSummary) => void
 }) {
+  const canManage = useCanManageWedding()
   return (
     <Dialog open={open} onClose={onClose} title="Wedding settings">
-      {open && <SettingsForm wedding={wedding} onClose={onClose} onSaved={onSaved} />}
+      {open && canManage && <SettingsForm wedding={wedding} onClose={onClose} onSaved={onSaved} />}
+      {open && !canManage && <OwnersOnly onClose={onClose} />}
     </Dialog>
+  )
+}
+
+/** Everything here (the details, the unit and gap, the backup) is for owners; the header does not even offer it to an editor. */
+function OwnersOnly({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-stone-700" data-testid="settings-owners-only">
+        Only owners can change the wedding settings or download a backup.
+      </p>
+      <DialogActions>
+        <button type="button" className={secondaryButton} onClick={onClose}>
+          Close
+        </button>
+      </DialogActions>
+    </div>
   )
 }
 
@@ -47,6 +69,8 @@ function SettingsForm({
   const router = useRouter()
   const [name, setName] = useState(wedding.name)
   const [date, setDate] = useState(wedding.date ?? '')
+  const [partner1, setPartner1] = useState(wedding.partner1Name ?? '')
+  const [partner2, setPartner2] = useState(wedding.partner2Name ?? '')
   const [unit, setUnit] = useState<LengthUnit>(wedding.unit)
   const [gap, setGap] = useState(() => formatLength(wedding.minGapCm, wedding.unit))
   /** Only a gap the person typed is sent; a gap shown in a new unit is rounded and must not overwrite the stored one. */
@@ -87,6 +111,10 @@ function SettingsForm({
     if (trimmed !== wedding.name) body.name = trimmed
     const newDate = date || null
     if (newDate !== wedding.date) body.date = newDate
+    const newPartner1 = partner1.trim() || null
+    if (newPartner1 !== wedding.partner1Name) body.partner1Name = newPartner1
+    const newPartner2 = partner2.trim() || null
+    if (newPartner2 !== wedding.partner2Name) body.partner2Name = newPartner2
     if (unit !== wedding.unit) body.unit = unit
     if (gapCm !== null && Math.abs(gapCm - wedding.minGapCm) > 1e-6) body.minGapCm = gapCm
     if (Object.keys(body).length === 0) {
@@ -120,6 +148,7 @@ function SettingsForm({
         autoComplete="off"
       />
       <TextField label="Date (optional)" type="date" value={date} onChange={setDate} />
+      <PartnerNameFields partner1={partner1} partner2={partner2} onPartner1={setPartner1} onPartner2={setPartner2} />
       <ChoiceGroup legend="Measure in" name="unit" value={unit} onChange={changeUnit} choices={UNIT_CHOICES} />
       <TextField
         label="Minimum gap between tables"
@@ -151,6 +180,7 @@ function SettingsForm({
           Download backup
         </a>
       </div>
+      <SavedBackups weddingId={wedding.id} />
       {error && (
         <p role="alert" className={errorClass}>
           {error}

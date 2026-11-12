@@ -37,8 +37,30 @@ export async function idParam(ctx: IdContext): Promise<string | null> {
 
 export type BodyResult<T> = { ok: true; data: T } | { ok: false; response: NextResponse }
 
-/** Reads and checks a JSON body: 400 when it is not JSON, 422 with the issues when it does not fit. */
+/**
+ * True when the request says its body is JSON (application/json, with or
+ * without parameters such as a charset). Another site's form or script can
+ * only send a JSON content type after the browser asks the server first
+ * (CORS), which this app never allows, so insisting on it also stops plain
+ * cross-site form posts.
+ */
+export function isJsonRequest(req: { headers: Headers }): boolean {
+  const type = req.headers.get('content-type')
+  if (!type) return false
+  return type.split(';')[0]!.trim().toLowerCase() === 'application/json'
+}
+
+/** 415 for a body that is not sent as JSON. */
+export function notJson(): NextResponse {
+  return json({ error: 'unsupported_type', message: 'Send the request body as JSON.' }, 415)
+}
+
+/**
+ * Reads and checks a JSON body: 415 unless it is sent as application/json,
+ * 400 when it is not JSON, 422 with the issues when it does not fit.
+ */
 export async function readBody<S extends z.ZodType>(req: NextRequest, schema: S): Promise<BodyResult<z.output<S>>> {
+  if (!isJsonRequest(req)) return { ok: false, response: notJson() }
   let raw: unknown
   try {
     raw = await req.json()

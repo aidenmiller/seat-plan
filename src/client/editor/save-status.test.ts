@@ -49,7 +49,7 @@ describe('saveStatusView', () => {
   it('shows a conflict as not saved', () => {
     const view = saveStatusView({
       kind: 'conflict',
-      server: { version: 3, updatedAt: '2026-11-09T10:00:00.000Z', editedBy: 'Aiden', lastSaveId: null, recentSaveIds: [] },
+      server: { version: 3, updatedAt: '2026-11-09T10:00:00.000Z', editedBy: 'Aiden', editedById: null, lastSaveId: null, recentSaveIds: [] },
     })
     expect(view.text).toBe('Not saved')
   })

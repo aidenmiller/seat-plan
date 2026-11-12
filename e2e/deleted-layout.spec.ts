@@ -4,11 +4,13 @@
  * with Save as a copy and Download). Save as a copy stores this tab's canvas
  * as a new layout in the same wedding and opens it.
  *
- * The delete happens in a second browser context, as Aiden on his own phone
- * or laptop would do it: through the layouts list and the typed `delete`.
+ * The delete happens in a second browser context, as the same planner on
+ * their phone or laptop would do it: through the layouts list and the typed
+ * `delete`.
  */
 import { expect, test, type Browser, type Page, type TestInfo } from '@playwright/test'
 import {
+  E2E_USERS,
   addRoundTable,
   apiAddTables,
   apiCreateLayout,
@@ -17,7 +19,6 @@ import {
   canvasTables,
   editorPath,
   expectSaved,
-  presetAuthor,
   saveStatus,
   signIn,
   tableIds,
@@ -27,12 +28,13 @@ import {
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 const GONE_MESSAGE = 'This layout was deleted, so changes cannot be saved.'
+/** The copy carries the signed-in planner's name (e2e/users.ts). */
+const COPY_NAME = `Plan (${E2E_USERS.a.displayName}'s copy)`
 
 /** Deletes the layout from another browser context, through the layouts list. */
 async function deleteElsewhere(browser: Browser, weddingId: string, layoutId: string, name: string): Promise<void> {
   const other = await browser.newContext({ baseURL: process.env.E2E_BASE_URL })
   try {
-    await presetAuthor(other, 'Aiden')
     const page = await other.newPage()
     await signIn(page)
     await page.goto(`/w/${weddingId}/layouts`)
@@ -62,7 +64,7 @@ async function saveAsCopyOpens(page: Page, weddingId: string, layoutId: string, 
   await banner.getByRole('button', { name: 'Save as a copy' }).click()
   await expect(page).toHaveURL(new RegExp(`/w/${weddingId}/layouts/(?!${layoutId})${UUID}$`))
   const copyId = new URL(page.url()).pathname.split('/')[4]
-  await expect(page.getByTestId('layout-title')).toHaveText("Plan (Noa's copy)")
+  await expect(page.getByTestId('layout-title')).toHaveText(COPY_NAME)
   await waitForEditor(page)
   await expectSaved(page)
   await expect(banner).toBeHidden()
@@ -71,8 +73,8 @@ async function saveAsCopyOpens(page: Page, weddingId: string, layoutId: string, 
 
   const copy = await apiGetLayout(page.request, copyId)
   expect(copy.weddingId).toBe(weddingId)
-  expect(copy.name).toBe("Plan (Noa's copy)")
-  expect(copy.editedBy).toBe('Noa')
+  expect(copy.name).toBe(COPY_NAME)
+  expect(copy.editedBy).toBe(E2E_USERS.a.displayName)
   expect(copy.canvas.items.map((item) => item.id)).toEqual(ids)
   expect((await page.request.get(`/api/layouts/${layoutId}`)).status()).toBe(404)
 
@@ -86,11 +88,10 @@ async function saveAsCopyOpens(page: Page, weddingId: string, layoutId: string, 
   // The wedding now has just the copy.
   await page.goto(`/w/${weddingId}/layouts`)
   await expect(page.getByTestId('layout-card')).toHaveCount(1)
-  await expect(page.locator(`[data-layout-id="${copyId}"]`).getByTestId('layout-name')).toHaveText("Plan (Noa's copy)")
+  await expect(page.locator(`[data-layout-id="${copyId}"]`).getByTestId('layout-name')).toHaveText(COPY_NAME)
 }
 
-test('an edit after the layout was deleted elsewhere fails, and Save as a copy opens a new layout with the table', async ({ browser, context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('an edit after the layout was deleted elsewhere fails, and Save as a copy opens a new layout with the table', async ({ browser, page }, testInfo) => {
   const { wedding, layout } = await openEditor(page, testInfo, 'Deleted while open')
   await page.goto(editorPath(wedding.id, layout.id))
   await waitForEditor(page)
@@ -118,8 +119,7 @@ test('an edit after the layout was deleted elsewhere fails, and Save as a copy o
   await saveAsCopyOpens(page, wedding.id, layout.id, ids)
 })
 
-test('coming back to a tab whose layout was deleted shows the banner, and Save as a copy keeps the tables', async ({ browser, context, page }, testInfo) => {
-  await presetAuthor(context, 'Noa')
+test('coming back to a tab whose layout was deleted shows the banner, and Save as a copy keeps the tables', async ({ browser, page }, testInfo) => {
   const { wedding, layout } = await openEditor(page, testInfo, 'Deleted while away')
   const saved = await apiAddTables(page.request, layout, 2)
   expect(saved.version).toBe(2)

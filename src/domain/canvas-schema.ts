@@ -147,7 +147,6 @@ export const shapeSchema = z.object({
 
 export const noteTypes = ['sticky', 'text', 'arrow', 'line', 'box', 'circle'] as const
 export const noteColors = ['yellow', 'pink', 'blue', 'green', 'purple', 'grey'] as const
-export const authors = ['Noa', 'Aiden'] as const
 
 export const noteSchema = z.object({
   ...base,
@@ -158,7 +157,13 @@ export const noteSchema = z.object({
   points: z.array(point).max(2000).optional(),
   text: cleanText(5000),
   color: z.enum(noteColors),
-  author: z.enum(authors),
+  /**
+   * Display name of whoever made the note, kept as it was when they made it.
+   * Notes from before accounts hold "Noa" or "Aiden" and no authorId.
+   */
+  author: cleanText(80).refine((v) => v.trim().length > 0, 'Name is empty'),
+  /** The account that made the note. Set by the browser when the note is made; the server checks its shape only. */
+  authorId: z.uuid().optional(),
   done: z.boolean(),
   createdAt: z.iso.datetime(),
   attachedTo: z.object({ start: itemId.nullable(), end: itemId.nullable() }),
@@ -225,7 +230,6 @@ export type Shape = z.infer<typeof shapeSchema>
 export type Note = z.infer<typeof noteSchema>
 export type Item = z.infer<typeof itemSchema>
 export type Canvas = z.infer<typeof canvasSchema>
-export type Author = (typeof authors)[number]
 
 export function emptyCanvas(): Canvas {
   return { schemaVersion: CANVAS_SCHEMA_VERSION, items: [] }

@@ -43,7 +43,7 @@ describe('template autosave', () => {
     const saver = createTemplateSaver({
       templateId: ID,
       baseVersion: 4,
-      editedBy: () => 'Aiden',
+      userId: '11111111-1111-4111-8111-111111111111',
       onStatus: (s) => statuses.push(s),
       fetch: fetch.fn,
       windowTarget: null,
@@ -66,9 +66,10 @@ describe('template autosave', () => {
     expect(call.url).toBe(`/api/venues/${ID}`)
     expect(call.init.method).toBe('PUT')
     expect(saveVenueBody.safeParse(call.body).success).toBe(true)
-    expect(call.body).toMatchObject({ baseVersion: 4, editedBy: 'Aiden', reference: null })
+    expect(call.body).toMatchObject({ baseVersion: 4, reference: null })
+    expect(call.body).not.toHaveProperty('editedBy')
     expect(call.body).not.toHaveProperty('canvas')
-    const reply: SaveVenueOk = { status: 'saved', version: 5, updatedAt: '2026-11-09T12:00:00.000Z', editedBy: 'Aiden' }
+    const reply: SaveVenueOk = { status: 'saved', version: 5, updatedAt: '2026-11-09T12:00:00.000Z', editedBy: 'Aiden', editedById: null }
     call.respond(200, reply)
     await settle()
     expect(saver.getBaseVersion()).toBe(5)
@@ -85,6 +86,7 @@ describe('template autosave', () => {
       version: 6,
       updatedAt: '2026-11-09T12:00:00.000Z',
       editedBy: 'Noa',
+      editedById: null,
       lastSaveId: null,
     }
     fetch.calls[0].respond(409, conflict)
@@ -106,6 +108,24 @@ describe('template autosave', () => {
     const last = statuses[statuses.length - 1]
     expect(last).toMatchObject({ kind: 'failed', reason: 'gone', message: 'This venue was deleted, so changes cannot be saved.' })
     expect(templateStatusView(last, false).text).toBe("Couldn't save: this venue was deleted")
+  })
+
+  it('a 403 says the venue can no longer be changed, not that you were signed out, and stops', async () => {
+    const { fetch, saver, statuses } = setup()
+    saver.noteEdit(docN(1))
+    await vi.advanceTimersByTimeAsync(3000)
+    fetch.calls[0].respond(403, { error: 'forbidden' })
+    await settle()
+    const last = statuses[statuses.length - 1]
+    expect(last).toMatchObject({ kind: 'failed', reason: 'forbidden', message: 'You can no longer change this venue, so changes here cannot be saved.' })
+    expect(templateStatusView(last, false).text).toBe("Couldn't save: you cannot change this venue")
+    expect(JSON.stringify(last)).not.toContain('signed out')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetch.calls).toHaveLength(1)
+  })
+
+  it('says a venue you may only view is not saved', () => {
+    expect(templateStatusView(null, false, true).text).toBe('View only')
   })
 
   it('says a draft is not saved', () => {

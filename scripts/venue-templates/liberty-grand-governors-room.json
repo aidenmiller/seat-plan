@@ -1,0 +1,376 @@
+{
+  "id": "6e06640e-fb98-49ef-b9f7-4a2ea4bb92bd",
+  "name": "Liberty Grand – Governor's Room",
+  "library": true,
+  "importedBy": "hand",
+  "header": [
+    "Liberty Grand Entertainment Complex (Exhibition Place, Toronto): the Governor's Room, as a shared-library venue template.",
+    "APPROXIMATE: drawn from published sizes (172 x 61 ft), not traced from a survey.",
+    "Idempotent: adds the template and its first revision only if they are not there yet."
+  ],
+  "sources": [
+    "https://libertygrand.com/wp-content/uploads/2024/03/LEG-Corporate-Package-2024-2025-email_np-3.pdf (p.8, official 172 x 61 ft)",
+    "https://libertygrand.com/coral-grand-ballroom/",
+    "https://www.eventsource.ca/blog/wp-content/uploads/2016/05/GrandPlanningPackage.pdf (p.7 building plan)",
+    "https://csn-integration-static.socialtables.com/3624/2063191-1767873891000-room-campus-map.pdf (to-scale room plan)"
+  ],
+  "fixedItems": [
+    {
+      "id": "w-outer",
+      "type": "wall",
+      "points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 5243,
+          "y": 0
+        }
+      ],
+      "thickness": 30,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "w-courtyard",
+      "type": "wall",
+      "points": [
+        {
+          "x": 0,
+          "y": 1859
+        },
+        {
+          "x": 5243,
+          "y": 1859
+        }
+      ],
+      "thickness": 30,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "w-sw",
+      "type": "wall",
+      "points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 1859
+        }
+      ],
+      "thickness": 30,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "w-ne",
+      "type": "wall",
+      "points": [
+        {
+          "x": 5243,
+          "y": 0
+        },
+        {
+          "x": 5243,
+          "y": 1859
+        }
+      ],
+      "thickness": 30,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "room",
+      "type": "room",
+      "name": "Governor's Room",
+      "points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 5243,
+          "y": 0
+        },
+        {
+          "x": 5243,
+          "y": 1859
+        },
+        {
+          "x": 0,
+          "y": 1859
+        }
+      ],
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "z-main",
+      "type": "zone",
+      "name": "Main floor",
+      "points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 5243,
+          "y": 0
+        },
+        {
+          "x": 5243,
+          "y": 1128
+        },
+        {
+          "x": 0,
+          "y": 1128
+        }
+      ],
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "z-gallery",
+      "type": "zone",
+      "name": "Courtyard-side gallery",
+      "points": [
+        {
+          "x": 0,
+          "y": 1128
+        },
+        {
+          "x": 5243,
+          "y": 1128
+        },
+        {
+          "x": 5243,
+          "y": 1859
+        },
+        {
+          "x": 0,
+          "y": 1859
+        }
+      ],
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "st-oak",
+      "type": "stairs",
+      "name": "Oak staircase to mezzanine",
+      "x": 4770,
+      "y": 991,
+      "width": 762,
+      "height": 274,
+      "rotation": 0,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "bar-back",
+      "type": "bar",
+      "label": "Bar",
+      "x": 183,
+      "y": 549,
+      "width": 274,
+      "height": 472,
+      "rotation": 0,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "d-sw-1",
+      "type": "door",
+      "wallId": "w-sw",
+      "x": 0,
+      "y": 122,
+      "rotation": 90,
+      "width": 183,
+      "swing": "double",
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "d-sw-2",
+      "type": "door",
+      "wallId": "w-sw",
+      "x": 0,
+      "y": 977,
+      "rotation": 90,
+      "width": 183,
+      "swing": "double",
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "d-ne",
+      "type": "door",
+      "name": "From the Main Foyer",
+      "wallId": "w-ne",
+      "x": 5243,
+      "y": 427,
+      "rotation": 90,
+      "width": 244,
+      "swing": "double",
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "fd-1",
+      "type": "door",
+      "name": "French doors",
+      "wallId": "w-courtyard",
+      "x": 1994,
+      "y": 1859,
+      "rotation": 0,
+      "width": 152,
+      "swing": "double",
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "fd-2",
+      "type": "door",
+      "name": "French doors",
+      "wallId": "w-courtyard",
+      "x": 2445,
+      "y": 1859,
+      "rotation": 0,
+      "width": 152,
+      "swing": "double",
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "fd-3",
+      "type": "door",
+      "name": "French doors",
+      "wallId": "w-courtyard",
+      "x": 2896,
+      "y": 1859,
+      "rotation": 0,
+      "width": 152,
+      "swing": "double",
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "fd-4",
+      "type": "door",
+      "name": "French doors",
+      "wallId": "w-courtyard",
+      "x": 3347,
+      "y": 1859,
+      "rotation": 0,
+      "width": 152,
+      "swing": "double",
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "fd-5",
+      "type": "door",
+      "name": "French doors",
+      "wallId": "w-courtyard",
+      "x": 3798,
+      "y": 1859,
+      "rotation": 0,
+      "width": 152,
+      "swing": "double",
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "win-1",
+      "type": "window",
+      "wallId": "w-outer",
+      "x": 1036,
+      "y": 0,
+      "rotation": 0,
+      "width": 152,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "win-2",
+      "type": "window",
+      "wallId": "w-outer",
+      "x": 1646,
+      "y": 0,
+      "rotation": 0,
+      "width": 152,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "win-3",
+      "type": "window",
+      "wallId": "w-outer",
+      "x": 2865,
+      "y": 0,
+      "rotation": 0,
+      "width": 152,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "win-4",
+      "type": "window",
+      "wallId": "w-outer",
+      "x": 3475,
+      "y": 0,
+      "rotation": 0,
+      "width": 152,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "win-5",
+      "type": "window",
+      "wallId": "w-outer",
+      "x": 4785,
+      "y": 0,
+      "rotation": 0,
+      "width": 152,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "l-main-foyer",
+      "type": "label",
+      "text": "Main Foyer",
+      "x": 5600,
+      "y": 560,
+      "rotation": 0,
+      "fontSize": 60,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "l-ren-foyer",
+      "type": "label",
+      "text": "Renaissance Foyer",
+      "x": -450,
+      "y": 560,
+      "rotation": 0,
+      "fontSize": 60,
+      "unsure": false,
+      "unsureNote": ""
+    },
+    {
+      "id": "l-courtyard",
+      "type": "label",
+      "text": "Courtyard",
+      "x": 2621,
+      "y": 2200,
+      "rotation": 0,
+      "fontSize": 60,
+      "unsure": false,
+      "unsureNote": ""
+    }
+  ]
+}
