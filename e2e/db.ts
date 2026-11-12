@@ -83,3 +83,59 @@ export async function dbMarkTemplateDeleted(templateId: string): Promise<void> {
     await client.end()
   }
 }
+
+// ---------- Weddings and members, for the people, account and admin specs ----------
+
+/** A client on the end-to-end database. Local databases only. */
+async function connectE2E(): Promise<pg.Client> {
+  const url = process.env.E2E_DATABASE_URL
+  if (!url) throw new Error('E2E_DATABASE_URL is not set; run through playwright.config.ts')
+  assertLocalDatabase(url)
+  const client = new pg.Client({ connectionString: url })
+  await client.connect()
+  return client
+}
+
+/** Adds a wedding with no members, and returns its id. */
+export async function dbCreateWedding(name: string): Promise<string> {
+  const client = await connectE2E()
+  try {
+    const result = await client.query<{ id: string }>('insert into weddings (name) values ($1) returning id', [name])
+    return result.rows[0]!.id
+  } finally {
+    await client.end()
+  }
+}
+
+/**
+ * Makes the account with this email a member of the wedding with this role,
+ * or changes the role it has there. Straight to the database, so a spec does
+ * not depend on who creating a wedding through the app makes its owner.
+ */
+export async function dbAddMember(weddingId: string, email: string, role: 'owner' | 'editor'): Promise<void> {
+  const client = await connectE2E()
+  try {
+    const result = await client.query(
+      `insert into wedding_members (wedding_id, user_id, role)
+       select $1, id, $3 from users where email = $2
+       on conflict (wedding_id, user_id) do update set role = excluded.role`,
+      [weddingId, normalizeEmail(email), role],
+    )
+    if (result.rowCount !== 1) throw new Error(`dbAddMember: no account for ${email}`)
+  } finally {
+    await client.end()
+  }
+}
+
+/**
+ * Forgets every counted sign-in, invite and reset try. Every test comes from
+ * one address, so the specs that open many links start each test from zero.
+ */
+export async function dbClearAttemptCounts(): Promise<void> {
+  const client = await connectE2E()
+  try {
+    await client.query('delete from login_attempts')
+  } finally {
+    await client.end()
+  }
+}
