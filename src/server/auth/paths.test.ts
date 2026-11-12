@@ -4,7 +4,7 @@ import { classifyPath, hidesReferrer, safeNextPath } from './paths'
 const TOKEN = 'A'.repeat(20) + '_-' + 'b'.repeat(21)
 
 describe('classifyPath', () => {
-  it('lets only sign-in, setup, invite and reset through', () => {
+  it('lets only sign-in, setup, invite, reset and the tab icons through', () => {
     for (const path of [
       '/login',
       '/api/auth/login',
@@ -15,6 +15,9 @@ describe('classifyPath', () => {
       '/api/invites/lookup',
       '/api/invites/register',
       '/api/auth/reset',
+      '/icon.svg',
+      '/apple-icon.png',
+      '/manifest.webmanifest',
     ]) {
       expect(classifyPath(path), path).toBe('public')
     }

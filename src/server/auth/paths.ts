@@ -19,6 +19,11 @@ const PUBLIC_PATHS = new Set([
   '/api/invites/lookup',
   '/api/invites/register',
   '/api/auth/reset',
+  // The tab icon and web manifest: the sign-in page shows them, and browsers
+  // fetch the manifest without cookies. They hold nothing private.
+  '/icon.svg',
+  '/apple-icon.png',
+  '/manifest.webmanifest',
 ])
 
 /** Pages for signed-out visitors, which must never be the return address after signing in. */
