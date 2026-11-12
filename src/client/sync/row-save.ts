@@ -101,7 +101,7 @@ export const ROW_QUEUE_ID_KEY = 'seat-plan:rows-queue-id'
 
 const storedKey = (queueId: string, kind: RowKind, id: string) => `${queueId}|${kind}|${id}`
 
-function isStoredRow(value: unknown): value is StoredRow {
+export function isStoredRow(value: unknown): value is StoredRow {
   if (!value || typeof value !== 'object') return false
   const v = value as Record<string, unknown>
   return (
@@ -721,7 +721,11 @@ export function rowSaverFor(userId: string): RowSaver {
     queue = made
     queues.set(userId, made)
     registerSaver({
-      flush: () => made.flush(),
+      // Signing out reads this user's storage next: wait until what was sent is out of it.
+      async flush() {
+        await made.flush()
+        await made.whenStored()
+      },
       hasUnsavedChanges: () => made.hasUnsavedChanges(),
       async stop() {
         made.dispose()
