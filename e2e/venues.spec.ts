@@ -25,7 +25,7 @@ test('New venue makes an empty template and opens it; the name renames in place 
   await signIn(page)
   const wedding = await apiCreateWedding(page.request, uniqueName('Venues', testInfo))
   await page.goto(`/w/${wedding.id}/venues`)
-  await expect(page.getByRole('heading', { name: 'Venues', level: 2 })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Venues', exact: true, level: 2 })).toBeVisible()
   // The seeded template is there for every wedding, and stays empty until its floor plan is sent (spec section 5).
   await expect(page.getByTestId('venue-list')).toContainText('Toronto Beach Club')
   const listed = (await (await page.request.get('/api/venues')).json()) as VenueSummary[]

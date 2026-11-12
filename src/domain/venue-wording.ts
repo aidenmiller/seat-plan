@@ -1,7 +1,7 @@
 /**
  * Plain sentences for the Venues tab and the template editor. Pure.
  */
-import type { VenueDeleteSummary, VenueRevision } from '@/shared/api'
+import type { VenueDeleteSummary, VenueDetail, VenueRevision, VenueSummary } from '@/shared/api'
 import { isOwnEdit, plural, type EditorRef } from './wording'
 
 /** "Used by 3 layouts" or "Not used yet". */
@@ -20,20 +20,54 @@ export function venueItemCount(count: number): string {
  * are only counted, never named.
  */
 export function venueDeleteMessage(s: VenueDeleteSummary): string {
-  const others =
-    s.hiddenLayouts > 0
-      ? `${s.hiddenLayouts === 1 ? 'One layout' : `${s.hiddenLayouts} layouts`} in weddings you are not part of ${s.hiddenLayouts === 1 ? 'uses' : 'use'} it too, so it cannot be deleted for now.`
-      : ''
+  const hidden = s.hiddenLayouts
   if (s.layouts.length > 0) {
     const n = s.layouts.length
     const mine = `${n === 1 ? 'One layout still uses' : `${n} layouts still use`} “${s.name}”. Pick another venue for ${n === 1 ? 'it' : 'them'} before you delete this one.`
-    return others ? `${mine} ${others}` : mine
+    return hidden > 0 ? `${mine} Also used by ${plural(hidden, 'layout')} in weddings you are not part of.` : mine
   }
-  if (s.hiddenLayouts > 0) {
-    return `${s.hiddenLayouts === 1 ? 'One layout' : `${s.hiddenLayouts} layouts`} in weddings you are not part of ${s.hiddenLayouts === 1 ? 'uses' : 'use'} “${s.name}”, so it cannot be deleted for now.`
+  if (hidden > 0) {
+    return `“${s.name}” is used by ${plural(hidden, 'layout')} in weddings you are not part of, so it cannot be deleted for now.`
   }
   const parts = [plural(s.revisions, 'saved version'), plural(s.images, 'floor plan image')]
   return `This deletes “${s.name}” with its ${parts.join(' and ')}. No layout uses it.`
+}
+
+/** The small label on a venue card: who the venue belongs to. Null when there is nothing to say. */
+export function venueBadge(v: Pick<VenueSummary, 'access' | 'ownerName'>, isAdmin: boolean): string | null {
+  switch (v.access) {
+    case 'library':
+      return 'Library'
+    case 'mine':
+      return 'Yours'
+    case 'shared':
+      return v.ownerName ? `Shared by ${v.ownerName}` : 'Shared'
+    case 'unowned':
+      return isAdmin ? 'No owner' : 'Shared'
+  }
+}
+
+export type VenueGroup = { key: 'library' | 'mine' | 'used'; title: string; venues: VenueSummary[] }
+
+/**
+ * The venues in the order the Venues tab and the pickers show them: the
+ * library, then your own, then the ones this wedding uses that belong to
+ * someone else. Empty groups are left out; names keep their order inside a group.
+ */
+export function venueGroups(venues: readonly VenueSummary[]): VenueGroup[] {
+  const groups: VenueGroup[] = [
+    { key: 'library', title: 'Library', venues: venues.filter((v) => v.access === 'library') },
+    { key: 'mine', title: 'Your venues', venues: venues.filter((v) => v.access === 'mine') },
+    { key: 'used', title: 'Used in this wedding', venues: venues.filter((v) => v.access === 'shared' || v.access === 'unowned') },
+  ]
+  return groups.filter((g) => g.venues.length > 0)
+}
+
+/** The banner over a venue you cannot change. */
+export function venueReadOnlyText(v: Pick<VenueDetail, 'access' | 'ownerName'>): string {
+  if (v.access === 'library') return 'This is a library venue. Only the admin can change it.'
+  if (v.ownerName) return `This venue belongs to ${v.ownerName}. You can view it.`
+  return 'This venue has no owner. You can view it.'
 }
 
 /** "Import" or "Save", for the Revisions list. */

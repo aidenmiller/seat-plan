@@ -110,6 +110,24 @@ describe('template autosave', () => {
     expect(templateStatusView(last, false).text).toBe("Couldn't save: this venue was deleted")
   })
 
+  it('a 403 says the venue can no longer be changed, not that you were signed out, and stops', async () => {
+    const { fetch, saver, statuses } = setup()
+    saver.noteEdit(docN(1))
+    await vi.advanceTimersByTimeAsync(3000)
+    fetch.calls[0].respond(403, { error: 'forbidden' })
+    await settle()
+    const last = statuses[statuses.length - 1]
+    expect(last).toMatchObject({ kind: 'failed', reason: 'forbidden', message: 'You can no longer change this venue, so changes here cannot be saved.' })
+    expect(templateStatusView(last, false).text).toBe("Couldn't save: you cannot change this venue")
+    expect(JSON.stringify(last)).not.toContain('signed out')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetch.calls).toHaveLength(1)
+  })
+
+  it('says a venue you may only view is not saved', () => {
+    expect(templateStatusView(null, false, true).text).toBe('View only')
+  })
+
   it('says a draft is not saved', () => {
     expect(templateStatusView({ kind: 'saved', at: '' }, true).text).toBe('Draft, not saved')
     expect(templateStatusView(null, false).text).toBe('Opening…')

@@ -52,9 +52,10 @@ import { saveStatusTitle } from '@/client/editor/save-status'
 import { bringFixedToFront, type TemplateDoc } from '@/domain/template-commands'
 import { advanceWallCheck, imageToCanvas, measuredCm, planScale, redrawDraft, scaleLabels, wallCheckMessage, type WallCheckLayout } from '@/domain/template-import'
 import { formatLength } from '@/domain/units'
-import { loadedChangesText, restoreReloadedText, venueConflictText } from '@/domain/venue-wording'
+import { loadedChangesText, restoreReloadedText, venueConflictText, venueReadOnlyText } from '@/domain/venue-wording'
 import { editorRef } from '@/domain/wording'
 import type { VenueDetail, VenueImageInfo, VenueWallCheck } from '@/shared/api'
+import { copyHrefFromBack, useMakeCopy } from '../make-copy'
 import { floorplanBody, scaledDimensionLabels, storedImagePlan } from '../import/plan-body'
 import { ImportDialog, type ImportResult } from '../import/ImportDialog'
 import { DraftPanel, type DraftState } from './DraftPanel'
@@ -74,6 +75,9 @@ import { ToolDrawer, ToolPanel } from './ToolPanel'
 import { SELECT } from './ui-store'
 
 type Tab = 'draft' | 'properties' | 'plan' | 'revisions'
+
+/** What a venue you may only view shows: no Revisions (nothing to put back), no import. */
+const VIEW_ONLY_TABS: Tab[] = ['properties', 'plan']
 
 const TAB_LABELS: Record<Tab, string> = { draft: 'Draft', properties: 'Properties', plan: 'Plan image', revisions: 'Revisions' }
 const SHEET_STRIP_PX = 88
@@ -140,6 +144,9 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
   const [toolsOpen, setToolsOpen] = useState(false)
   const [menu, setMenu] = useState<{ at: { x: number; y: number }; items: ContextMenuItem[] } | null>(null)
   const [resolving, setResolving] = useState(false)
+  // A venue the server says this person may not change (the library, someone else's, or one with no owner): no saver, no tools.
+  const readOnly = !venue.canEdit
+  const makeCopy = useMakeCopy(venue.id, copyHrefFromBack(backHref))
 
   const conflict = status?.kind === 'conflict' ? status : null
   const failed = status?.kind === 'failed' ? status : null
@@ -208,6 +215,11 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
 
   useEffect(() => editor.setUnit(unit), [editor, unit])
 
+  // Viewing only: always View mode (the device's saved choice is left alone), so no tool or edit control shows.
+  useEffect(() => {
+    if (readOnly && deviceKnown && mode !== 'view') editor.ui.setMode('view')
+  }, [readOnly, deviceKnown, mode, editor])
+
   useLayoutEffect(() => {
     editor.camera.setFitInsets(phone ? PHONE_INSETS : DESKTOP_INSETS)
   }, [editor, phone])
@@ -232,6 +244,8 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
   // The save engine, pointed at the venue route, saving as the signed-in user; signing out reaches it through the registry.
   const userId = user.id
   useEffect(() => {
+    // Nothing to save when the venue cannot be changed: starting the saver would only end in a refused save.
+    if (readOnly) return
     let live = true
     const s = createTemplateSaver({ templateId: initial.id, baseVersion: initial.version, userId, onStatus: setStatus })
     const unregister = registerSaver({
@@ -251,7 +265,7 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
       unregister()
       setSaver(null)
     }
-  }, [initial, userId])
+  }, [initial, userId, readOnly])
 
   useUnloadGuard(saver)
 
@@ -579,9 +593,9 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
 
   // ---------------------------------------------------------------- layout
 
-  const tabs: Tab[] = draft ? ['draft', 'properties', 'plan'] : ['properties', 'plan', 'revisions']
+  const tabs: Tab[] = draft ? ['draft', 'properties', 'plan'] : readOnly ? VIEW_ONLY_TABS : ['properties', 'plan', 'revisions']
   const openTab = tabs.includes(tab) ? tab : tabs[0]
-  const view = templateStatusView(status, draft !== null)
+  const view = templateStatusView(status, draft !== null, readOnly)
   const zoomBottom = phone ? SHEET_STRIP_PX + 8 : 8
 
   function panel(t: Tab) {
@@ -602,13 +616,14 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
           />
         ) : null
       case 'properties':
-        return <TemplatePropertiesPanel unit={unit} canEdit={canEdit} itemCount={itemCount} onImport={draft ? undefined : () => void openImport()} />
+        return <TemplatePropertiesPanel unit={unit} canEdit={canEdit} itemCount={itemCount} onImport={draft || readOnly ? undefined : () => void openImport()} />
       case 'plan':
         return (
           <ReferencePanel
             image={shownImage}
             draft={draft !== null}
             canEdit={canEdit}
+            readOnly={readOnly}
             onImport={() => void openImport()}
             rerun={!referenceImage ? null : importedBy === 'pdf vectors' ? 'pdf' : 'picture'}
             onRerun={() => void rerunStored()}
@@ -654,36 +669,55 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
             <span className="hidden sm:inline">Venues</span>
           </Link>
           <h1 className="min-w-0 flex-1">
-            <InlineName
-              value={name}
-              label="Venue name"
-              textClassName="text-base font-semibold sm:text-lg"
-              testId="venue-title"
-              onSave={async (next) => {
-                const updated = await renameVenue(initial.id, { name: next })
-                setName(updated.name)
-              }}
-            />
+            {readOnly ? (
+              <span className="flex min-h-11 items-center text-base font-semibold sm:text-lg" data-testid="venue-title">
+                <span className="min-w-0 truncate">{name}</span>
+              </span>
+            ) : (
+              <InlineName
+                value={name}
+                label="Venue name"
+                textClassName="text-base font-semibold sm:text-lg"
+                testId="venue-title"
+                onSave={async (next) => {
+                  const updated = await renameVenue(initial.id, { name: next })
+                  setName(updated.name)
+                }}
+              />
+            )}
           </h1>
           <p
             role="status"
             aria-live="polite"
             title={saveStatusTitle(view)}
             data-testid="save-status"
-            data-status={draft ? 'draft' : (status?.kind ?? 'opening')}
+            data-status={readOnly ? 'read-only' : draft ? 'draft' : (status?.kind ?? 'opening')}
             className={`w-24 shrink-0 truncate text-right text-sm sm:w-48 ${TONE_CLASS[view.tone]}`}
           >
             {view.text}
           </p>
-          {!draft && !phone && (
+          {!draft && !phone && !readOnly && (
             <button type="button" className={`${secondaryButton} shrink-0`} onClick={() => void openImport()} disabled={!canEdit} data-testid="import-plan">
               Import plan
             </button>
           )}
-          <TemplateModeSwitch compact={phone} />
+          {!readOnly && <TemplateModeSwitch compact={phone} />}
           <UserMenu compact />
         </header>
 
+        {readOnly && (
+          <div role="note" data-testid="template-read-only" className="flex flex-wrap items-center gap-2 border-b border-amber-300 bg-amber-100 px-3 py-2 text-sm text-amber-950">
+            <span className="min-w-0 flex-1 basis-48">{venueReadOnlyText(venue)}</span>
+            <button type="button" className={secondaryButton} onClick={() => void makeCopy.copy()} disabled={makeCopy.busy} data-testid="make-copy">
+              {makeCopy.busy ? 'Copying…' : 'Make my own copy'}
+            </button>
+            {makeCopy.error && (
+              <p role="alert" className="w-full text-red-800">
+                {makeCopy.error}
+              </p>
+            )}
+          </div>
+        )}
         {conflict && !draft && (
           <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950" data-testid="template-conflict">
             <span className="min-w-0 flex-1 basis-48">
@@ -735,7 +769,7 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
         )}
 
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
-          {!phone && mode === 'edit' && (
+          {!phone && !readOnly && mode === 'edit' && (
             <aside aria-label="Tools" className="hidden w-48 shrink-0 overflow-y-auto overscroll-contain border-r border-stone-200 bg-stone-50 md:block lg:w-56">
               <ToolPanel disabled={!canEdit} />
             </aside>
@@ -784,7 +818,7 @@ export function TemplateEditorScreen({ venue, backHref }: TemplateEditorScreenPr
               {panel(openTab)}
             </BottomSheet>
           )}
-          {phone && <ToolDrawer open={toolsOpen && mode === 'edit'} onClose={() => setToolsOpen(false)} disabled={!canEdit} />}
+          {phone && !readOnly && <ToolDrawer open={toolsOpen && mode === 'edit'} onClose={() => setToolsOpen(false)} disabled={!canEdit} />}
         </div>
 
         <ImportDialog
